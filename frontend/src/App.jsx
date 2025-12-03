@@ -520,21 +520,51 @@ const ContactsPage = () => {
   const viewsRef = useRef(null);
 
   const allColumns = [
+    // Basic info
     { id: 'first_name', label: 'First Name', editable: true, default: true },
     { id: 'last_name', label: 'Last Name', editable: true, default: true },
     { id: 'email', label: 'Email', editable: true, default: true },
     { id: 'company', label: 'Company', editable: true, default: true },
     { id: 'title', label: 'Title', editable: true, default: true },
+    { id: 'headline', label: 'Headline', editable: true, default: false },
     { id: 'seniority', label: 'Seniority', editable: true, default: false },
     { id: 'industry', label: 'Industry', editable: true, default: false },
-    { id: 'company_country', label: 'Country', editable: true, default: false },
+    // Contact info
+    { id: 'first_phone', label: 'Phone', editable: true, default: false },
+    { id: 'corporate_phone', label: 'Corporate Phone', editable: true, default: false },
+    { id: 'person_linkedin_url', label: 'LinkedIn', editable: true, default: false },
+    { id: 'company_linkedin_url', label: 'Company LinkedIn', editable: true, default: false },
+    { id: 'website', label: 'Website', editable: true, default: false },
+    { id: 'domain', label: 'Domain', editable: true, default: false },
+    // Person location
+    { id: 'city', label: 'City', editable: true, default: false },
+    { id: 'state', label: 'State', editable: true, default: false },
+    { id: 'country', label: 'Country', editable: true, default: false },
+    // Company location
+    { id: 'company_city', label: 'Company City', editable: true, default: false },
+    { id: 'company_state', label: 'Company State', editable: true, default: false },
+    { id: 'company_country', label: 'Company Country', editable: true, default: false },
+    { id: 'company_street_address', label: 'Company Address', editable: true, default: false },
+    { id: 'company_postal_code', label: 'Postal Code', editable: true, default: false },
+    // Company details
+    { id: 'employees', label: 'Employees', editable: true, default: false },
+    { id: 'employee_bucket', label: 'Employee Bucket', editable: true, default: false },
+    { id: 'annual_revenue', label: 'Revenue', editable: true, default: false },
+    { id: 'annual_revenue_text', label: 'Revenue (Text)', editable: true, default: false },
+    { id: 'company_description', label: 'Company Desc', editable: true, default: false },
+    { id: 'company_seo_description', label: 'SEO Desc', editable: true, default: false },
+    { id: 'company_technologies', label: 'Technologies', editable: false, default: false },
+    { id: 'company_founded_year', label: 'Founded', editable: true, default: false },
+    { id: 'keywords', label: 'Keywords', editable: true, default: false },
+    // System fields
     { id: 'country_strategy', label: 'Strategy', editable: true, default: true, type: 'strategy' },
     { id: 'status', label: 'Status', editable: true, type: 'status', default: true },
+    { id: 'email_status', label: 'Email Status', editable: true, default: false },
     { id: 'outreach_lists', label: 'Lists', editable: true, default: true },
     { id: 'campaigns_assigned', label: 'Campaigns', editable: true, default: true },
-    { id: 'first_phone', label: 'Phone', editable: true, default: false },
-    { id: 'employees', label: 'Employees', editable: true, default: false },
     { id: 'times_contacted', label: 'Contacted', editable: false, default: false },
+    { id: 'last_contacted_at', label: 'Last Contact', editable: false, default: false },
+    { id: 'notes', label: 'Notes', editable: true, default: false },
     { id: 'created_at', label: 'Created', editable: false, default: false }
   ];
 
@@ -931,7 +961,23 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
 
 // Export Form
 const ExportForm = ({ filters, onClose }) => {
-  const allColumns = [{ id: 'first_name', label: 'First Name' }, { id: 'last_name', label: 'Last Name' }, { id: 'email', label: 'Email' }, { id: 'title', label: 'Title' }, { id: 'company', label: 'Company' }, { id: 'seniority', label: 'Seniority' }, { id: 'first_phone', label: 'Phone' }, { id: 'company_country', label: 'Country' }, { id: 'country_strategy', label: 'Country Strategy' }, { id: 'outreach_lists', label: 'Outreach Lists' }, { id: 'campaigns_assigned', label: 'Campaigns' }, { id: 'status', label: 'Status' }, { id: 'email_status', label: 'Email Status' }, { id: 'notes', label: 'Notes' }, { id: 'created_at', label: 'Created' }];
+  const allColumns = [
+    { id: 'first_name', label: 'First Name' }, { id: 'last_name', label: 'Last Name' }, { id: 'email', label: 'Email' },
+    { id: 'title', label: 'Title' }, { id: 'headline', label: 'Headline' }, { id: 'company', label: 'Company' }, { id: 'seniority', label: 'Seniority' },
+    { id: 'first_phone', label: 'Phone' }, { id: 'corporate_phone', label: 'Corporate Phone' },
+    { id: 'person_linkedin_url', label: 'LinkedIn' }, { id: 'company_linkedin_url', label: 'Company LinkedIn' },
+    { id: 'website', label: 'Website' }, { id: 'domain', label: 'Domain' },
+    { id: 'city', label: 'City' }, { id: 'state', label: 'State' }, { id: 'country', label: 'Country' },
+    { id: 'company_city', label: 'Company City' }, { id: 'company_state', label: 'Company State' }, { id: 'company_country', label: 'Company Country' },
+    { id: 'company_street_address', label: 'Company Address' }, { id: 'company_postal_code', label: 'Postal Code' },
+    { id: 'employees', label: 'Employees' }, { id: 'employee_bucket', label: 'Employee Bucket' }, { id: 'industry', label: 'Industry' },
+    { id: 'annual_revenue', label: 'Revenue' }, { id: 'annual_revenue_text', label: 'Revenue (Text)' },
+    { id: 'company_description', label: 'Company Desc' }, { id: 'company_seo_description', label: 'SEO Desc' },
+    { id: 'company_technologies', label: 'Technologies' }, { id: 'company_founded_year', label: 'Founded' }, { id: 'keywords', label: 'Keywords' },
+    { id: 'country_strategy', label: 'Country Strategy' }, { id: 'outreach_lists', label: 'Outreach Lists' }, { id: 'campaigns_assigned', label: 'Campaigns' },
+    { id: 'status', label: 'Status' }, { id: 'email_status', label: 'Email Status' }, { id: 'times_contacted', label: 'Contacted' },
+    { id: 'last_contacted_at', label: 'Last Contact' }, { id: 'notes', label: 'Notes' }, { id: 'created_at', label: 'Created' }
+  ];
   const [selected, setSelected] = useState(allColumns.slice(0, 10).map(c => c.id));
   const handleExport = () => { const params = new URLSearchParams(); if (selected.length) params.append('columns', selected.join(',')); Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); }); window.open(`${API}/contacts/export?${params}`, '_blank'); onClose(); };
   return (<div><p style={{ marginBottom: 16 }}>Select columns to include:</p><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 20 }}>{allColumns.map(col => (<label key={col.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={selected.includes(col.id)} onChange={e => { if (e.target.checked) setSelected([...selected, col.id]); else setSelected(selected.filter(c => c !== col.id)); }} />{col.label}</label>))}</div><div className="modal-actions"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={handleExport}><Download size={16} /> Export CSV</button></div></div>);
