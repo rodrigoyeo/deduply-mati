@@ -46,8 +46,12 @@ def init_db():
         title TEXT, headline TEXT, company TEXT, seniority TEXT, first_phone TEXT, corporate_phone TEXT,
         employees INTEGER, employee_bucket TEXT, industry TEXT, keywords TEXT,
         person_linkedin_url TEXT, website TEXT, domain TEXT, company_linkedin_url TEXT,
-        company_city TEXT, company_state TEXT, company_country TEXT, region TEXT,
-        country_strategy TEXT,
+        city TEXT, state TEXT, country TEXT,
+        company_city TEXT, company_state TEXT, company_country TEXT,
+        company_street_address TEXT, company_postal_code TEXT,
+        annual_revenue INTEGER, annual_revenue_text TEXT,
+        company_description TEXT, company_seo_description TEXT, company_founded_year INTEGER,
+        region TEXT, country_strategy TEXT,
         status TEXT DEFAULT 'Lead',
         email_status TEXT DEFAULT 'Unknown', times_contacted INTEGER DEFAULT 0,
         last_contacted_at TIMESTAMP, opportunities INTEGER DEFAULT 0, meetings_booked INTEGER DEFAULT 0,
@@ -99,6 +103,22 @@ def init_db():
         FOREIGN KEY (list_id) REFERENCES outreach_lists(id) ON DELETE CASCADE,
         UNIQUE(contact_id, list_id))""")
 
+    # Technologies table
+    cur.execute("""CREATE TABLE IF NOT EXISTS technologies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+    # Junction table: contacts <-> technologies
+    cur.execute("""CREATE TABLE IF NOT EXISTS contact_technologies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact_id INTEGER NOT NULL,
+        technology_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+        FOREIGN KEY (technology_id) REFERENCES technologies(id) ON DELETE CASCADE,
+        UNIQUE(contact_id, technology_id))""")
+
     cur.execute("""CREATE TABLE IF NOT EXISTS outreach_lists (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
         description TEXT, contact_count INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
@@ -124,19 +144,33 @@ def init_db():
                 "CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_campaigns(contact_id)",
                 "CREATE INDEX IF NOT EXISTS idx_cc_campaign ON contact_campaigns(campaign_id)",
                 "CREATE INDEX IF NOT EXISTS idx_cl_contact ON contact_lists(contact_id)",
-                "CREATE INDEX IF NOT EXISTS idx_cl_list ON contact_lists(list_id)"]:
+                "CREATE INDEX IF NOT EXISTS idx_cl_list ON contact_lists(list_id)",
+                "CREATE INDEX IF NOT EXISTS idx_ct_contact ON contact_technologies(contact_id)",
+                "CREATE INDEX IF NOT EXISTS idx_ct_tech ON contact_technologies(technology_id)",
+                "CREATE INDEX IF NOT EXISTS idx_tech_name ON technologies(name)"]:
         try: cur.execute(idx)
         except: pass
 
-    # Migration: Add country_strategy column if not exists
-    try: cur.execute("ALTER TABLE contacts ADD COLUMN country_strategy TEXT")
-    except: pass
-    try: cur.execute("ALTER TABLE campaigns ADD COLUMN country TEXT")
-    except: pass
-    try: cur.execute("ALTER TABLE template_campaigns ADD COLUMN opportunities INTEGER DEFAULT 0")
-    except: pass
-    try: cur.execute("ALTER TABLE template_campaigns ADD COLUMN meetings INTEGER DEFAULT 0")
-    except: pass
+    # Migration: Add columns if not exists
+    migrations = [
+        "ALTER TABLE contacts ADD COLUMN country_strategy TEXT",
+        "ALTER TABLE contacts ADD COLUMN city TEXT",
+        "ALTER TABLE contacts ADD COLUMN state TEXT",
+        "ALTER TABLE contacts ADD COLUMN country TEXT",
+        "ALTER TABLE contacts ADD COLUMN company_street_address TEXT",
+        "ALTER TABLE contacts ADD COLUMN company_postal_code TEXT",
+        "ALTER TABLE contacts ADD COLUMN annual_revenue INTEGER",
+        "ALTER TABLE contacts ADD COLUMN annual_revenue_text TEXT",
+        "ALTER TABLE contacts ADD COLUMN company_description TEXT",
+        "ALTER TABLE contacts ADD COLUMN company_seo_description TEXT",
+        "ALTER TABLE contacts ADD COLUMN company_founded_year INTEGER",
+        "ALTER TABLE campaigns ADD COLUMN country TEXT",
+        "ALTER TABLE template_campaigns ADD COLUMN opportunities INTEGER DEFAULT 0",
+        "ALTER TABLE template_campaigns ADD COLUMN meetings INTEGER DEFAULT 0"
+    ]
+    for m in migrations:
+        try: cur.execute(m)
+        except: pass
 
     conn.commit(); conn.close()
 
@@ -218,6 +252,14 @@ def add_contact_list(conn, contact_id, list_name):
     if lst:
         conn.execute("INSERT OR IGNORE INTO contact_lists (contact_id, list_id) VALUES (?, ?)",
                    (contact_id, lst[0]))
+
+def add_contact_technology(conn, contact_id, tech_name):
+    """Add a single technology to a contact"""
+    conn.execute("INSERT OR IGNORE INTO technologies (name) VALUES (?)", (tech_name,))
+    tech = conn.execute("SELECT id FROM technologies WHERE name=?", (tech_name,)).fetchone()
+    if tech:
+        conn.execute("INSERT OR IGNORE INTO contact_technologies (contact_id, technology_id) VALUES (?, ?)",
+                   (contact_id, tech[0]))
 
 def remove_contact_campaign(conn, contact_id, campaign_name):
     """Remove a single campaign from a contact"""
@@ -952,7 +994,15 @@ async def preview_import(file: UploadFile = File(...)):
 
         target_columns = ["first_name", "last_name", "email", "title", "headline", "company", "seniority",
             "first_phone", "corporate_phone", "employees", "industry", "keywords", "person_linkedin_url",
-            "website", "domain", "company_linkedin_url", "company_city", "company_state", "company_country",
+            "website", "domain", "company_linkedin_url",
+            # Person location
+            "city", "state", "country",
+            # Company location
+            "company_city", "company_state", "company_country", "company_street_address", "company_postal_code",
+            # Company details
+            "annual_revenue", "annual_revenue_text", "company_description", "company_seo_description",
+            "company_technologies", "company_founded_year",
+            # System fields
             "outreach_lists", "campaigns_assigned", "notes"]
 
         suggestions = {}
@@ -966,17 +1016,32 @@ async def preview_import(file: UploadFile = File(...)):
             elif cl in ['company', 'company_name']: suggestions[col] = 'company'
             elif 'seniority' in cl: suggestions[col] = 'seniority'
             elif 'first_phone' in cl: suggestions[col] = 'first_phone'
-            elif 'corporate_phone' in cl: suggestions[col] = 'corporate_phone'
-            elif cl in ['employees', '_employees']: suggestions[col] = 'employees'
+            elif 'corporate_phone' in cl or 'company_phone' in cl: suggestions[col] = 'corporate_phone'
+            elif cl in ['employees', '_employees', 'employees_count']: suggestions[col] = 'employees'
             elif cl == 'industry': suggestions[col] = 'industry'
             elif cl == 'keywords': suggestions[col] = 'keywords'
-            elif 'person_linkedin' in cl: suggestions[col] = 'person_linkedin_url'
-            elif cl == 'website': suggestions[col] = 'website'
-            elif cl in ['domain', 'dominio']: suggestions[col] = 'domain'
+            elif cl == 'linkedin' or (cl == 'person_linkedin' or 'person_linkedin' in cl): suggestions[col] = 'person_linkedin_url'
+            elif cl in ['website', 'company_website']: suggestions[col] = 'website'
+            elif cl in ['domain', 'dominio', 'company_domain']: suggestions[col] = 'domain'
             elif 'company_linkedin' in cl: suggestions[col] = 'company_linkedin_url'
-            elif 'company_city' in cl: suggestions[col] = 'company_city'
-            elif 'company_state' in cl: suggestions[col] = 'company_state'
-            elif 'company_country' in cl: suggestions[col] = 'company_country'
+            # Person location (without company_ prefix)
+            elif cl == 'city': suggestions[col] = 'city'
+            elif cl == 'state': suggestions[col] = 'state'
+            elif cl == 'country' and 'company' not in cl: suggestions[col] = 'country'
+            # Company location
+            elif cl == 'company_city': suggestions[col] = 'company_city'
+            elif cl == 'company_state': suggestions[col] = 'company_state'
+            elif cl == 'company_country': suggestions[col] = 'company_country'
+            elif 'company_street' in cl or cl == 'company_street_address': suggestions[col] = 'company_street_address'
+            elif 'company_postal' in cl or cl == 'company_postal_code': suggestions[col] = 'company_postal_code'
+            # Company details
+            elif cl == 'company_annual_revenue' or cl == 'annual_revenue': suggestions[col] = 'annual_revenue'
+            elif cl == 'company_annual_revenue_clean' or cl == 'annual_revenue_clean': suggestions[col] = 'annual_revenue_text'
+            elif cl == 'company_short_description': suggestions[col] = 'company_description'
+            elif cl == 'company_seo_description': suggestions[col] = 'company_seo_description'
+            elif cl == 'company_technologies': suggestions[col] = 'company_technologies'
+            elif cl == 'company_founded_year': suggestions[col] = 'company_founded_year'
+            # System fields
             elif 'outreach' in cl: suggestions[col] = 'outreach_lists'
             elif 'campaign' in cl or 'assigned' in cl: suggestions[col] = 'campaigns_assigned'
 
@@ -1020,18 +1085,23 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
             data = {}
             csv_campaigns = set()
             csv_lists = set()
+            csv_technologies = set()
 
             for src_col, tgt_col in mapping.items():
                 if tgt_col and src_col in row:
                     val = row[src_col]
                     if pd.notna(val):
-                        if tgt_col == 'employees':
-                            try: data[tgt_col] = int(float(val))
+                        # Integer fields
+                        if tgt_col in ['employees', 'annual_revenue', 'company_founded_year']:
+                            try: data[tgt_col] = int(float(str(val).replace(',', '').replace('$', '')))
                             except: pass
+                        # Junction table fields
                         elif tgt_col == 'campaigns_assigned':
                             csv_campaigns.update(c.strip() for c in str(val).split(',') if c.strip())
                         elif tgt_col == 'outreach_lists':
                             csv_lists.update(l.strip() for l in str(val).split(',') if l.strip())
+                        elif tgt_col == 'company_technologies':
+                            csv_technologies.update(t.strip() for t in str(val).split(',') if t.strip())
                         else:
                             data[tgt_col] = str(val).strip()
 
@@ -1052,11 +1122,13 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
                 stats['duplicates_found'] += 1
                 if merge_duplicates:
                     existing_id = email_index[email]
-                    # Add campaigns and lists to existing contact
+                    # Add campaigns, lists, and technologies to existing contact
                     for camp in csv_campaigns:
                         add_contact_campaign(conn, existing_id, camp)
                     for lst in csv_lists:
                         add_contact_list(conn, existing_id, lst)
+                    for tech in csv_technologies:
+                        add_contact_technology(conn, existing_id, tech)
                     # Update country_strategy if provided
                     if data.get('country_strategy'):
                         conn.execute("UPDATE contacts SET country_strategy=?, updated_at=? WHERE id=?",
@@ -1069,11 +1141,13 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
                 conn.execute(f"INSERT INTO contacts ({','.join(fields)}) VALUES ({','.join(['?']*len(fields))})", list(data.values()))
                 cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-                # Add campaigns and lists to junction tables
+                # Add campaigns, lists, and technologies to junction tables
                 for camp in csv_campaigns:
                     add_contact_campaign(conn, cid, camp)
                 for lst in csv_lists:
                     add_contact_list(conn, cid, lst)
+                for tech in csv_technologies:
+                    add_contact_technology(conn, cid, tech)
 
                 stats['imported'] += 1
                 if email:

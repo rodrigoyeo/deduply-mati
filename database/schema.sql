@@ -1,6 +1,6 @@
 -- Deduply Database Schema for Supabase/PostgreSQL
 -- Run this in Supabase SQL Editor to create all tables
--- Version 5.2 - Uses junction tables for contact-campaign and contact-list relationships
+-- Version 5.3 - Added new contact fields and technologies junction table
 
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
@@ -64,9 +64,23 @@ CREATE TABLE IF NOT EXISTS contacts (
     website TEXT,
     domain TEXT,
     company_linkedin_url TEXT,
+    -- Person location fields
+    city TEXT,
+    state TEXT,
+    country TEXT,
+    -- Company location fields
     company_city TEXT,
     company_state TEXT,
     company_country TEXT,
+    company_street_address TEXT,
+    company_postal_code TEXT,
+    -- Company details
+    annual_revenue BIGINT,
+    annual_revenue_text TEXT,
+    company_description TEXT,
+    company_seo_description TEXT,
+    company_founded_year INTEGER,
+    -- System fields
     region TEXT,
     country_strategy TEXT,
     status TEXT DEFAULT 'Lead',
@@ -99,6 +113,22 @@ CREATE TABLE IF NOT EXISTS contact_lists (
     list_id INTEGER NOT NULL REFERENCES outreach_lists(id) ON DELETE CASCADE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(contact_id, list_id)
+);
+
+-- Technologies table (for filtering contacts by tech stack)
+CREATE TABLE IF NOT EXISTS technologies (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Junction table: Contact-Technology relationships (many-to-many)
+CREATE TABLE IF NOT EXISTS contact_technologies (
+    id SERIAL PRIMARY KEY,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    technology_id INTEGER NOT NULL REFERENCES technologies(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contact_id, technology_id)
 );
 
 -- Email templates table
@@ -158,6 +188,9 @@ CREATE INDEX IF NOT EXISTS idx_contact_campaigns_contact ON contact_campaigns(co
 CREATE INDEX IF NOT EXISTS idx_contact_campaigns_campaign ON contact_campaigns(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_contact_lists_contact ON contact_lists(contact_id);
 CREATE INDEX IF NOT EXISTS idx_contact_lists_list ON contact_lists(list_id);
+CREATE INDEX IF NOT EXISTS idx_contact_technologies_contact ON contact_technologies(contact_id);
+CREATE INDEX IF NOT EXISTS idx_contact_technologies_technology ON contact_technologies(technology_id);
+CREATE INDEX IF NOT EXISTS idx_technologies_name ON technologies(name);
 
 -- Insert default admin user (password: admin123)
 -- Change this password after first login!
