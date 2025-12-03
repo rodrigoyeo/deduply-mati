@@ -10,9 +10,18 @@ from contextlib import contextmanager
 DATABASE_URL = os.getenv("DATABASE_URL")
 USE_POSTGRES = DATABASE_URL is not None and DATABASE_URL.startswith("postgresql")
 
+# Debug logging at startup
+print(f"[DB CONFIG] DATABASE_URL set: {DATABASE_URL is not None}")
+print(f"[DB CONFIG] USE_POSTGRES: {USE_POSTGRES}")
+if DATABASE_URL:
+    # Print masked URL for debugging (hide password)
+    masked = DATABASE_URL[:20] + "***" + DATABASE_URL[-30:] if len(DATABASE_URL) > 50 else "***"
+    print(f"[DB CONFIG] URL preview: {masked}")
+
 if USE_POSTGRES:
     import psycopg2
     import psycopg2.extras
+    print("[DB CONFIG] psycopg2 imported successfully")
 
 class DatabaseConnection:
     """Wrapper to provide consistent interface for both SQLite and PostgreSQL"""
