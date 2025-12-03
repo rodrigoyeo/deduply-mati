@@ -4,7 +4,16 @@ Supports both SQLite (local development) and PostgreSQL (production/Supabase)
 """
 import os
 import sqlite3
+import socket
 from contextlib import contextmanager
+from urllib.parse import urlparse, urlunparse
+
+# Force IPv4 for database connections (Railway doesn't support IPv6 outbound)
+original_getaddrinfo = socket.getaddrinfo
+
+def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    """Force IPv4 resolution for database hosts"""
+    return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
 # Check if we have a PostgreSQL URL (production) or use SQLite (local)
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -75,9 +84,15 @@ class DatabaseConnection:
 def get_db():
     """Get a database connection (SQLite for local, PostgreSQL for production)"""
     if USE_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = False
-        return DatabaseConnection(conn, is_postgres=True)
+        # Force IPv4 for Railway (doesn't support IPv6 outbound connections)
+        socket.getaddrinfo = ipv4_only_getaddrinfo
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            conn.autocommit = False
+            return DatabaseConnection(conn, is_postgres=True)
+        finally:
+            # Restore original getaddrinfo
+            socket.getaddrinfo = original_getaddrinfo
     else:
         # Local SQLite
         db_path = os.getenv("DATABASE_PATH", "deduply.db")
