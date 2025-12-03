@@ -107,13 +107,27 @@ def init_db():
     db = get_db()
 
     if USE_POSTGRES:
-        # For PostgreSQL, we expect tables to be created via schema.sql in Supabase
-        # Just verify connection works
+        # For PostgreSQL, verify connection and create default admin if needed
         try:
             db.execute("SELECT 1")
             print("PostgreSQL connection successful")
+
+            # Create default admin user if no users exist
+            import hashlib
+            import secrets
+            cursor = db.execute("SELECT COUNT(*) FROM users")
+            count = cursor.fetchone()[0]
+            if count == 0:
+                token = secrets.token_urlsafe(32)
+                pwd_hash = hashlib.sha256("admin123".encode()).hexdigest()
+                db.execute(
+                    "INSERT INTO users (email, password_hash, name, role, api_token, is_active) VALUES (%s, %s, %s, %s, %s, %s)",
+                    ("admin@deduply.io", pwd_hash, "Admin", "admin", token, True)
+                )
+                db.commit()
+                print("Created default admin user: admin@deduply.io / admin123")
         except Exception as e:
-            print(f"PostgreSQL connection error: {e}")
+            print(f"PostgreSQL init error: {e}")
         db.close()
         return
 
