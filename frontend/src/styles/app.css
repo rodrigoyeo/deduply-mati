@@ -4601,3 +4601,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   .modal { max-height: 95vh; }
   .modal-body { padding: 16px; }
 }
+
+/* Password Form Styles */
+.password-form { max-width: 400px; }
+.password-form .form-group { margin-bottom: 20px; }
+.password-form .btn { margin-top: 8px; }

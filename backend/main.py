@@ -17,6 +17,7 @@ import io
 import hashlib
 import secrets
 import os
+import bcrypt
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "deduply.db")
 
@@ -140,6 +141,20 @@ def init_db():
     conn.commit(); conn.close()
 
 init_db()
+
+# Password helper functions (supports both legacy SHA256 and new bcrypt)
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt"""
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    """Verify password against stored hash (supports both SHA256 legacy and bcrypt)"""
+    # Check if it's a bcrypt hash (starts with $2b$)
+    if stored_hash.startswith('$2b$') or stored_hash.startswith('$2a$'):
+        return bcrypt.checkpw(password.encode(), stored_hash.encode())
+    # Legacy SHA256 hash
+    sha256_hash = hashlib.sha256(password.encode()).hexdigest()
+    return sha256_hash == stored_hash
 
 # Helper functions for junction tables
 def get_contact_campaigns(conn, contact_id):
@@ -392,9 +407,11 @@ def health_check():
 
 @app.post("/api/auth/login")
 def login(creds: UserLogin):
-    conn = get_db(); pwd_hash = hashlib.sha256(creds.password.encode()).hexdigest()
-    user = conn.execute("SELECT * FROM users WHERE email=? AND password_hash=? AND is_active=1", (creds.email, pwd_hash)).fetchone(); conn.close()
-    if not user: raise HTTPException(401, "Invalid credentials")
+    conn = get_db()
+    user = conn.execute("SELECT * FROM users WHERE email=? AND is_active=1", (creds.email,)).fetchone()
+    conn.close()
+    if not user or not verify_password(creds.password, user['password_hash']):
+        raise HTTPException(401, "Invalid credentials")
     return {"token": user['api_token'], "user": {"id": user['id'], "email": user['email'], "name": user['name'], "role": user['role']}}
 
 @app.get("/api/auth/me")
@@ -406,11 +423,38 @@ def get_me(user: dict = Depends(get_current_user)):
 def register(user: UserCreate):
     conn = get_db()
     try:
-        token = secrets.token_urlsafe(32); pwd_hash = hashlib.sha256(user.password.encode()).hexdigest()
+        token = secrets.token_urlsafe(32)
+        pwd_hash = hash_password(user.password)  # Use bcrypt
         conn.execute("INSERT INTO users (email, password_hash, name, role, api_token) VALUES (?, ?, ?, ?, ?)", (user.email, pwd_hash, user.name, user.role, token))
         conn.commit(); return {"message": "Created", "token": token}
     except sqlite3.IntegrityError: raise HTTPException(400, "Email exists")
     finally: conn.close()
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+
+@app.post("/api/auth/change-password")
+def change_password(data: ChangePassword, user: dict = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    conn = get_db()
+    db_user = conn.execute("SELECT * FROM users WHERE id=?", (user['id'],)).fetchone()
+
+    if not db_user or not verify_password(data.current_password, db_user['password_hash']):
+        conn.close()
+        raise HTTPException(400, "Current password is incorrect")
+
+    if len(data.new_password) < 6:
+        conn.close()
+        raise HTTPException(400, "New password must be at least 6 characters")
+
+    new_hash = hash_password(data.new_password)
+    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, user['id']))
+    conn.commit()
+    conn.close()
+    return {"message": "Password changed successfully"}
 
 @app.get("/api/users")
 def get_users():

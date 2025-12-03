@@ -2050,13 +2050,35 @@ const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }
 // Settings Page with Enhanced Webhooks
 const SettingsPage = () => {
   const { addToast } = useToast();
-  const [tab, setTab] = useState('users');
+  const [tab, setTab] = useState('account');
   const { data: users, refetch } = useData('/users');
   const { data: webhooks, refetch: refetchWebhooks } = useData('/webhooks?limit=20');
   const [showAddUser, setShowAddUser] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
+  const [changingPassword, setChangingPassword] = useState(false);
   const handleAddUser = async (data) => { try { await api.post('/auth/register', data); addToast('User created!', 'success'); setShowAddUser(false); refetch(); } catch (e) { addToast(e.message, 'error'); } };
   const handleDeleteUser = async (id) => { if (!window.confirm('Deactivate this user?')) return; try { await api.delete(`/users/${id}`); addToast('User deactivated', 'success'); refetch(); } catch (e) { addToast(e.message, 'error'); } };
   const copyUrl = (url) => { navigator.clipboard.writeText(url); addToast('URL copied to clipboard!', 'success'); };
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (passwordForm.new !== passwordForm.confirm) {
+      addToast('New passwords do not match', 'error');
+      return;
+    }
+    if (passwordForm.new.length < 6) {
+      addToast('Password must be at least 6 characters', 'error');
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await api.post('/auth/change-password', { current_password: passwordForm.current, new_password: passwordForm.new });
+      addToast('Password changed successfully!', 'success');
+      setPasswordForm({ current: '', new: '', confirm: '' });
+    } catch (e) {
+      addToast(e.message || 'Failed to change password', 'error');
+    }
+    setChangingPassword(false);
+  };
 
   return (<div className="page settings-page">
     <div className="page-header">
@@ -2067,10 +2089,36 @@ const SettingsPage = () => {
     </div>
 
     <div className="settings-tabs">
+      <button className={tab === 'account' ? 'active' : ''} onClick={() => setTab('account')}><Settings size={16} /> Account</button>
       <button className={tab === 'users' ? 'active' : ''} onClick={() => setTab('users')}><Users size={16} /> Team</button>
       <button className={tab === 'webhooks' ? 'active' : ''} onClick={() => setTab('webhooks')}><Webhook size={16} /> Integrations</button>
       <button className={tab === 'database' ? 'active' : ''} onClick={() => setTab('database')}><Database size={16} /> Database</button>
     </div>
+
+    {tab === 'account' && (
+      <div className="settings-section">
+        <div className="section-header">
+          <h2>Change Password</h2>
+        </div>
+        <form onSubmit={handleChangePassword} className="password-form">
+          <div className="form-group">
+            <label>Current Password</label>
+            <input type="password" value={passwordForm.current} onChange={e => setPasswordForm({...passwordForm, current: e.target.value})} required placeholder="Enter current password" />
+          </div>
+          <div className="form-group">
+            <label>New Password</label>
+            <input type="password" value={passwordForm.new} onChange={e => setPasswordForm({...passwordForm, new: e.target.value})} required minLength={6} placeholder="Enter new password (min 6 chars)" />
+          </div>
+          <div className="form-group">
+            <label>Confirm New Password</label>
+            <input type="password" value={passwordForm.confirm} onChange={e => setPasswordForm({...passwordForm, confirm: e.target.value})} required placeholder="Confirm new password" />
+          </div>
+          <button type="submit" className="btn btn-primary" disabled={changingPassword}>
+            {changingPassword ? <><Loader2 size={16} className="spin" /> Changing...</> : 'Change Password'}
+          </button>
+        </form>
+      </div>
+    )}
 
     {tab === 'users' && (
       <div className="settings-section">
