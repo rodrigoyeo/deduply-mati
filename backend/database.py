@@ -62,6 +62,8 @@ class DatabaseConnection:
             query = re.sub(r'(is_duplicate|is_active|is_winner|processed) = 1', r'\1 = TRUE', query)
             # Handle SQLite last_insert_rowid() -> PostgreSQL LASTVAL()
             query = query.replace("last_insert_rowid()", "LASTVAL()")
+            # Handle SQLite GROUP_CONCAT -> PostgreSQL STRING_AGG
+            query = re.sub(r'GROUP_CONCAT\((\w+)\)', r"STRING_AGG(\1::text, ',')", query)
 
         # Use DictCursor for PostgreSQL to return rows with both index and key access
         if self.is_postgres:
