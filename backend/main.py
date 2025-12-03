@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
-import sqlite3
+from database import get_db, USE_POSTGRES
 import pandas as pd
 import json
 import io
@@ -19,29 +19,41 @@ import secrets
 import os
 import bcrypt
 
-DATABASE_PATH = os.getenv("DATABASE_PATH", "deduply.db")
-
 app = FastAPI(title="Deduply API", version="5.2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-def get_db():
-    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
 def init_db():
     conn = get_db()
-    cur = conn.cursor()
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS users (
+    if USE_POSTGRES:
+        # PostgreSQL: Tables already created via schema.sql in Supabase
+        # Just verify connection and ensure admin user exists
+        try:
+            result = conn.execute("SELECT 1").fetchone()
+            print("[DB] PostgreSQL connection successful")
+
+            # Check if admin user exists
+            result = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+            if result[0] == 0:
+                token = secrets.token_urlsafe(32)
+                pwd_hash = hashlib.sha256("admin123".encode()).hexdigest()
+                conn.execute("INSERT INTO users (email, password_hash, name, role, api_token) VALUES (?, ?, ?, ?, ?)",
+                           ("admin@deduply.io", pwd_hash, "Admin", "admin", token))
+                conn.commit()
+                print(f"Created admin: admin@deduply.io / admin123")
+        except Exception as e:
+            print(f"[DB] PostgreSQL error: {e}")
+        conn.close()
+        return
+
+    # SQLite: Create tables locally
+    print("[DB] Using SQLite database")
+    conn.execute("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL, name TEXT, role TEXT DEFAULT 'member',
         api_token TEXT UNIQUE, is_active BOOLEAN DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-    # Contacts table - NO longer has campaigns_assigned or outreach_lists TEXT fields
-    cur.execute("""CREATE TABLE IF NOT EXISTS contacts (
+    conn.execute("""CREATE TABLE IF NOT EXISTS contacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, first_name TEXT, last_name TEXT, email TEXT,
         title TEXT, headline TEXT, company TEXT, seniority TEXT, first_phone TEXT, corporate_phone TEXT,
         employees INTEGER, employee_bucket TEXT, industry TEXT, keywords TEXT,
@@ -51,14 +63,13 @@ def init_db():
         company_street_address TEXT, company_postal_code TEXT,
         annual_revenue INTEGER, annual_revenue_text TEXT,
         company_description TEXT, company_seo_description TEXT, company_founded_year INTEGER,
-        region TEXT, country_strategy TEXT,
-        status TEXT DEFAULT 'Lead',
+        region TEXT, country_strategy TEXT, status TEXT DEFAULT 'Lead',
         email_status TEXT DEFAULT 'Unknown', times_contacted INTEGER DEFAULT 0,
         last_contacted_at TIMESTAMP, opportunities INTEGER DEFAULT 0, meetings_booked INTEGER DEFAULT 0,
         notes TEXT, source_file TEXT, is_duplicate BOOLEAN DEFAULT 0, duplicate_of INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS campaigns (
+    conn.execute("""CREATE TABLE IF NOT EXISTS campaigns (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, description TEXT,
         country TEXT, status TEXT DEFAULT 'Active', total_leads INTEGER DEFAULT 0,
         emails_sent INTEGER DEFAULT 0, emails_opened INTEGER DEFAULT 0, emails_clicked INTEGER DEFAULT 0,
@@ -67,7 +78,7 @@ def init_db():
         open_rate REAL DEFAULT 0, click_rate REAL DEFAULT 0, reply_rate REAL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS email_templates (
+    conn.execute("""CREATE TABLE IF NOT EXISTS email_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, variant TEXT DEFAULT 'A',
         step_type TEXT DEFAULT 'Main', subject TEXT, body TEXT,
         times_sent INTEGER DEFAULT 0, times_opened INTEGER DEFAULT 0, times_clicked INTEGER DEFAULT 0,
@@ -75,7 +86,7 @@ def init_db():
         is_winner BOOLEAN DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS template_campaigns (
+    conn.execute("""CREATE TABLE IF NOT EXISTS template_campaigns (
         id INTEGER PRIMARY KEY AUTOINCREMENT, template_id INTEGER NOT NULL, campaign_id INTEGER NOT NULL,
         times_sent INTEGER DEFAULT 0, times_opened INTEGER DEFAULT 0, times_replied INTEGER DEFAULT 0,
         opportunities INTEGER DEFAULT 0, meetings INTEGER DEFAULT 0,
@@ -83,96 +94,50 @@ def init_db():
         FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
         UNIQUE(template_id, campaign_id))""")
 
-    # Junction table: contacts <-> campaigns
-    cur.execute("""CREATE TABLE IF NOT EXISTS contact_campaigns (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        contact_id INTEGER NOT NULL,
-        campaign_id INTEGER NOT NULL,
+    conn.execute("""CREATE TABLE IF NOT EXISTS contact_campaigns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, contact_id INTEGER NOT NULL, campaign_id INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
         FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
         UNIQUE(contact_id, campaign_id))""")
 
-    # Junction table: contacts <-> outreach_lists
-    cur.execute("""CREATE TABLE IF NOT EXISTS contact_lists (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        contact_id INTEGER NOT NULL,
-        list_id INTEGER NOT NULL,
+    conn.execute("""CREATE TABLE IF NOT EXISTS contact_lists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, contact_id INTEGER NOT NULL, list_id INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
         FOREIGN KEY (list_id) REFERENCES outreach_lists(id) ON DELETE CASCADE,
         UNIQUE(contact_id, list_id))""")
 
-    # Technologies table
-    cur.execute("""CREATE TABLE IF NOT EXISTS technologies (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
+    conn.execute("""CREATE TABLE IF NOT EXISTS technologies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-    # Junction table: contacts <-> technologies
-    cur.execute("""CREATE TABLE IF NOT EXISTS contact_technologies (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        contact_id INTEGER NOT NULL,
-        technology_id INTEGER NOT NULL,
+    conn.execute("""CREATE TABLE IF NOT EXISTS contact_technologies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, contact_id INTEGER NOT NULL, technology_id INTEGER NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
         FOREIGN KEY (technology_id) REFERENCES technologies(id) ON DELETE CASCADE,
         UNIQUE(contact_id, technology_id))""")
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS outreach_lists (
+    conn.execute("""CREATE TABLE IF NOT EXISTS outreach_lists (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
         description TEXT, contact_count INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-    cur.execute("""CREATE TABLE IF NOT EXISTS webhook_events (
+    conn.execute("""CREATE TABLE IF NOT EXISTS webhook_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT, event_type TEXT, email TEXT,
         campaign_name TEXT, template_id INTEGER, payload TEXT, processed BOOLEAN DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-    cur.execute("SELECT COUNT(*) FROM users")
-    if cur.fetchone()[0] == 0:
+    result = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+    if result[0] == 0:
         token = secrets.token_urlsafe(32)
         pwd_hash = hashlib.sha256("admin123".encode()).hexdigest()
-        cur.execute("INSERT INTO users (email, password_hash, name, role, api_token) VALUES (?, ?, ?, ?, ?)",
+        conn.execute("INSERT INTO users (email, password_hash, name, role, api_token) VALUES (?, ?, ?, ?, ?)",
                    ("admin@deduply.io", pwd_hash, "Admin", "admin", token))
         print(f"Created admin: admin@deduply.io / admin123")
 
-    # Create indexes
-    for idx in ["CREATE INDEX IF NOT EXISTS idx_email ON contacts(email)",
-                "CREATE INDEX IF NOT EXISTS idx_status ON contacts(status)",
-                "CREATE INDEX IF NOT EXISTS idx_dup ON contacts(is_duplicate)",
-                "CREATE INDEX IF NOT EXISTS idx_country_strategy ON contacts(country_strategy)",
-                "CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_campaigns(contact_id)",
-                "CREATE INDEX IF NOT EXISTS idx_cc_campaign ON contact_campaigns(campaign_id)",
-                "CREATE INDEX IF NOT EXISTS idx_cl_contact ON contact_lists(contact_id)",
-                "CREATE INDEX IF NOT EXISTS idx_cl_list ON contact_lists(list_id)",
-                "CREATE INDEX IF NOT EXISTS idx_ct_contact ON contact_technologies(contact_id)",
-                "CREATE INDEX IF NOT EXISTS idx_ct_tech ON contact_technologies(technology_id)",
-                "CREATE INDEX IF NOT EXISTS idx_tech_name ON technologies(name)"]:
-        try: cur.execute(idx)
-        except: pass
-
-    # Migration: Add columns if not exists
-    migrations = [
-        "ALTER TABLE contacts ADD COLUMN country_strategy TEXT",
-        "ALTER TABLE contacts ADD COLUMN city TEXT",
-        "ALTER TABLE contacts ADD COLUMN state TEXT",
-        "ALTER TABLE contacts ADD COLUMN country TEXT",
-        "ALTER TABLE contacts ADD COLUMN company_street_address TEXT",
-        "ALTER TABLE contacts ADD COLUMN company_postal_code TEXT",
-        "ALTER TABLE contacts ADD COLUMN annual_revenue INTEGER",
-        "ALTER TABLE contacts ADD COLUMN annual_revenue_text TEXT",
-        "ALTER TABLE contacts ADD COLUMN company_description TEXT",
-        "ALTER TABLE contacts ADD COLUMN company_seo_description TEXT",
-        "ALTER TABLE contacts ADD COLUMN company_founded_year INTEGER",
-        "ALTER TABLE campaigns ADD COLUMN country TEXT",
-        "ALTER TABLE template_campaigns ADD COLUMN opportunities INTEGER DEFAULT 0",
-        "ALTER TABLE template_campaigns ADD COLUMN meetings INTEGER DEFAULT 0"
-    ]
-    for m in migrations:
-        try: cur.execute(m)
-        except: pass
-
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
 init_db()
 
