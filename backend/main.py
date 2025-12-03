@@ -211,6 +211,16 @@ def get_contact_lists(conn, contact_id):
     """, (contact_id,)).fetchall()
     return ', '.join(r[0] for r in rows) if rows else None
 
+def get_contact_technologies(conn, contact_id):
+    """Get technology names for a contact as comma-separated string"""
+    rows = conn.execute("""
+        SELECT t.name FROM contact_technologies ct
+        JOIN technologies t ON ct.technology_id = t.id
+        WHERE ct.contact_id = ?
+        ORDER BY t.name
+    """, (contact_id,)).fetchall()
+    return ', '.join(r[0] for r in rows) if rows else None
+
 def set_contact_campaigns(conn, contact_id, campaign_names):
     """Set campaigns for a contact (replaces existing)"""
     conn.execute("DELETE FROM contact_campaigns WHERE contact_id=?", (contact_id,))
