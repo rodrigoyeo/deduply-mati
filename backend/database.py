@@ -30,7 +30,7 @@ if DATABASE_URL:
 if USE_POSTGRES:
     import psycopg2
     import psycopg2.extras
-    from psycopg2.extras import RealDictCursor
+    from psycopg2.extras import DictCursor
     print("[DB CONFIG] psycopg2 imported successfully")
 
 class DatabaseConnection:
@@ -56,10 +56,12 @@ class DatabaseConnection:
             # Handle boolean differences
             query = query.replace(" 0)", " FALSE)").replace(" 1)", " TRUE)")
             query = query.replace("=0", "=FALSE").replace("=1", "=TRUE")
+            # Handle SQLite last_insert_rowid() -> PostgreSQL LASTVAL()
+            query = query.replace("last_insert_rowid()", "LASTVAL()")
 
-        # Use RealDictCursor for PostgreSQL to return dict-like rows
+        # Use DictCursor for PostgreSQL to return rows with both index and key access
         if self.is_postgres:
-            cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+            cursor = self.conn.cursor(cursor_factory=DictCursor)
         else:
             cursor = self.conn.cursor()
         if params:
@@ -72,7 +74,7 @@ class DatabaseConnection:
         """Execute many queries"""
         if self.is_postgres:
             query = query.replace("?", "%s")
-            cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+            cursor = self.conn.cursor(cursor_factory=DictCursor)
         else:
             cursor = self.conn.cursor()
         cursor.executemany(query, params_list)
