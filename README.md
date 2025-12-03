@@ -64,13 +64,6 @@ deduply/
 └── DEPLOYMENT.md        # Deployment guide
 ```
 
-## Default Login
-
-- **Email**: admin@deduply.com
-- **Password**: admin123
-
-Change this after first login!
-
 ## Environment Variables
 
 | Variable | Description | Local | Production |
