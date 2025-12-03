@@ -893,7 +893,15 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
     setLoading(false);
   };
 
-  const targetColumns = ['', 'first_name', 'last_name', 'email', 'title', 'headline', 'company', 'seniority', 'first_phone', 'corporate_phone', 'employees', 'industry', 'keywords', 'person_linkedin_url', 'website', 'domain', 'company_linkedin_url', 'company_city', 'company_state', 'company_country', 'country_strategy', 'outreach_lists', 'campaigns_assigned', 'notes'];
+  const targetColumns = ['', 'first_name', 'last_name', 'email', 'title', 'headline', 'company', 'seniority', 'first_phone', 'corporate_phone', 'employees', 'employee_bucket', 'industry', 'keywords', 'person_linkedin_url', 'website', 'domain', 'company_linkedin_url',
+    // Person location
+    'city', 'state', 'country',
+    // Company location
+    'company_city', 'company_state', 'company_country', 'company_street_address', 'company_postal_code',
+    // Company details
+    'annual_revenue', 'annual_revenue_text', 'company_description', 'company_seo_description', 'company_technologies', 'company_founded_year',
+    // System fields
+    'country_strategy', 'outreach_lists', 'campaigns_assigned', 'notes'];
 
   return (<div>
     <div className="import-steps"><div className={`import-step ${step >= 1 ? (step > 1 ? 'done' : 'active') : ''}`}><span className="import-step-num">1</span> Upload</div><div className={`import-step ${step >= 2 ? (step > 2 ? 'done' : 'active') : ''}`}><span className="import-step-num">2</span> Map Columns</div><div className={`import-step ${step >= 3 ? (step > 3 ? 'done' : 'active') : ''}`}><span className="import-step-num">3</span> Options</div><div className={`import-step ${step >= 4 ? 'active' : ''}`}><span className="import-step-num">4</span> Complete</div></div>
