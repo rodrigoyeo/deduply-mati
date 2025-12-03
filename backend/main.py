@@ -566,6 +566,75 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
     conn.close()
     return {"data": result, "total": total, "page": page, "page_size": page_size, "total_pages": max(1, (total+page_size-1)//page_size)}
 
+@app.get("/api/contacts/export")
+def export_contacts(columns: Optional[str] = None, status: Optional[str] = None, campaigns: Optional[str] = None, outreach_lists: Optional[str] = None):
+    conn = get_db()
+    where = ["c.is_duplicate=0"]
+    params = []
+    joins = []
+
+    if status: where.append("c.status=?"); params.append(status)
+    if campaigns:
+        joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
+        where.append("camp.name=?"); params.append(campaigns)
+    if outreach_lists:
+        joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
+        where.append("ol.name=?"); params.append(outreach_lists)
+
+    all_cols = ['id', 'first_name', 'last_name', 'email', 'title', 'headline', 'company', 'seniority',
+        'first_phone', 'corporate_phone', 'employees', 'employee_bucket', 'industry', 'keywords',
+        'person_linkedin_url', 'website', 'domain', 'company_linkedin_url',
+        'city', 'state', 'country', 'company_city', 'company_state', 'company_country',
+        'company_street_address', 'company_postal_code', 'annual_revenue', 'annual_revenue_text',
+        'company_description', 'company_seo_description', 'company_founded_year',
+        'region', 'country_strategy', 'status', 'email_status', 'times_contacted', 'last_contacted_at',
+        'opportunities', 'meetings_booked', 'notes', 'created_at']
+    selected = [c.strip() for c in (columns or '').split(',') if c.strip() in all_cols] or all_cols
+
+    joins_sql = " ".join(joins)
+    where_sql = " AND ".join(where)
+
+    rows = conn.execute(f"SELECT DISTINCT c.id, {','.join(['c.'+c for c in selected if c != 'id'])} FROM contacts c {joins_sql} WHERE {where_sql}", params).fetchall()
+
+    data = []
+    for r in rows:
+        row_dict = dict(r)
+        cid = row_dict.get('id') or r[0]
+        row_dict['campaigns_assigned'] = get_contact_campaigns(conn, cid)
+        row_dict['outreach_lists'] = get_contact_lists(conn, cid)
+        row_dict['company_technologies'] = get_contact_technologies(conn, cid)
+        data.append(row_dict)
+
+    conn.close()
+
+    df = pd.DataFrame(data)
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    buf.seek(0)
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=contacts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"})
+
+@app.get("/api/contacts/columns")
+def get_columns():
+    return {"columns": [
+        {"id": "first_name", "label": "First Name"}, {"id": "last_name", "label": "Last Name"}, {"id": "email", "label": "Email"},
+        {"id": "title", "label": "Title"}, {"id": "headline", "label": "Headline"}, {"id": "company", "label": "Company"},
+        {"id": "seniority", "label": "Seniority"}, {"id": "first_phone", "label": "Phone"}, {"id": "corporate_phone", "label": "Corp. Phone"},
+        {"id": "employees", "label": "Employees"}, {"id": "employee_bucket", "label": "Company Size"}, {"id": "industry", "label": "Industry"},
+        {"id": "keywords", "label": "Keywords"}, {"id": "person_linkedin_url", "label": "LinkedIn"}, {"id": "website", "label": "Website"},
+        {"id": "domain", "label": "Domain"}, {"id": "company_linkedin_url", "label": "Company LinkedIn"},
+        {"id": "city", "label": "City"}, {"id": "state", "label": "State"}, {"id": "country", "label": "Country"},
+        {"id": "company_city", "label": "Company City"}, {"id": "company_state", "label": "Company State"}, {"id": "company_country", "label": "Company Country"},
+        {"id": "company_street_address", "label": "Company Address"}, {"id": "company_postal_code", "label": "Postal Code"},
+        {"id": "annual_revenue", "label": "Revenue"}, {"id": "annual_revenue_text", "label": "Revenue (Text)"},
+        {"id": "company_description", "label": "Company Desc"}, {"id": "company_seo_description", "label": "SEO Desc"},
+        {"id": "company_technologies", "label": "Technologies"}, {"id": "company_founded_year", "label": "Founded"},
+        {"id": "region", "label": "Region"}, {"id": "country_strategy", "label": "Country Strategy"},
+        {"id": "outreach_lists", "label": "Outreach Lists"}, {"id": "campaigns_assigned", "label": "Campaigns"},
+        {"id": "status", "label": "Status"}, {"id": "email_status", "label": "Email Status"},
+        {"id": "times_contacted", "label": "Times Contacted"}, {"id": "last_contacted_at", "label": "Last Contact"},
+        {"id": "notes", "label": "Notes"}, {"id": "created_at", "label": "Created"}
+    ]}
+
 @app.get("/api/contacts/{contact_id}")
 def get_contact(contact_id: int):
     conn = get_db()
@@ -1159,50 +1228,6 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
     conn.close()
     update_counts()
     return stats
-
-@app.get("/api/contacts/export")
-def export_contacts(columns: Optional[str] = None, status: Optional[str] = None, campaigns: Optional[str] = None, outreach_lists: Optional[str] = None):
-    conn = get_db()
-    where = ["c.is_duplicate=0"]
-    params = []
-    joins = []
-
-    if status: where.append("c.status=?"); params.append(status)
-    if campaigns:
-        joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
-        where.append("camp.name=?"); params.append(campaigns)
-    if outreach_lists:
-        joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
-        where.append("ol.name=?"); params.append(outreach_lists)
-
-    all_cols = ['id','first_name','last_name','email','title','headline','company','seniority','first_phone','corporate_phone','employees','employee_bucket','industry','keywords','person_linkedin_url','website','domain','company_linkedin_url','company_city','company_state','company_country','region','status','email_status','times_contacted','opportunities','meetings_booked','notes','created_at']
-    selected = [c.strip() for c in (columns or '').split(',') if c.strip() in all_cols] or all_cols[:15]
-
-    joins_sql = " ".join(joins)
-    where_sql = " AND ".join(where)
-
-    # Get contacts
-    rows = conn.execute(f"SELECT DISTINCT c.id, {','.join(['c.'+c for c in selected if c != 'id'])} FROM contacts c {joins_sql} WHERE {where_sql}", params).fetchall()
-
-    # Build dataframe with campaigns and lists
-    data = []
-    for r in rows:
-        row_dict = dict(r)
-        row_dict['campaigns_assigned'] = get_contact_campaigns(conn, row_dict['id'])
-        row_dict['outreach_lists'] = get_contact_lists(conn, row_dict['id'])
-        data.append(row_dict)
-
-    conn.close()
-
-    df = pd.DataFrame(data)
-    buf = io.StringIO()
-    df.to_csv(buf, index=False)
-    buf.seek(0)
-    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=contacts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"})
-
-@app.get("/api/contacts/columns")
-def get_columns():
-    return {"columns": [{"id": "first_name", "label": "First Name"}, {"id": "last_name", "label": "Last Name"}, {"id": "email", "label": "Email"}, {"id": "title", "label": "Title"}, {"id": "headline", "label": "Headline"}, {"id": "company", "label": "Company"}, {"id": "seniority", "label": "Seniority"}, {"id": "first_phone", "label": "Phone"}, {"id": "corporate_phone", "label": "Corp. Phone"}, {"id": "employees", "label": "Employees"}, {"id": "employee_bucket", "label": "Company Size"}, {"id": "industry", "label": "Industry"}, {"id": "person_linkedin_url", "label": "LinkedIn"}, {"id": "website", "label": "Website"}, {"id": "company_city", "label": "City"}, {"id": "company_state", "label": "State"}, {"id": "company_country", "label": "Country"}, {"id": "region", "label": "Region"}, {"id": "country_strategy", "label": "Country Strategy"}, {"id": "outreach_lists", "label": "Outreach Lists"}, {"id": "campaigns_assigned", "label": "Campaigns"}, {"id": "status", "label": "Status"}, {"id": "email_status", "label": "Email Status"}, {"id": "times_contacted", "label": "Times Contacted"}, {"id": "notes", "label": "Notes"}, {"id": "created_at", "label": "Created"}]}
 
 @app.get("/api/filters")
 def get_filters():

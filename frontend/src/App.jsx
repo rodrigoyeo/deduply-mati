@@ -980,7 +980,19 @@ const ExportForm = ({ filters, onClose }) => {
   ];
   const [selected, setSelected] = useState(allColumns.slice(0, 10).map(c => c.id));
   const handleExport = () => { const params = new URLSearchParams(); if (selected.length) params.append('columns', selected.join(',')); Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); }); window.open(`${API}/contacts/export?${params}`, '_blank'); onClose(); };
-  return (<div><p style={{ marginBottom: 16 }}>Select columns to include:</p><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 20 }}>{allColumns.map(col => (<label key={col.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={selected.includes(col.id)} onChange={e => { if (e.target.checked) setSelected([...selected, col.id]); else setSelected(selected.filter(c => c !== col.id)); }} />{col.label}</label>))}</div><div className="modal-actions"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={handleExport}><Download size={16} /> Export CSV</button></div></div>);
+  return (<div>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <p style={{ margin: 0 }}>Select columns to include:</p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-text" onClick={() => setSelected(allColumns.map(c => c.id))}>Select All</button>
+        <button className="btn btn-text" onClick={() => setSelected([])}>Clear All</button>
+      </div>
+    </div>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 20, maxHeight: 300, overflowY: 'auto' }}>
+      {allColumns.map(col => (<label key={col.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={selected.includes(col.id)} onChange={e => { if (e.target.checked) setSelected([...selected, col.id]); else setSelected(selected.filter(c => c !== col.id)); }} />{col.label}</label>))}
+    </div>
+    <div className="modal-actions"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={handleExport}><Download size={16} /> Export CSV</button></div>
+  </div>);
 };
 
 // Add Contact Form
