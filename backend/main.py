@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Deduply v5.1 - Cold Email Operations Platform
-FastAPI Backend with full CSV support, proper relationships, duplicate detection
+Deduply v5.2 - Cold Email Operations Platform
+FastAPI Backend with proper relational database design
 """
 
 from fastapi import FastAPI, HTTPException, Request, Query, UploadFile, File, Depends, Header
@@ -20,24 +20,26 @@ import os
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "deduply.db")
 
-app = FastAPI(title="Deduply API", version="5.1")
+app = FastAPI(title="Deduply API", version="5.2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 def get_db():
     conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 def init_db():
     conn = get_db()
     cur = conn.cursor()
-    
+
     cur.execute("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL, name TEXT, role TEXT DEFAULT 'member',
         api_token TEXT UNIQUE, is_active BOOLEAN DEFAULT 1, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-    
+
+    # Contacts table - NO longer has campaigns_assigned or outreach_lists TEXT fields
     cur.execute("""CREATE TABLE IF NOT EXISTS contacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, first_name TEXT, last_name TEXT, email TEXT,
         title TEXT, headline TEXT, company TEXT, seniority TEXT, first_phone TEXT, corporate_phone TEXT,
@@ -45,12 +47,12 @@ def init_db():
         person_linkedin_url TEXT, website TEXT, domain TEXT, company_linkedin_url TEXT,
         company_city TEXT, company_state TEXT, company_country TEXT, region TEXT,
         country_strategy TEXT,
-        outreach_lists TEXT, campaigns_assigned TEXT, status TEXT DEFAULT 'Lead',
+        status TEXT DEFAULT 'Lead',
         email_status TEXT DEFAULT 'Unknown', times_contacted INTEGER DEFAULT 0,
         last_contacted_at TIMESTAMP, opportunities INTEGER DEFAULT 0, meetings_booked INTEGER DEFAULT 0,
         notes TEXT, source_file TEXT, is_duplicate BOOLEAN DEFAULT 0, duplicate_of INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-    
+
     cur.execute("""CREATE TABLE IF NOT EXISTS campaigns (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, description TEXT,
         country TEXT, status TEXT DEFAULT 'Active', total_leads INTEGER DEFAULT 0,
@@ -59,7 +61,7 @@ def init_db():
         opportunities INTEGER DEFAULT 0, meetings_booked INTEGER DEFAULT 0,
         open_rate REAL DEFAULT 0, click_rate REAL DEFAULT 0, reply_rate REAL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-    
+
     cur.execute("""CREATE TABLE IF NOT EXISTS email_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, variant TEXT DEFAULT 'A',
         step_type TEXT DEFAULT 'Main', subject TEXT, body TEXT,
@@ -67,7 +69,7 @@ def init_db():
         times_replied INTEGER DEFAULT 0, open_rate REAL DEFAULT 0, reply_rate REAL DEFAULT 0,
         is_winner BOOLEAN DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-    
+
     cur.execute("""CREATE TABLE IF NOT EXISTS template_campaigns (
         id INTEGER PRIMARY KEY AUTOINCREMENT, template_id INTEGER NOT NULL, campaign_id INTEGER NOT NULL,
         times_sent INTEGER DEFAULT 0, times_opened INTEGER DEFAULT 0, times_replied INTEGER DEFAULT 0,
@@ -76,23 +78,35 @@ def init_db():
         FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
         UNIQUE(template_id, campaign_id))""")
 
-    # Migration: Add opportunities and meetings columns if they don't exist
-    try:
-        cur.execute("ALTER TABLE template_campaigns ADD COLUMN opportunities INTEGER DEFAULT 0")
-    except: pass
-    try:
-        cur.execute("ALTER TABLE template_campaigns ADD COLUMN meetings INTEGER DEFAULT 0")
-    except: pass
-    
+    # Junction table: contacts <-> campaigns
+    cur.execute("""CREATE TABLE IF NOT EXISTS contact_campaigns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact_id INTEGER NOT NULL,
+        campaign_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+        FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
+        UNIQUE(contact_id, campaign_id))""")
+
+    # Junction table: contacts <-> outreach_lists
+    cur.execute("""CREATE TABLE IF NOT EXISTS contact_lists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact_id INTEGER NOT NULL,
+        list_id INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+        FOREIGN KEY (list_id) REFERENCES outreach_lists(id) ON DELETE CASCADE,
+        UNIQUE(contact_id, list_id))""")
+
     cur.execute("""CREATE TABLE IF NOT EXISTS outreach_lists (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
         description TEXT, contact_count INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-    
+
     cur.execute("""CREATE TABLE IF NOT EXISTS webhook_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT, event_type TEXT, email TEXT,
         campaign_name TEXT, template_id INTEGER, payload TEXT, processed BOOLEAN DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-    
+
     cur.execute("SELECT COUNT(*) FROM users")
     if cur.fetchone()[0] == 0:
         token = secrets.token_urlsafe(32)
@@ -100,26 +114,115 @@ def init_db():
         cur.execute("INSERT INTO users (email, password_hash, name, role, api_token) VALUES (?, ?, ?, ?, ?)",
                    ("admin@deduply.io", pwd_hash, "Admin", "admin", token))
         print(f"Created admin: admin@deduply.io / admin123")
-    
+
+    # Create indexes
     for idx in ["CREATE INDEX IF NOT EXISTS idx_email ON contacts(email)",
                 "CREATE INDEX IF NOT EXISTS idx_status ON contacts(status)",
                 "CREATE INDEX IF NOT EXISTS idx_dup ON contacts(is_duplicate)",
-                "CREATE INDEX IF NOT EXISTS idx_country_strategy ON contacts(country_strategy)"]:
+                "CREATE INDEX IF NOT EXISTS idx_country_strategy ON contacts(country_strategy)",
+                "CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_campaigns(contact_id)",
+                "CREATE INDEX IF NOT EXISTS idx_cc_campaign ON contact_campaigns(campaign_id)",
+                "CREATE INDEX IF NOT EXISTS idx_cl_contact ON contact_lists(contact_id)",
+                "CREATE INDEX IF NOT EXISTS idx_cl_list ON contact_lists(list_id)"]:
         try: cur.execute(idx)
         except: pass
 
-    # Migration: Add new columns to existing tables
-    migrations = [
-        "ALTER TABLE contacts ADD COLUMN country_strategy TEXT",
-        "ALTER TABLE campaigns ADD COLUMN country TEXT"
-    ]
-    for m in migrations:
-        try: cur.execute(m)
-        except: pass  # Column already exists
+    # Migration: Add country_strategy column if not exists
+    try: cur.execute("ALTER TABLE contacts ADD COLUMN country_strategy TEXT")
+    except: pass
+    try: cur.execute("ALTER TABLE campaigns ADD COLUMN country TEXT")
+    except: pass
+    try: cur.execute("ALTER TABLE template_campaigns ADD COLUMN opportunities INTEGER DEFAULT 0")
+    except: pass
+    try: cur.execute("ALTER TABLE template_campaigns ADD COLUMN meetings INTEGER DEFAULT 0")
+    except: pass
 
     conn.commit(); conn.close()
 
 init_db()
+
+# Helper functions for junction tables
+def get_contact_campaigns(conn, contact_id):
+    """Get campaign names for a contact as comma-separated string"""
+    rows = conn.execute("""
+        SELECT c.name FROM contact_campaigns cc
+        JOIN campaigns c ON cc.campaign_id = c.id
+        WHERE cc.contact_id = ?
+        ORDER BY c.name
+    """, (contact_id,)).fetchall()
+    return ', '.join(r[0] for r in rows) if rows else None
+
+def get_contact_lists(conn, contact_id):
+    """Get outreach list names for a contact as comma-separated string"""
+    rows = conn.execute("""
+        SELECT ol.name FROM contact_lists cl
+        JOIN outreach_lists ol ON cl.list_id = ol.id
+        WHERE cl.contact_id = ?
+        ORDER BY ol.name
+    """, (contact_id,)).fetchall()
+    return ', '.join(r[0] for r in rows) if rows else None
+
+def set_contact_campaigns(conn, contact_id, campaign_names):
+    """Set campaigns for a contact (replaces existing)"""
+    conn.execute("DELETE FROM contact_campaigns WHERE contact_id=?", (contact_id,))
+    if campaign_names:
+        names = [n.strip() for n in campaign_names.split(',') if n.strip()]
+        for name in names:
+            # Ensure campaign exists
+            conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (name,))
+            camp = conn.execute("SELECT id FROM campaigns WHERE name=?", (name,)).fetchone()
+            if camp:
+                conn.execute("INSERT OR IGNORE INTO contact_campaigns (contact_id, campaign_id) VALUES (?, ?)",
+                           (contact_id, camp[0]))
+
+def set_contact_lists(conn, contact_id, list_names):
+    """Set outreach lists for a contact (replaces existing)"""
+    conn.execute("DELETE FROM contact_lists WHERE contact_id=?", (contact_id,))
+    if list_names:
+        names = [n.strip() for n in list_names.split(',') if n.strip()]
+        for name in names:
+            # Ensure list exists
+            conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (name,))
+            lst = conn.execute("SELECT id FROM outreach_lists WHERE name=?", (name,)).fetchone()
+            if lst:
+                conn.execute("INSERT OR IGNORE INTO contact_lists (contact_id, list_id) VALUES (?, ?)",
+                           (contact_id, lst[0]))
+
+def add_contact_campaign(conn, contact_id, campaign_name):
+    """Add a single campaign to a contact"""
+    conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (campaign_name,))
+    camp = conn.execute("SELECT id FROM campaigns WHERE name=?", (campaign_name,)).fetchone()
+    if camp:
+        conn.execute("INSERT OR IGNORE INTO contact_campaigns (contact_id, campaign_id) VALUES (?, ?)",
+                   (contact_id, camp[0]))
+
+def add_contact_list(conn, contact_id, list_name):
+    """Add a single outreach list to a contact"""
+    conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (list_name,))
+    lst = conn.execute("SELECT id FROM outreach_lists WHERE name=?", (list_name,)).fetchone()
+    if lst:
+        conn.execute("INSERT OR IGNORE INTO contact_lists (contact_id, list_id) VALUES (?, ?)",
+                   (contact_id, lst[0]))
+
+def remove_contact_campaign(conn, contact_id, campaign_name):
+    """Remove a single campaign from a contact"""
+    camp = conn.execute("SELECT id FROM campaigns WHERE name=?", (campaign_name,)).fetchone()
+    if camp:
+        conn.execute("DELETE FROM contact_campaigns WHERE contact_id=? AND campaign_id=?",
+                   (contact_id, camp[0]))
+
+def remove_contact_list(conn, contact_id, list_name):
+    """Remove a single outreach list from a contact"""
+    lst = conn.execute("SELECT id FROM outreach_lists WHERE name=?", (list_name,)).fetchone()
+    if lst:
+        conn.execute("DELETE FROM contact_lists WHERE contact_id=? AND list_id=?",
+                   (contact_id, lst[0]))
+
+def enrich_contact_with_relations(conn, contact_dict):
+    """Add campaigns_assigned and outreach_lists to contact dict"""
+    contact_dict['campaigns_assigned'] = get_contact_campaigns(conn, contact_dict['id'])
+    contact_dict['outreach_lists'] = get_contact_lists(conn, contact_dict['id'])
+    return contact_dict
 
 class UserLogin(BaseModel):
     email: str
@@ -161,10 +264,10 @@ class ContactUpdate(BaseModel):
 
 class BulkUpdateRequest(BaseModel):
     contact_ids: Optional[List[int]] = None
-    filters: Optional[dict] = None  # For "select all" with filters
-    field: str  # The field to update
+    filters: Optional[dict] = None
+    field: str
     value: Optional[str] = None
-    action: Optional[str] = None  # add, remove, set, delete
+    action: Optional[str] = None
 
 class CampaignCreate(BaseModel):
     name: str
@@ -223,17 +326,29 @@ def compute_employee_bucket(emp):
     except: return None
 
 def update_counts():
+    """Update campaign total_leads and outreach_list contact_count from junction tables"""
     conn = get_db()
-    for row in conn.execute("SELECT name FROM campaigns"):
-        cnt = conn.execute("SELECT COUNT(*) FROM contacts WHERE campaigns_assigned LIKE ? AND is_duplicate=0", (f"%{row[0]}%",)).fetchone()[0]
-        conn.execute("UPDATE campaigns SET total_leads=? WHERE name=?", (cnt, row[0]))
-    for row in conn.execute("SELECT name FROM outreach_lists"):
-        cnt = conn.execute("SELECT COUNT(*) FROM contacts WHERE outreach_lists LIKE ? AND is_duplicate=0", (f"%{row[0]}%",)).fetchone()[0]
-        conn.execute("UPDATE outreach_lists SET contact_count=? WHERE name=?", (cnt, row[0]))
+    # Update campaign counts using junction table
+    conn.execute("""
+        UPDATE campaigns SET total_leads = (
+            SELECT COUNT(DISTINCT cc.contact_id)
+            FROM contact_campaigns cc
+            JOIN contacts c ON cc.contact_id = c.id
+            WHERE cc.campaign_id = campaigns.id AND c.is_duplicate = 0
+        )
+    """)
+    # Update outreach list counts using junction table
+    conn.execute("""
+        UPDATE outreach_lists SET contact_count = (
+            SELECT COUNT(DISTINCT cl.contact_id)
+            FROM contact_lists cl
+            JOIN contacts c ON cl.contact_id = c.id
+            WHERE cl.list_id = outreach_lists.id AND c.is_duplicate = 0
+        )
+    """)
     conn.commit(); conn.close()
 
 def recalc_rates(campaign_id, conn=None):
-    """Recalculate campaign rates. Can use existing connection or create new one."""
     should_close = conn is None
     if should_close:
         conn = get_db()
@@ -246,7 +361,6 @@ def recalc_rates(campaign_id, conn=None):
         conn.close()
 
 def recalc_template_rates(template_id, conn=None):
-    """Recalculate template rates. Can use existing connection or create new one."""
     should_close = conn is None
     if should_close:
         conn = get_db()
@@ -313,57 +427,128 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
                 campaigns: Optional[str] = None, outreach_lists: Optional[str] = None, country: Optional[str] = None,
                 country_strategy: Optional[str] = None, seniority: Optional[str] = None, industry: Optional[str] = None,
                 show_duplicates: bool = False, sort_by: str = "id", sort_order: str = "desc"):
-    conn = get_db(); where = ["1=1"] if show_duplicates else ["is_duplicate=0"]; params = []
-    if search: where.append("(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR title LIKE ?)"); params.extend([f"%{search}%"]*5)
-    if status: where.append("status=?"); params.append(status)
-    if campaigns: where.append("campaigns_assigned LIKE ?"); params.append(f"%{campaigns}%")
-    if outreach_lists: where.append("outreach_lists LIKE ?"); params.append(f"%{outreach_lists}%")
-    if country: where.append("company_country=?"); params.append(country)
-    if country_strategy: where.append("country_strategy=?"); params.append(country_strategy)
-    if seniority: where.append("seniority=?"); params.append(seniority)
-    if industry: where.append("industry LIKE ?"); params.append(f"%{industry}%")
+    conn = get_db()
+    where = ["1=1"] if show_duplicates else ["c.is_duplicate=0"]
+    params = []
+    joins = []
+
+    if search:
+        where.append("(c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.company LIKE ? OR c.title LIKE ?)")
+        params.extend([f"%{search}%"]*5)
+    if status: where.append("c.status=?"); params.append(status)
+    if country: where.append("c.company_country=?"); params.append(country)
+    if country_strategy: where.append("c.country_strategy=?"); params.append(country_strategy)
+    if seniority: where.append("c.seniority=?"); params.append(seniority)
+    if industry: where.append("c.industry LIKE ?"); params.append(f"%{industry}%")
+
+    # Filter by campaign using junction table
+    if campaigns:
+        joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
+        where.append("camp.name = ?")
+        params.append(campaigns)
+
+    # Filter by outreach list using junction table
+    if outreach_lists:
+        joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
+        where.append("ol.name = ?")
+        params.append(outreach_lists)
+
     where_sql = " AND ".join(where)
-    total = conn.execute(f"SELECT COUNT(*) FROM contacts WHERE {where_sql}", params).fetchone()[0]
+    joins_sql = " ".join(joins)
+
+    # Count total (use DISTINCT because of joins)
+    total = conn.execute(f"SELECT COUNT(DISTINCT c.id) FROM contacts c {joins_sql} WHERE {where_sql}", params).fetchone()[0]
+
     valid_sorts = ['id', 'first_name', 'last_name', 'email', 'company', 'status', 'created_at', 'employees']
     sort_by = sort_by if sort_by in valid_sorts else 'id'
-    rows = conn.execute(f"SELECT * FROM contacts WHERE {where_sql} ORDER BY {sort_by} {'DESC' if sort_order.lower()=='desc' else 'ASC'} LIMIT ? OFFSET ?",
-                       params + [page_size, (page-1)*page_size]).fetchall(); conn.close()
-    return {"data": [dict(r) for r in rows], "total": total, "page": page, "page_size": page_size, "total_pages": max(1, (total+page_size-1)//page_size)}
+
+    # Get contacts
+    rows = conn.execute(f"""
+        SELECT DISTINCT c.* FROM contacts c {joins_sql}
+        WHERE {where_sql}
+        ORDER BY c.{sort_by} {'DESC' if sort_order.lower()=='desc' else 'ASC'}
+        LIMIT ? OFFSET ?
+    """, params + [page_size, (page-1)*page_size]).fetchall()
+
+    # Enrich with campaigns and lists
+    result = []
+    for r in rows:
+        contact = dict(r)
+        enrich_contact_with_relations(conn, contact)
+        result.append(contact)
+
+    conn.close()
+    return {"data": result, "total": total, "page": page, "page_size": page_size, "total_pages": max(1, (total+page_size-1)//page_size)}
 
 @app.get("/api/contacts/{contact_id}")
 def get_contact(contact_id: int):
-    conn = get_db(); row = conn.execute("SELECT * FROM contacts WHERE id=?", (contact_id,)).fetchone(); conn.close()
-    if not row: raise HTTPException(404, "Not found")
-    return dict(row)
+    conn = get_db()
+    row = conn.execute("SELECT * FROM contacts WHERE id=?", (contact_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Not found")
+    contact = dict(row)
+    enrich_contact_with_relations(conn, contact)
+    conn.close()
+    return contact
 
 @app.post("/api/contacts")
 def create_contact(contact: ContactCreate):
-    conn = get_db(); data = contact.dict(exclude_none=True)
-    if data.get('campaigns_assigned'):
-        for c in data['campaigns_assigned'].split(','): conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (c.strip(),))
-    if data.get('outreach_lists'):
-        for l in data['outreach_lists'].split(','): conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (l.strip(),))
+    conn = get_db()
+    data = contact.dict(exclude_none=True)
+
+    # Extract campaigns and lists before inserting
+    campaigns_str = data.pop('campaigns_assigned', None)
+    lists_str = data.pop('outreach_lists', None)
+
     fields = list(data.keys())
     conn.execute(f"INSERT INTO contacts ({','.join(fields)}) VALUES ({','.join(['?']*len(fields))})", list(data.values()))
-    cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]; conn.commit(); conn.close(); update_counts()
+    cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    # Set campaigns and lists using junction tables
+    if campaigns_str:
+        set_contact_campaigns(conn, cid, campaigns_str)
+    if lists_str:
+        set_contact_lists(conn, cid, lists_str)
+
+    conn.commit()
+    conn.close()
+    update_counts()
     return {"id": cid, "message": "Created"}
 
 @app.put("/api/contacts/{contact_id}")
 def update_contact(contact_id: int, contact: ContactUpdate):
-    conn = get_db(); data = {k: v for k, v in contact.dict().items() if v is not None}
+    conn = get_db()
+    data = {k: v for k, v in contact.dict().items() if v is not None}
     if not data: raise HTTPException(400, "No fields")
-    if data.get('campaigns_assigned'):
-        for c in data['campaigns_assigned'].split(','): conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (c.strip(),))
-    if data.get('outreach_lists'):
-        for l in data['outreach_lists'].split(','): conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (l.strip(),))
-    data['updated_at'] = datetime.now().isoformat()
-    conn.execute(f"UPDATE contacts SET {','.join([f'{k}=?' for k in data.keys()])} WHERE id=?", list(data.values())+[contact_id])
-    conn.commit(); conn.close(); update_counts()
+
+    # Extract campaigns and lists
+    campaigns_str = data.pop('campaigns_assigned', None)
+    lists_str = data.pop('outreach_lists', None)
+
+    if data:
+        data['updated_at'] = datetime.now().isoformat()
+        conn.execute(f"UPDATE contacts SET {','.join([f'{k}=?' for k in data.keys()])} WHERE id=?", list(data.values())+[contact_id])
+
+    # Update campaigns and lists if provided
+    if campaigns_str is not None:
+        set_contact_campaigns(conn, contact_id, campaigns_str)
+    if lists_str is not None:
+        set_contact_lists(conn, contact_id, lists_str)
+
+    conn.commit()
+    conn.close()
+    update_counts()
     return {"message": "Updated"}
 
 @app.delete("/api/contacts/{contact_id}")
 def delete_contact(contact_id: int):
-    conn = get_db(); conn.execute("DELETE FROM contacts WHERE id=?", (contact_id,)); conn.commit(); conn.close(); update_counts()
+    conn = get_db()
+    # Junction tables will cascade delete
+    conn.execute("DELETE FROM contacts WHERE id=?", (contact_id,))
+    conn.commit()
+    conn.close()
+    update_counts()
     return {"message": "Deleted"}
 
 @app.post("/api/contacts/bulk")
@@ -374,26 +559,35 @@ def bulk_update(req: BulkUpdateRequest):
     if req.contact_ids:
         contact_ids = req.contact_ids
     elif req.filters:
-        # Build query from filters (same logic as get_contacts)
-        query = "SELECT id FROM contacts WHERE is_duplicate=0"
+        query = "SELECT DISTINCT c.id FROM contacts c"
+        joins = []
+        where = ["c.is_duplicate=0"]
         params = []
         f = req.filters
+
         if f.get('search'):
-            query += " AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR title LIKE ?)"
-            s = f"%{f['search']}%"; params.extend([s, s, s, s, s])
-        if f.get('status'): query += " AND status=?"; params.append(f['status'])
-        if f.get('campaign'): query += " AND campaigns_assigned LIKE ?"; params.append(f"%{f['campaign']}%")
-        if f.get('outreach_list'): query += " AND outreach_lists LIKE ?"; params.append(f"%{f['outreach_list']}%")
-        if f.get('country_strategy'): query += " AND country_strategy=?"; params.append(f['country_strategy'])
-        if f.get('country'): query += " AND company_country=?"; params.append(f['country'])
-        if f.get('seniority'): query += " AND seniority=?"; params.append(f['seniority'])
-        if f.get('industry'): query += " AND industry=?"; params.append(f['industry'])
+            where.append("(c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.company LIKE ? OR c.title LIKE ?)")
+            s = f"%{f['search']}%"; params.extend([s]*5)
+        if f.get('status'): where.append("c.status=?"); params.append(f['status'])
+        if f.get('campaign'):
+            joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
+            where.append("camp.name=?"); params.append(f['campaign'])
+        if f.get('outreach_list'):
+            joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
+            where.append("ol.name=?"); params.append(f['outreach_list'])
+        if f.get('country_strategy'): where.append("c.country_strategy=?"); params.append(f['country_strategy'])
+        if f.get('country'): where.append("c.company_country=?"); params.append(f['country'])
+        if f.get('seniority'): where.append("c.seniority=?"); params.append(f['seniority'])
+        if f.get('industry'): where.append("c.industry=?"); params.append(f['industry'])
+
+        query = f"{query} {' '.join(joins)} WHERE {' AND '.join(where)}"
         rows = conn.execute(query, params).fetchall()
-        contact_ids = [row['id'] for row in rows]
+        contact_ids = [row[0] for row in rows]
     else:
         raise HTTPException(400, "No contacts specified")
 
     if not contact_ids:
+        conn.close()
         return {"updated": 0}
 
     updated = 0
@@ -407,36 +601,41 @@ def bulk_update(req: BulkUpdateRequest):
         placeholders = ','.join(['?'] * len(contact_ids))
         conn.execute(f"DELETE FROM contacts WHERE id IN ({placeholders})", contact_ids)
         updated = len(contact_ids)
-    # Handle list fields (campaigns_assigned, outreach_lists)
-    elif field in ['campaigns_assigned', 'outreach_lists']:
+    # Handle campaigns_assigned
+    elif field == 'campaigns_assigned':
         for cid in contact_ids:
-            row = conn.execute("SELECT * FROM contacts WHERE id=?", (cid,)).fetchone()
-            if not row: continue
-            current = set(x.strip() for x in (row[field] or '').split(',') if x.strip())
-            if action == 'add':
-                current.add(value)
-                if field == 'campaigns_assigned':
-                    conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (value,))
-                elif field == 'outreach_lists':
-                    conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (value,))
-            elif action == 'remove':
-                current.discard(value)
+            if action == 'add' and value:
+                add_contact_campaign(conn, cid, value)
+            elif action == 'remove' and value:
+                remove_contact_campaign(conn, cid, value)
             elif action == 'set':
-                current = {value} if value else set()
-            new_value = ', '.join(sorted(current)) if current else None
-            conn.execute(f"UPDATE contacts SET {field}=?, updated_at=? WHERE id=?", (new_value, now, cid))
+                set_contact_campaigns(conn, cid, value)
+            conn.execute("UPDATE contacts SET updated_at=? WHERE id=?", (now, cid))
             updated += 1
-    # Handle simple field updates (status, country_strategy, etc.)
+    # Handle outreach_lists
+    elif field == 'outreach_lists':
+        for cid in contact_ids:
+            if action == 'add' and value:
+                add_contact_list(conn, cid, value)
+            elif action == 'remove' and value:
+                remove_contact_list(conn, cid, value)
+            elif action == 'set':
+                set_contact_lists(conn, cid, value)
+            conn.execute("UPDATE contacts SET updated_at=? WHERE id=?", (now, cid))
+            updated += 1
+    # Handle simple field updates
     else:
-        # Validate field name to prevent SQL injection
         allowed_fields = ['status', 'country_strategy', 'seniority', 'company_country', 'industry', 'title', 'company', 'first_name', 'last_name', 'notes']
         if field not in allowed_fields:
+            conn.close()
             raise HTTPException(400, f"Field {field} cannot be bulk updated")
         placeholders = ','.join(['?'] * len(contact_ids))
         conn.execute(f"UPDATE contacts SET {field}=?, updated_at=? WHERE id IN ({placeholders})", [value, now] + contact_ids)
         updated = len(contact_ids)
 
-    conn.commit(); conn.close(); update_counts()
+    conn.commit()
+    conn.close()
+    update_counts()
     return {"updated": updated}
 
 @app.get("/api/duplicates")
@@ -447,7 +646,12 @@ def get_duplicates():
     for row in rows:
         ids = [int(i) for i in row['ids'].split(',')]
         contacts = conn.execute(f"SELECT * FROM contacts WHERE id IN ({','.join(['?']*len(ids))})", ids).fetchall()
-        groups.append({"email": row['email'], "count": row['cnt'], "contacts": [dict(c) for c in contacts]})
+        enriched = []
+        for c in contacts:
+            contact = dict(c)
+            enrich_contact_with_relations(conn, contact)
+            enriched.append(contact)
+        groups.append({"email": row['email'], "count": row['cnt'], "contacts": enriched})
     conn.close()
     return {"groups": groups, "total_groups": len(groups)}
 
@@ -456,29 +660,56 @@ def merge_duplicates(req: MergeRequest):
     conn = get_db()
     primary = conn.execute("SELECT * FROM contacts WHERE id=?", (req.primary_id,)).fetchone()
     if not primary: raise HTTPException(404, "Not found")
-    all_lists = set(l.strip() for l in (primary['outreach_lists'] or '').split(',') if l.strip())
-    all_camps = set(c.strip() for c in (primary['campaigns_assigned'] or '').split(',') if c.strip())
+
+    # Get all campaigns and lists from primary
+    primary_camps = set(r[0] for r in conn.execute(
+        "SELECT c.name FROM contact_campaigns cc JOIN campaigns c ON cc.campaign_id=c.id WHERE cc.contact_id=?",
+        (req.primary_id,)).fetchall())
+    primary_lists = set(r[0] for r in conn.execute(
+        "SELECT ol.name FROM contact_lists cl JOIN outreach_lists ol ON cl.list_id=ol.id WHERE cl.contact_id=?",
+        (req.primary_id,)).fetchall())
+
     for dup_id in req.duplicate_ids:
         dup = conn.execute("SELECT * FROM contacts WHERE id=?", (dup_id,)).fetchone()
         if dup:
-            all_lists.update(l.strip() for l in (dup['outreach_lists'] or '').split(',') if l.strip())
-            all_camps.update(c.strip() for c in (dup['campaigns_assigned'] or '').split(',') if c.strip())
+            # Get campaigns and lists from duplicate
+            dup_camps = set(r[0] for r in conn.execute(
+                "SELECT c.name FROM contact_campaigns cc JOIN campaigns c ON cc.campaign_id=c.id WHERE cc.contact_id=?",
+                (dup_id,)).fetchall())
+            dup_lists = set(r[0] for r in conn.execute(
+                "SELECT ol.name FROM contact_lists cl JOIN outreach_lists ol ON cl.list_id=ol.id WHERE cl.contact_id=?",
+                (dup_id,)).fetchall())
+
+            primary_camps.update(dup_camps)
+            primary_lists.update(dup_lists)
+
+            # Mark as duplicate (junction table entries will be deleted due to CASCADE)
             conn.execute("UPDATE contacts SET is_duplicate=1, duplicate_of=? WHERE id=?", (req.primary_id, dup_id))
-    conn.execute("UPDATE contacts SET outreach_lists=?, campaigns_assigned=?, updated_at=? WHERE id=?",
-                (', '.join(sorted(all_lists)) or None, ', '.join(sorted(all_camps)) or None, datetime.now().isoformat(), req.primary_id))
-    conn.commit(); conn.close(); update_counts()
+            # Delete junction entries for duplicate
+            conn.execute("DELETE FROM contact_campaigns WHERE contact_id=?", (dup_id,))
+            conn.execute("DELETE FROM contact_lists WHERE contact_id=?", (dup_id,))
+
+    # Set merged campaigns and lists on primary
+    set_contact_campaigns(conn, req.primary_id, ', '.join(sorted(primary_camps)) if primary_camps else None)
+    set_contact_lists(conn, req.primary_id, ', '.join(sorted(primary_lists)) if primary_lists else None)
+    conn.execute("UPDATE contacts SET updated_at=? WHERE id=?", (datetime.now().isoformat(), req.primary_id))
+
+    conn.commit()
+    conn.close()
+    update_counts()
     return {"message": f"Merged {len(req.duplicate_ids)} contacts"}
 
 @app.post("/api/duplicates/unmerge/{contact_id}")
 def unmerge(contact_id: int):
-    conn = get_db(); conn.execute("UPDATE contacts SET is_duplicate=0, duplicate_of=NULL WHERE id=?", (contact_id,)); conn.commit(); conn.close()
+    conn = get_db()
+    conn.execute("UPDATE contacts SET is_duplicate=0, duplicate_of=NULL WHERE id=?", (contact_id,))
+    conn.commit()
+    conn.close()
     return {"message": "Restored"}
 
 @app.get("/api/duplicates/stats")
 def get_duplicate_stats():
-    """Get comprehensive duplicate statistics"""
     conn = get_db()
-    # Total duplicate groups (emails with more than 1 contact)
     total_groups = conn.execute("""
         SELECT COUNT(*) FROM (
             SELECT LOWER(email) FROM contacts
@@ -487,7 +718,6 @@ def get_duplicate_stats():
         )
     """).fetchone()[0]
 
-    # Total contacts that are duplicates
     total_duplicates = conn.execute("""
         SELECT COALESCE(SUM(cnt - 1), 0) FROM (
             SELECT COUNT(*) as cnt FROM contacts
@@ -496,7 +726,6 @@ def get_duplicate_stats():
         )
     """).fetchone()[0]
 
-    # Already merged duplicates
     merged_count = conn.execute("SELECT COUNT(*) FROM contacts WHERE is_duplicate=1").fetchone()[0]
 
     conn.close()
@@ -509,14 +738,8 @@ def get_duplicate_stats():
 
 @app.post("/api/duplicates/auto-merge")
 def auto_merge_all_duplicates():
-    """
-    Automatically merge ALL duplicate groups.
-    Keeps the first contact as primary, merges all others.
-    Combines outreach_lists and campaigns_assigned from all duplicates.
-    """
     conn = get_db()
 
-    # Get all duplicate groups
     rows = conn.execute("""
         SELECT LOWER(email) as email, GROUP_CONCAT(id) as ids
         FROM contacts
@@ -532,7 +755,6 @@ def auto_merge_all_duplicates():
         if len(ids) < 2:
             continue
 
-        # Get all contacts in this group
         contacts = conn.execute(
             f"SELECT * FROM contacts WHERE id IN ({','.join(['?']*len(ids))}) ORDER BY created_at ASC",
             ids
@@ -541,16 +763,18 @@ def auto_merge_all_duplicates():
         if not contacts:
             continue
 
-        # First contact is primary (oldest)
         primary = contacts[0]
         primary_id = primary['id']
         duplicates = contacts[1:]
 
-        # Collect all outreach lists and campaigns
-        all_lists = set(l.strip() for l in (primary['outreach_lists'] or '').split(',') if l.strip())
-        all_camps = set(c.strip() for c in (primary['campaigns_assigned'] or '').split(',') if c.strip())
+        # Collect all campaigns and lists
+        all_camps = set(r[0] for r in conn.execute(
+            "SELECT c.name FROM contact_campaigns cc JOIN campaigns c ON cc.campaign_id=c.id WHERE cc.contact_id=?",
+            (primary_id,)).fetchall())
+        all_lists = set(r[0] for r in conn.execute(
+            "SELECT ol.name FROM contact_lists cl JOIN outreach_lists ol ON cl.list_id=ol.id WHERE cl.contact_id=?",
+            (primary_id,)).fetchall())
 
-        # Also collect best values for other fields
         best_data = {
             'first_name': primary['first_name'],
             'last_name': primary['last_name'],
@@ -566,38 +790,45 @@ def auto_merge_all_duplicates():
         }
 
         for dup in duplicates:
-            # Merge lists and campaigns
-            all_lists.update(l.strip() for l in (dup['outreach_lists'] or '').split(',') if l.strip())
-            all_camps.update(c.strip() for c in (dup['campaigns_assigned'] or '').split(',') if c.strip())
+            # Collect campaigns and lists from duplicate
+            dup_camps = set(r[0] for r in conn.execute(
+                "SELECT c.name FROM contact_campaigns cc JOIN campaigns c ON cc.campaign_id=c.id WHERE cc.contact_id=?",
+                (dup['id'],)).fetchall())
+            dup_lists = set(r[0] for r in conn.execute(
+                "SELECT ol.name FROM contact_lists cl JOIN outreach_lists ol ON cl.list_id=ol.id WHERE cl.contact_id=?",
+                (dup['id'],)).fetchall())
 
-            # Fill in missing data from duplicates
+            all_camps.update(dup_camps)
+            all_lists.update(dup_lists)
+
             for field in ['first_name', 'last_name', 'title', 'company', 'first_phone', 'corporate_phone', 'person_linkedin_url', 'website']:
                 if not best_data[field] and dup[field]:
                     best_data[field] = dup[field]
 
-            # Sum up metrics
             best_data['times_contacted'] += dup['times_contacted'] or 0
             best_data['meetings_booked'] += dup['meetings_booked'] or 0
             best_data['opportunities'] += dup['opportunities'] or 0
 
-            # Mark as duplicate
             conn.execute("UPDATE contacts SET is_duplicate=1, duplicate_of=? WHERE id=?", (primary_id, dup['id']))
+            conn.execute("DELETE FROM contact_campaigns WHERE contact_id=?", (dup['id'],))
+            conn.execute("DELETE FROM contact_lists WHERE contact_id=?", (dup['id'],))
             merged_contacts += 1
 
-        # Update primary with merged data
         conn.execute("""
             UPDATE contacts SET
                 first_name=?, last_name=?, title=?, company=?, first_phone=?, corporate_phone=?,
                 person_linkedin_url=?, website=?, times_contacted=?, meetings_booked=?, opportunities=?,
-                outreach_lists=?, campaigns_assigned=?, updated_at=?
+                updated_at=?
             WHERE id=?
         """, (
             best_data['first_name'], best_data['last_name'], best_data['title'], best_data['company'],
             best_data['first_phone'], best_data['corporate_phone'], best_data['person_linkedin_url'],
             best_data['website'], best_data['times_contacted'], best_data['meetings_booked'],
-            best_data['opportunities'], ', '.join(sorted(all_lists)) or None,
-            ', '.join(sorted(all_camps)) or None, datetime.now().isoformat(), primary_id
+            best_data['opportunities'], datetime.now().isoformat(), primary_id
         ))
+
+        set_contact_campaigns(conn, primary_id, ', '.join(sorted(all_camps)) if all_camps else None)
+        set_contact_lists(conn, primary_id, ', '.join(sorted(all_lists)) if all_lists else None)
 
         merged_groups += 1
 
@@ -613,10 +844,8 @@ def auto_merge_all_duplicates():
 
 @app.post("/api/duplicates/merge-group/{email}")
 def merge_duplicate_group(email: str):
-    """Merge a single duplicate group by email"""
     conn = get_db()
 
-    # Get all contacts with this email
     contacts = conn.execute(
         "SELECT * FROM contacts WHERE LOWER(email)=? AND is_duplicate=0 ORDER BY created_at ASC",
         (email.lower(),)
@@ -630,17 +859,31 @@ def merge_duplicate_group(email: str):
     primary_id = primary['id']
     duplicates = contacts[1:]
 
-    all_lists = set(l.strip() for l in (primary['outreach_lists'] or '').split(',') if l.strip())
-    all_camps = set(c.strip() for c in (primary['campaigns_assigned'] or '').split(',') if c.strip())
+    all_camps = set(r[0] for r in conn.execute(
+        "SELECT c.name FROM contact_campaigns cc JOIN campaigns c ON cc.campaign_id=c.id WHERE cc.contact_id=?",
+        (primary_id,)).fetchall())
+    all_lists = set(r[0] for r in conn.execute(
+        "SELECT ol.name FROM contact_lists cl JOIN outreach_lists ol ON cl.list_id=ol.id WHERE cl.contact_id=?",
+        (primary_id,)).fetchall())
 
     for dup in duplicates:
-        all_lists.update(l.strip() for l in (dup['outreach_lists'] or '').split(',') if l.strip())
-        all_camps.update(c.strip() for c in (dup['campaigns_assigned'] or '').split(',') if c.strip())
-        conn.execute("UPDATE contacts SET is_duplicate=1, duplicate_of=? WHERE id=?", (primary_id, dup['id']))
+        dup_camps = set(r[0] for r in conn.execute(
+            "SELECT c.name FROM contact_campaigns cc JOIN campaigns c ON cc.campaign_id=c.id WHERE cc.contact_id=?",
+            (dup['id'],)).fetchall())
+        dup_lists = set(r[0] for r in conn.execute(
+            "SELECT ol.name FROM contact_lists cl JOIN outreach_lists ol ON cl.list_id=ol.id WHERE cl.contact_id=?",
+            (dup['id'],)).fetchall())
 
-    conn.execute("UPDATE contacts SET outreach_lists=?, campaigns_assigned=?, updated_at=? WHERE id=?",
-                (', '.join(sorted(all_lists)) or None, ', '.join(sorted(all_camps)) or None,
-                 datetime.now().isoformat(), primary_id))
+        all_camps.update(dup_camps)
+        all_lists.update(dup_lists)
+
+        conn.execute("UPDATE contacts SET is_duplicate=1, duplicate_of=? WHERE id=?", (primary_id, dup['id']))
+        conn.execute("DELETE FROM contact_campaigns WHERE contact_id=?", (dup['id'],))
+        conn.execute("DELETE FROM contact_lists WHERE contact_id=?", (dup['id'],))
+
+    set_contact_campaigns(conn, primary_id, ', '.join(sorted(all_camps)) if all_camps else None)
+    set_contact_lists(conn, primary_id, ', '.join(sorted(all_lists)) if all_lists else None)
+    conn.execute("UPDATE contacts SET updated_at=? WHERE id=?", (datetime.now().isoformat(), primary_id))
 
     conn.commit()
     conn.close()
@@ -662,12 +905,12 @@ async def preview_import(file: UploadFile = File(...)):
             try: total_df = pd.read_csv(io.BytesIO(content), encoding=enc); break
             except: continue
         total_rows = len(total_df) if total_df is not None else 0
-        
+
         target_columns = ["first_name", "last_name", "email", "title", "headline", "company", "seniority",
             "first_phone", "corporate_phone", "employees", "industry", "keywords", "person_linkedin_url",
             "website", "domain", "company_linkedin_url", "company_city", "company_state", "company_country",
             "outreach_lists", "campaigns_assigned", "notes"]
-        
+
         suggestions = {}
         for col in df.columns:
             cl = str(col).lower().replace(' ', '_').replace('#_', '').replace('-', '_')
@@ -692,7 +935,7 @@ async def preview_import(file: UploadFile = File(...)):
             elif 'company_country' in cl: suggestions[col] = 'company_country'
             elif 'outreach' in cl: suggestions[col] = 'outreach_lists'
             elif 'campaign' in cl or 'assigned' in cl: suggestions[col] = 'campaigns_assigned'
-        
+
         return {"filename": file.filename, "total_rows": total_rows, "columns": list(df.columns),
                 "preview": df.head(5).fillna('').to_dict(orient='records'), "target_columns": target_columns, "suggested_mapping": suggestions}
     except Exception as e:
@@ -707,22 +950,33 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
         try: df = pd.read_csv(io.BytesIO(content), encoding=enc); break
         except: continue
     if df is None: raise HTTPException(400, "Cannot read CSV")
-    
-    mapping = json.loads(column_mapping); conn = get_db()
-    if outreach_list: conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (outreach_list,))
+
+    mapping = json.loads(column_mapping)
+    conn = get_db()
+
+    # Ensure outreach list exists
+    if outreach_list:
+        conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (outreach_list,))
+
+    # Ensure campaigns exist
     campaign_list = [c.strip() for c in (campaigns or '').split(',') if c.strip()]
-    for c in campaign_list: conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (c,))
-    
+    for c in campaign_list:
+        conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (c,))
+
+    # Build email index for duplicate checking (only non-duplicates)
     email_index = {}
     if check_duplicates:
-        # Only load non-duplicate contacts to ensure we merge into the primary record
-        for row in conn.execute("SELECT id, LOWER(email), outreach_lists, campaigns_assigned, country_strategy FROM contacts WHERE email IS NOT NULL AND is_duplicate=0"):
-            email_index[row[1]] = {'id': row[0], 'lists': row[2] or '', 'campaigns': row[3] or '', 'country_strategy': row[4] or ''}
-    
+        for row in conn.execute("SELECT id, LOWER(email) FROM contacts WHERE email IS NOT NULL AND is_duplicate=0"):
+            email_index[row[1]] = row[0]
+
     stats = {'imported': 0, 'merged': 0, 'duplicates_found': 0, 'failed': 0}
+
     for _, row in df.iterrows():
         try:
             data = {}
+            csv_campaigns = set()
+            csv_lists = set()
+
             for src_col, tgt_col in mapping.items():
                 if tgt_col and src_col in row:
                     val = row[src_col]
@@ -730,62 +984,102 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
                         if tgt_col == 'employees':
                             try: data[tgt_col] = int(float(val))
                             except: pass
-                        else: data[tgt_col] = str(val).strip()
-            
-            csv_lists = set(l.strip() for l in (data.get('outreach_lists') or '').split(',') if l.strip())
-            if outreach_list: csv_lists.add(outreach_list)
-            if csv_lists:
-                data['outreach_lists'] = ', '.join(sorted(csv_lists))
-                for l in csv_lists: conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (l,))
-            
-            csv_camps = set(c.strip() for c in (data.get('campaigns_assigned') or '').split(',') if c.strip())
-            csv_camps.update(campaign_list)
-            if csv_camps:
-                data['campaigns_assigned'] = ', '.join(sorted(csv_camps))
-                for c in csv_camps: conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (c,))
+                        elif tgt_col == 'campaigns_assigned':
+                            csv_campaigns.update(c.strip() for c in str(val).split(',') if c.strip())
+                        elif tgt_col == 'outreach_lists':
+                            csv_lists.update(l.strip() for l in str(val).split(',') if l.strip())
+                        else:
+                            data[tgt_col] = str(val).strip()
 
-            # Apply country_strategy from form if not already set from CSV
+            # Add form-specified campaigns and lists
+            csv_campaigns.update(campaign_list)
+            if outreach_list:
+                csv_lists.add(outreach_list)
+
+            # Apply country_strategy from form if not already set
             if country_strategy and not data.get('country_strategy'):
                 data['country_strategy'] = country_strategy
 
             data['employee_bucket'] = compute_employee_bucket(data.get('employees'))
             data['source_file'] = file.filename
             email = (data.get('email') or '').lower().strip()
-            
+
             if check_duplicates and email and email in email_index:
                 stats['duplicates_found'] += 1
                 if merge_duplicates:
-                    existing = email_index[email]
-                    curr_lists = set(l.strip() for l in existing['lists'].split(',') if l.strip())
-                    curr_camps = set(c.strip() for c in existing['campaigns'].split(',') if c.strip())
-                    curr_lists.update(l.strip() for l in (data.get('outreach_lists') or '').split(',') if l.strip())
-                    curr_camps.update(c.strip() for c in (data.get('campaigns_assigned') or '').split(',') if c.strip())
-                    # Get new country_strategy (form input takes precedence, then CSV, then keep existing)
-                    new_strategy = data.get('country_strategy') or existing.get('country_strategy')
-                    conn.execute("UPDATE contacts SET outreach_lists=?, campaigns_assigned=?, country_strategy=?, updated_at=? WHERE id=?",
-                                (', '.join(sorted(curr_lists)) or None, ', '.join(sorted(curr_camps)) or None, new_strategy, datetime.now().isoformat(), existing['id']))
+                    existing_id = email_index[email]
+                    # Add campaigns and lists to existing contact
+                    for camp in csv_campaigns:
+                        add_contact_campaign(conn, existing_id, camp)
+                    for lst in csv_lists:
+                        add_contact_list(conn, existing_id, lst)
+                    # Update country_strategy if provided
+                    if data.get('country_strategy'):
+                        conn.execute("UPDATE contacts SET country_strategy=?, updated_at=? WHERE id=?",
+                                   (data['country_strategy'], datetime.now().isoformat(), existing_id))
                     stats['merged'] += 1
                 continue
-            
+
             if data:
                 fields = list(data.keys())
                 conn.execute(f"INSERT INTO contacts ({','.join(fields)}) VALUES ({','.join(['?']*len(fields))})", list(data.values()))
+                cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+                # Add campaigns and lists to junction tables
+                for camp in csv_campaigns:
+                    add_contact_campaign(conn, cid, camp)
+                for lst in csv_lists:
+                    add_contact_list(conn, cid, lst)
+
                 stats['imported'] += 1
-                if email: email_index[email] = {'id': conn.execute("SELECT last_insert_rowid()").fetchone()[0], 'lists': data.get('outreach_lists', ''), 'campaigns': data.get('campaigns_assigned', ''), 'country_strategy': data.get('country_strategy', '')}
-        except: stats['failed'] += 1
-    conn.commit(); conn.close(); update_counts()
+                if email:
+                    email_index[email] = cid
+        except Exception as e:
+            stats['failed'] += 1
+
+    conn.commit()
+    conn.close()
+    update_counts()
     return stats
 
 @app.get("/api/contacts/export")
 def export_contacts(columns: Optional[str] = None, status: Optional[str] = None, campaigns: Optional[str] = None, outreach_lists: Optional[str] = None):
-    conn = get_db(); where, params = ["is_duplicate=0"], []
-    if status: where.append("status=?"); params.append(status)
-    if campaigns: where.append("campaigns_assigned LIKE ?"); params.append(f"%{campaigns}%")
-    if outreach_lists: where.append("outreach_lists LIKE ?"); params.append(f"%{outreach_lists}%")
-    all_cols = ['id','first_name','last_name','email','title','headline','company','seniority','first_phone','corporate_phone','employees','employee_bucket','industry','keywords','person_linkedin_url','website','domain','company_linkedin_url','company_city','company_state','company_country','region','outreach_lists','campaigns_assigned','status','email_status','times_contacted','opportunities','meetings_booked','notes','created_at']
+    conn = get_db()
+    where = ["c.is_duplicate=0"]
+    params = []
+    joins = []
+
+    if status: where.append("c.status=?"); params.append(status)
+    if campaigns:
+        joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
+        where.append("camp.name=?"); params.append(campaigns)
+    if outreach_lists:
+        joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
+        where.append("ol.name=?"); params.append(outreach_lists)
+
+    all_cols = ['id','first_name','last_name','email','title','headline','company','seniority','first_phone','corporate_phone','employees','employee_bucket','industry','keywords','person_linkedin_url','website','domain','company_linkedin_url','company_city','company_state','company_country','region','status','email_status','times_contacted','opportunities','meetings_booked','notes','created_at']
     selected = [c.strip() for c in (columns or '').split(',') if c.strip() in all_cols] or all_cols[:15]
-    df = pd.read_sql_query(f"SELECT {','.join(selected)} FROM contacts WHERE {' AND '.join(where)}", conn, params=params); conn.close()
-    buf = io.StringIO(); df.to_csv(buf, index=False); buf.seek(0)
+
+    joins_sql = " ".join(joins)
+    where_sql = " AND ".join(where)
+
+    # Get contacts
+    rows = conn.execute(f"SELECT DISTINCT c.id, {','.join(['c.'+c for c in selected if c != 'id'])} FROM contacts c {joins_sql} WHERE {where_sql}", params).fetchall()
+
+    # Build dataframe with campaigns and lists
+    data = []
+    for r in rows:
+        row_dict = dict(r)
+        row_dict['campaigns_assigned'] = get_contact_campaigns(conn, row_dict['id'])
+        row_dict['outreach_lists'] = get_contact_lists(conn, row_dict['id'])
+        data.append(row_dict)
+
+    conn.close()
+
+    df = pd.DataFrame(data)
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    buf.seek(0)
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=contacts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"})
 
 @app.get("/api/contacts/columns")
@@ -802,7 +1096,8 @@ def get_filters():
             'industries': [r[0] for r in conn.execute("SELECT DISTINCT industry FROM contacts WHERE industry IS NOT NULL AND industry != '' ORDER BY industry LIMIT 50")],
             'campaigns': [r[0] for r in conn.execute("SELECT name FROM campaigns ORDER BY name")],
             'outreach_lists': [r[0] for r in conn.execute("SELECT name FROM outreach_lists ORDER BY name")]}
-    conn.close(); return opts
+    conn.close()
+    return opts
 
 @app.get("/api/stats")
 def get_stats():
@@ -814,7 +1109,6 @@ def get_stats():
              'total_lists': conn.execute("SELECT COUNT(*) FROM outreach_lists").fetchone()[0],
              'total_templates': conn.execute("SELECT COUNT(*) FROM email_templates").fetchone()[0]}
     r = conn.execute("SELECT COALESCE(SUM(emails_sent),0), COALESCE(SUM(emails_opened),0), COALESCE(SUM(emails_replied),0) FROM campaigns").fetchone()
-    # Get opportunities and meetings from template_campaigns (rolled up from templates)
     tc = conn.execute("SELECT COALESCE(SUM(opportunities),0), COALESCE(SUM(meetings),0) FROM template_campaigns").fetchone()
     stats['emails_sent'] = r[0]; stats['emails_opened'] = r[1]; stats['emails_replied'] = r[2]
     stats['opportunities'] = tc[0]; stats['meetings_booked'] = tc[1]
@@ -822,47 +1116,29 @@ def get_stats():
     stats['by_status'] = {row[0] or 'Unknown': row[1] for row in conn.execute("SELECT status, COUNT(*) FROM contacts WHERE is_duplicate=0 GROUP BY status ORDER BY COUNT(*) DESC")}
     stats['by_campaign'] = [(r[0], r[1]) for r in conn.execute("SELECT name, total_leads FROM campaigns ORDER BY total_leads DESC LIMIT 10")]
     stats['by_list'] = [(r[0], r[1]) for r in conn.execute("SELECT name, contact_count FROM outreach_lists ORDER BY contact_count DESC LIMIT 10")]
-    conn.close(); return stats
+    conn.close()
+    return stats
 
 @app.get("/api/stats/database")
 def get_database_stats():
-    """Get detailed database analytics for Dashboard - Database tab"""
     conn = get_db()
     insights = {}
-
-    # Contact distribution by country
     insights['by_country'] = [{"name": r[0] or "Unknown", "value": r[1]} for r in
         conn.execute("SELECT company_country, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY company_country ORDER BY cnt DESC LIMIT 15")]
-
-    # Contact distribution by country strategy
     insights['by_country_strategy'] = [{"name": r[0] or "Not Assigned", "value": r[1]} for r in
         conn.execute("SELECT country_strategy, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY country_strategy ORDER BY cnt DESC")]
-
-    # Distribution by seniority
     insights['by_seniority'] = [{"name": r[0] or "Unknown", "value": r[1]} for r in
         conn.execute("SELECT seniority, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY seniority ORDER BY cnt DESC LIMIT 10")]
-
-    # Distribution by industry
     insights['by_industry'] = [{"name": r[0] or "Unknown", "value": r[1]} for r in
         conn.execute("SELECT industry, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY industry ORDER BY cnt DESC LIMIT 15")]
-
-    # Distribution by company size (employees bucket)
     insights['by_company_size'] = [{"name": r[0] or "Unknown", "value": r[1]} for r in
         conn.execute("SELECT employee_bucket, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY employee_bucket ORDER BY cnt DESC")]
-
-    # Contact status breakdown
     insights['by_status'] = [{"name": r[0] or "Unknown", "value": r[1]} for r in
         conn.execute("SELECT status, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY status ORDER BY cnt DESC")]
-
-    # Top companies by contacts
     insights['top_companies'] = [{"name": r[0], "value": r[1]} for r in
         conn.execute("SELECT company, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 AND company IS NOT NULL AND company != '' GROUP BY company ORDER BY cnt DESC LIMIT 10")]
-
-    # Contacts added over time (last 30 days)
     insights['contacts_timeline'] = [{"date": r[0], "value": r[1]} for r in
         conn.execute("SELECT DATE(created_at), COUNT(*) FROM contacts WHERE is_duplicate=0 AND created_at >= DATE('now', '-30 days') GROUP BY DATE(created_at) ORDER BY DATE(created_at)")]
-
-    # Data quality metrics
     insights['data_quality'] = {
         'with_email': conn.execute("SELECT COUNT(*) FROM contacts WHERE is_duplicate=0 AND email IS NOT NULL AND email != ''").fetchone()[0],
         'with_phone': conn.execute("SELECT COUNT(*) FROM contacts WHERE is_duplicate=0 AND (first_phone IS NOT NULL OR corporate_phone IS NOT NULL)").fetchone()[0],
@@ -870,17 +1146,13 @@ def get_database_stats():
         'with_company': conn.execute("SELECT COUNT(*) FROM contacts WHERE is_duplicate=0 AND company IS NOT NULL AND company != ''").fetchone()[0],
         'total': conn.execute("SELECT COUNT(*) FROM contacts WHERE is_duplicate=0").fetchone()[0]
     }
-
     conn.close()
     return insights
 
 @app.get("/api/stats/performance")
 def get_performance_stats():
-    """Get performance analytics for Dashboard - Performance tab"""
     conn = get_db()
     perf = {}
-
-    # Campaign performance with calculated opportunities/meetings from template_campaigns
     campaigns = []
     for r in conn.execute("""
         SELECT id, name, country, status, total_leads, emails_sent, emails_opened, emails_replied,
@@ -888,14 +1160,12 @@ def get_performance_stats():
         FROM campaigns ORDER BY emails_sent DESC
     """):
         c = dict(r)
-        # Get opps/meetings from template_campaigns
         tc = conn.execute("SELECT COALESCE(SUM(opportunities),0), COALESCE(SUM(meetings),0) FROM template_campaigns WHERE campaign_id=?", (c['id'],)).fetchone()
         c['opportunities'] = tc[0]
         c['meetings_booked'] = tc[1]
         campaigns.append(c)
     perf['campaigns'] = campaigns
 
-    # Overall metrics - get opps/meetings from template_campaigns
     row = conn.execute("""
         SELECT COALESCE(SUM(emails_sent),0), COALESCE(SUM(emails_opened),0), COALESCE(SUM(emails_clicked),0),
                COALESCE(SUM(emails_replied),0), COALESCE(SUM(emails_bounced),0)
@@ -910,12 +1180,8 @@ def get_performance_stats():
         'reply_rate': round(100*row[3]/row[0], 1) if row[0] > 0 else 0,
         'bounce_rate': round(100*row[4]/row[0], 1) if row[0] > 0 else 0
     }
-
-    # Performance by country strategy
     perf['by_country'] = [{"country": r[0] or "Not Set", "campaigns": r[1], "sent": r[2], "replied": r[3]} for r in
         conn.execute("SELECT country, COUNT(*), COALESCE(SUM(emails_sent),0), COALESCE(SUM(emails_replied),0) FROM campaigns GROUP BY country ORDER BY SUM(emails_sent) DESC")]
-
-    # Top performing templates - calculate from template_campaigns
     perf['top_templates'] = []
     for t in conn.execute("SELECT id, name, variant, step_type FROM email_templates"):
         tc = conn.execute("""
@@ -933,7 +1199,6 @@ def get_performance_stats():
             })
     perf['top_templates'].sort(key=lambda x: x['reply_rate'], reverse=True)
     perf['top_templates'] = perf['top_templates'][:10]
-
     conn.close()
     return perf
 
@@ -946,7 +1211,6 @@ def get_campaigns(search: Optional[str] = None, status: Optional[str] = None):
     result = []
     for r in rows:
         c = dict(r)
-        # Calculate opportunities and meetings from template_campaigns
         tc_metrics = conn.execute("SELECT COALESCE(SUM(opportunities),0), COALESCE(SUM(meetings),0) FROM template_campaigns WHERE campaign_id=?", (c['id'],)).fetchone()
         c['opportunities'] = tc_metrics[0]
         c['meetings_booked'] = tc_metrics[1]
@@ -959,8 +1223,6 @@ def get_campaign(campaign_id: int):
     conn = get_db(); row = conn.execute("SELECT * FROM campaigns WHERE id=?", (campaign_id,)).fetchone()
     if not row: raise HTTPException(404, "Not found")
     campaign = dict(row)
-
-    # Get all templates for this campaign grouped by step
     templates = conn.execute("""
         SELECT et.*, tc.times_sent as campaign_sent, tc.times_opened as campaign_opened,
                tc.times_replied as campaign_replied, tc.opportunities as campaign_opportunities,
@@ -970,16 +1232,11 @@ def get_campaign(campaign_id: int):
         WHERE tc.campaign_id = ?
         ORDER BY et.step_type, et.variant
     """, (campaign_id,)).fetchall()
-
-    # Group by step_type
     step_order = ['Main', 'Step 1', 'Step 2', 'Step 3', 'Follow-up']
     grouped = {}
-
     for t in templates:
         template_dict = dict(t)
         step = template_dict['step_type']
-
-        # Use campaign-specific metrics
         template_dict['sent'] = template_dict['campaign_sent'] or 0
         template_dict['opened'] = template_dict['campaign_opened'] or 0
         template_dict['replied'] = template_dict['campaign_replied'] or 0
@@ -987,12 +1244,8 @@ def get_campaign(campaign_id: int):
         template_dict['meetings'] = template_dict['campaign_meetings'] or 0
         template_dict['open_rate'] = round(100 * template_dict['opened'] / template_dict['sent'], 1) if template_dict['sent'] > 0 else 0
         template_dict['reply_rate'] = round(100 * template_dict['replied'] / template_dict['sent'], 1) if template_dict['sent'] > 0 else 0
-
-        if step not in grouped:
-            grouped[step] = []
+        if step not in grouped: grouped[step] = []
         grouped[step].append(template_dict)
-
-    # Convert to ordered list
     template_breakdown = []
     for step in step_order:
         if step in grouped:
@@ -1005,14 +1258,7 @@ def get_campaign(campaign_id: int):
             }
             step_metrics['open_rate'] = round(100 * step_metrics['opened'] / step_metrics['sent'], 1) if step_metrics['sent'] > 0 else 0
             step_metrics['reply_rate'] = round(100 * step_metrics['replied'] / step_metrics['sent'], 1) if step_metrics['sent'] > 0 else 0
-
-            template_breakdown.append({
-                'step_type': step,
-                'variants': grouped[step],
-                'step_metrics': step_metrics
-            })
-
-    # Add any other steps
+            template_breakdown.append({'step_type': step, 'variants': grouped[step], 'step_metrics': step_metrics})
     for step in grouped:
         if step not in step_order:
             step_metrics = {
@@ -1024,13 +1270,7 @@ def get_campaign(campaign_id: int):
             }
             step_metrics['open_rate'] = round(100 * step_metrics['opened'] / step_metrics['sent'], 1) if step_metrics['sent'] > 0 else 0
             step_metrics['reply_rate'] = round(100 * step_metrics['replied'] / step_metrics['sent'], 1) if step_metrics['sent'] > 0 else 0
-
-            template_breakdown.append({
-                'step_type': step,
-                'variants': grouped[step],
-                'step_metrics': step_metrics
-            })
-
+            template_breakdown.append({'step_type': step, 'variants': grouped[step], 'step_metrics': step_metrics})
     campaign['template_breakdown'] = template_breakdown
     conn.close()
     return campaign
@@ -1051,7 +1291,12 @@ def update_campaign(campaign_id: int, campaign: CampaignUpdate):
 
 @app.delete("/api/campaigns/{campaign_id}")
 def delete_campaign(campaign_id: int):
-    conn = get_db(); conn.execute("DELETE FROM campaigns WHERE id=?", (campaign_id,)); conn.commit(); conn.close(); return {"message": "Deleted"}
+    conn = get_db()
+    # Also delete from contact_campaigns
+    conn.execute("DELETE FROM contact_campaigns WHERE campaign_id=?", (campaign_id,))
+    conn.execute("DELETE FROM campaigns WHERE id=?", (campaign_id,))
+    conn.commit(); conn.close()
+    return {"message": "Deleted"}
 
 @app.get("/api/templates")
 def get_templates(campaign_id: Optional[int] = None, search: Optional[str] = None):
@@ -1063,7 +1308,7 @@ def get_templates(campaign_id: Optional[int] = None, search: Optional[str] = Non
         t = dict(r)
         camps = conn.execute("SELECT c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings FROM template_campaigns tc JOIN campaigns c ON tc.campaign_id=c.id WHERE tc.template_id=?", (t['id'],)).fetchall()
         t['campaigns'] = [dict(c) for c in camps]
-        t['campaign_ids'] = [c['id'] for c in camps]  # Add campaign_ids for frontend
+        t['campaign_ids'] = [c['id'] for c in camps]
         t['campaign_names'] = ', '.join(c['name'] for c in camps)
         ts = t['times_sent'] + sum(c['times_sent'] or 0 for c in camps); to = t['times_opened'] + sum(c['times_opened'] or 0 for c in camps); tr = t['times_replied'] + sum(c['times_replied'] or 0 for c in camps)
         opps = sum(c['opportunities'] or 0 for c in camps); meets = sum(c['meetings'] or 0 for c in camps)
@@ -1083,65 +1328,36 @@ def get_template(template_id: int):
 
 @app.get("/api/templates/grouped/by-step")
 def get_templates_grouped_by_step():
-    """Get all templates grouped by step_type with variants and aggregated metrics"""
     conn = get_db()
     rows = conn.execute("SELECT * FROM email_templates ORDER BY step_type, variant").fetchall()
-
-    # Group templates by step_type
     grouped = {}
     step_order = ['Main', 'Step 1', 'Step 2', 'Step 3', 'Follow-up']
-
     for r in rows:
         t = dict(r)
         step = t['step_type']
-
-        # Get campaign metrics for this template
         camps = conn.execute("""SELECT c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings
                                 FROM template_campaigns tc
                                 JOIN campaigns c ON tc.campaign_id=c.id
                                 WHERE tc.template_id=?""", (t['id'],)).fetchall()
         t['campaigns'] = [dict(c) for c in camps]
-        t['campaign_ids'] = [c['id'] for c in camps]  # Add campaign_ids for frontend
+        t['campaign_ids'] = [c['id'] for c in camps]
         t['campaign_names'] = ', '.join(c['name'] for c in camps)
-
-        # Calculate total metrics (template metrics + all campaign metrics)
         ts = t['times_sent'] + sum(c['times_sent'] or 0 for c in camps)
         to = t['times_opened'] + sum(c['times_opened'] or 0 for c in camps)
         tr = t['times_replied'] + sum(c['times_replied'] or 0 for c in camps)
         opps = sum(c['opportunities'] or 0 for c in camps)
         meets = sum(c['meetings'] or 0 for c in camps)
-
-        t['total_sent'] = ts
-        t['total_opened'] = to
-        t['total_replied'] = tr
-        t['opportunities'] = opps
-        t['meetings'] = meets
+        t['total_sent'] = ts; t['total_opened'] = to; t['total_replied'] = tr
+        t['opportunities'] = opps; t['meetings'] = meets
         t['total_open_rate'] = round(100 * to / ts, 1) if ts > 0 else 0
         t['total_reply_rate'] = round(100 * tr / ts, 1) if ts > 0 else 0
-
-        if step not in grouped:
-            grouped[step] = []
+        if step not in grouped: grouped[step] = []
         grouped[step].append(t)
-
-    # Convert to ordered list
     result = []
     for step in step_order:
-        if step in grouped:
-            result.append({
-                'step_type': step,
-                'variants': grouped[step],
-                'total_variants': len(grouped[step])
-            })
-
-    # Add any other steps not in the standard order
+        if step in grouped: result.append({'step_type': step, 'variants': grouped[step], 'total_variants': len(grouped[step])})
     for step in grouped:
-        if step not in step_order:
-            result.append({
-                'step_type': step,
-                'variants': grouped[step],
-                'total_variants': len(grouped[step])
-            })
-
+        if step not in step_order: result.append({'step_type': step, 'variants': grouped[step], 'total_variants': len(grouped[step])})
     conn.close()
     return {"data": result}
 
@@ -1178,62 +1394,38 @@ class TemplateCampaignMetricsUpdate(BaseModel):
 
 @app.put("/api/campaigns/{campaign_id}/templates/{template_id}/metrics")
 def update_template_campaign_metrics(campaign_id: int, template_id: int, metrics: TemplateCampaignMetricsUpdate):
-    """Update metrics for a specific template within a specific campaign"""
     conn = get_db()
-    # Check if the relationship exists
     tc = conn.execute("SELECT * FROM template_campaigns WHERE template_id=? AND campaign_id=?", (template_id, campaign_id)).fetchone()
-    if not tc:
-        raise HTTPException(404, "Template not associated with this campaign")
-
+    if not tc: raise HTTPException(404, "Template not associated with this campaign")
     data = {k: v for k, v in metrics.dict().items() if v is not None}
-    if not data:
-        raise HTTPException(400, "No metrics to update")
-
+    if not data: raise HTTPException(400, "No metrics to update")
     conn.execute(f"UPDATE template_campaigns SET {','.join([f'{k}=?' for k in data.keys()])} WHERE template_id=? AND campaign_id=?",
                 list(data.values()) + [template_id, campaign_id])
-    conn.commit()
-    conn.close()
-
-    # Recalculate campaign and template rates
-    recalc_rates(campaign_id)
-    recalc_template_rates(template_id)
-
+    conn.commit(); conn.close()
+    recalc_rates(campaign_id); recalc_template_rates(template_id)
     return {"message": "Updated"}
 
 @app.get("/api/lists")
 def get_lists():
     conn = get_db(); rows = conn.execute("SELECT * FROM outreach_lists ORDER BY name").fetchall(); conn.close(); return {"data": [dict(r) for r in rows]}
 
+@app.delete("/api/lists/{list_id}")
+def delete_list(list_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM contact_lists WHERE list_id=?", (list_id,))
+    conn.execute("DELETE FROM outreach_lists WHERE id=?", (list_id,))
+    conn.commit(); conn.close()
+    return {"message": "Deleted"}
+
 @app.post("/webhook/reachinbox")
 async def reachinbox_webhook(request: Request):
-    """
-    ReachInbox Webhook Handler
-
-    Accepts events: sent, opened, clicked, replied, bounced, unsubscribed
-
-    Expected payload formats:
-    1. Standard: { "event": "opened", "email": "user@example.com", "campaign_name": "My Campaign" }
-    2. Alternative: { "type": "open", "to": "user@example.com", "campaign": "My Campaign" }
-    3. With template: { "event": "sent", "email": "...", "campaign_name": "...", "template_id": 123 }
-
-    Updates: campaigns metrics, contacts status, template_campaigns metrics (if template_id provided)
-    """
-    try:
-        payload = await request.json()
-    except:
-        payload = {}
-
+    try: payload = await request.json()
+    except: payload = {}
     conn = get_db()
-
-    # Extract fields from various possible formats (ReachInbox compatibility)
     event_type = payload.get('event', payload.get('type', payload.get('event_type', 'unknown')))
     email = payload.get('email', payload.get('to', payload.get('recipient', payload.get('recipient_email'))))
     campaign_name = payload.get('campaign_name', payload.get('campaign', payload.get('campaignName', payload.get('sequence_name'))))
     template_id = payload.get('template_id', payload.get('templateId', payload.get('step_id')))
-    message_id = payload.get('message_id', payload.get('messageId', payload.get('id')))
-    timestamp = payload.get('timestamp', payload.get('occurred_at', datetime.now().isoformat()))
-
-    # Normalize event type
     el = event_type.lower().strip()
     normalized_event = 'unknown'
     if 'sent' in el or 'deliver' in el: normalized_event = 'sent'
@@ -1243,168 +1435,69 @@ async def reachinbox_webhook(request: Request):
     elif 'bounce' in el: normalized_event = 'bounced'
     elif 'unsub' in el: normalized_event = 'unsubscribed'
     elif 'fail' in el or 'error' in el: normalized_event = 'failed'
-
-    # Log webhook event
-    conn.execute("""INSERT INTO webhook_events
-        (source, event_type, email, campaign_name, template_id, payload, processed)
-        VALUES (?, ?, ?, ?, ?, ?, 1)""",
+    conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, 1)""",
         ('reachinbox', normalized_event, email, campaign_name, template_id, json.dumps(payload)))
-
     campaign_id = None
-
-    # Update campaign metrics
     if campaign_name:
-        camp = conn.execute("SELECT id FROM campaigns WHERE LOWER(name) = LOWER(?) OR name LIKE ?",
-                           (campaign_name, f"%{campaign_name}%")).fetchone()
+        camp = conn.execute("SELECT id FROM campaigns WHERE LOWER(name) = LOWER(?) OR name LIKE ?", (campaign_name, f"%{campaign_name}%")).fetchone()
         if camp:
             campaign_id = camp[0]
-            if normalized_event == 'sent':
-                conn.execute("UPDATE campaigns SET emails_sent=emails_sent+1 WHERE id=?", (campaign_id,))
-            elif normalized_event == 'opened':
-                conn.execute("UPDATE campaigns SET emails_opened=emails_opened+1 WHERE id=?", (campaign_id,))
-            elif normalized_event == 'clicked':
-                conn.execute("UPDATE campaigns SET emails_clicked=emails_clicked+1 WHERE id=?", (campaign_id,))
-            elif normalized_event == 'replied':
-                conn.execute("UPDATE campaigns SET emails_replied=emails_replied+1 WHERE id=?", (campaign_id,))
-            elif normalized_event == 'bounced':
-                conn.execute("UPDATE campaigns SET emails_bounced=emails_bounced+1 WHERE id=?", (campaign_id,))
+            if normalized_event == 'sent': conn.execute("UPDATE campaigns SET emails_sent=emails_sent+1 WHERE id=?", (campaign_id,))
+            elif normalized_event == 'opened': conn.execute("UPDATE campaigns SET emails_opened=emails_opened+1 WHERE id=?", (campaign_id,))
+            elif normalized_event == 'clicked': conn.execute("UPDATE campaigns SET emails_clicked=emails_clicked+1 WHERE id=?", (campaign_id,))
+            elif normalized_event == 'replied': conn.execute("UPDATE campaigns SET emails_replied=emails_replied+1 WHERE id=?", (campaign_id,))
+            elif normalized_event == 'bounced': conn.execute("UPDATE campaigns SET emails_bounced=emails_bounced+1 WHERE id=?", (campaign_id,))
             recalc_rates(campaign_id, conn)
-
-    # Update template_campaigns metrics if template_id provided
     if template_id and campaign_id:
-        tc = conn.execute("SELECT id FROM template_campaigns WHERE template_id=? AND campaign_id=?",
-                         (template_id, campaign_id)).fetchone()
+        tc = conn.execute("SELECT id FROM template_campaigns WHERE template_id=? AND campaign_id=?", (template_id, campaign_id)).fetchone()
         if tc:
-            if normalized_event == 'sent':
-                conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?",
-                           (template_id, campaign_id))
-            elif normalized_event == 'opened':
-                conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?",
-                           (template_id, campaign_id))
-            elif normalized_event == 'replied':
-                conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?",
-                           (template_id, campaign_id))
+            if normalized_event == 'sent': conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+            elif normalized_event == 'opened': conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+            elif normalized_event == 'replied': conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
             recalc_template_rates(template_id, conn)
-
-    # Update contact status
     if email:
         contact = conn.execute("SELECT id, status FROM contacts WHERE LOWER(email)=?", (email.lower(),)).fetchone()
         if contact:
             if normalized_event == 'sent':
-                conn.execute("""UPDATE contacts SET
-                    times_contacted=times_contacted+1,
-                    last_contacted_at=?,
-                    status=CASE WHEN status='Lead' THEN 'Contacted' ELSE status END
-                    WHERE id=?""", (datetime.now().isoformat(), contact[0]))
-            elif normalized_event == 'opened':
-                # Optional: track opens (could add a last_opened_at field in future)
-                pass
+                conn.execute("UPDATE contacts SET times_contacted=times_contacted+1, last_contacted_at=?, status=CASE WHEN status='Lead' THEN 'Contacted' ELSE status END WHERE id=?", (datetime.now().isoformat(), contact[0]))
             elif normalized_event == 'replied':
                 conn.execute("UPDATE contacts SET status='Engaged' WHERE id=? AND status IN ('Lead','Contacted')", (contact[0],))
             elif normalized_event == 'bounced':
                 conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact[0],))
             elif normalized_event == 'unsubscribed':
                 conn.execute("UPDATE contacts SET status='Unsubscribed' WHERE id=?", (contact[0],))
-
-    conn.commit()
-    conn.close()
-
-    return {
-        "status": "ok",
-        "message": "Processed",
-        "event": normalized_event,
-        "campaign_matched": campaign_id is not None,
-        "contact_matched": email is not None
-    }
+    conn.commit(); conn.close()
+    return {"status": "ok", "message": "Processed", "event": normalized_event, "campaign_matched": campaign_id is not None, "contact_matched": email is not None}
 
 @app.post("/webhook/bulkemailchecker")
 async def bulkemailchecker_webhook(request: Request):
-    """
-    BulkEmailChecker Webhook Handler
-
-    Accepts email validation results in multiple formats:
-    1. Array: { "results": [{ "email": "...", "status": "valid" }, ...] }
-    2. Single: { "email": "...", "status": "valid", "reason": "..." }
-    3. Alternative: { "data": [{ "address": "...", "result": "deliverable" }] }
-
-    Status mapping:
-    - valid/deliverable/safe → 'Valid'
-    - invalid/undeliverable/bad → 'Invalid'
-    - risky/unknown/catch_all/role → 'Risky'
-
-    Updates: contacts.email_status, optionally contacts.status for invalid emails
-    """
-    try:
-        payload = await request.json()
-    except:
-        payload = {}
-
+    try: payload = await request.json()
+    except: payload = {}
     conn = get_db()
-
-    # Extract results array from various formats
     results = payload.get('results', payload.get('data', payload.get('emails', [payload])))
-    if not isinstance(results, list):
-        results = [results]
-
+    if not isinstance(results, list): results = [results]
     stats = {'processed': 0, 'valid': 0, 'invalid': 0, 'risky': 0, 'not_found': 0}
-
     for r in results:
-        # Extract email from various field names
         email = r.get('email', r.get('address', r.get('email_address', r.get('to'))))
-        if not email:
-            continue
-
-        # Extract status from various field names
+        if not email: continue
         raw_status = r.get('status', r.get('result', r.get('state', r.get('verdict', 'unknown'))))
         raw_status_lower = str(raw_status).lower()
-
-        # Normalize status
         if raw_status_lower in ['valid', 'deliverable', 'safe', 'ok', 'good', 'verified']:
-            email_status = 'Valid'
-            stats['valid'] += 1
+            email_status = 'Valid'; stats['valid'] += 1
         elif raw_status_lower in ['invalid', 'undeliverable', 'bad', 'bounce', 'rejected', 'syntax_error', 'mailbox_not_found']:
-            email_status = 'Invalid'
-            stats['invalid'] += 1
+            email_status = 'Invalid'; stats['invalid'] += 1
         elif raw_status_lower in ['risky', 'unknown', 'catch_all', 'catch-all', 'role', 'disposable', 'accept_all', 'spamtrap']:
-            email_status = 'Risky'
-            stats['risky'] += 1
-        else:
-            email_status = raw_status.capitalize() if raw_status else 'Unknown'
-
-        # Extract additional info if available
-        reason = r.get('reason', r.get('message', r.get('description', '')))
-        score = r.get('score', r.get('quality_score'))
-
-        # Update contact
+            email_status = 'Risky'; stats['risky'] += 1
+        else: email_status = raw_status.capitalize() if raw_status else 'Unknown'
         existing = conn.execute("SELECT id, email_status FROM contacts WHERE LOWER(email)=?", (email.lower(),)).fetchone()
         if existing:
-            # Update email_status
-            conn.execute("UPDATE contacts SET email_status=?, updated_at=? WHERE id=?",
-                        (email_status, datetime.now().isoformat(), existing[0]))
-
-            # If email is invalid, optionally update contact status to Bounced
-            if email_status == 'Invalid':
-                conn.execute("UPDATE contacts SET status='Bounced' WHERE id=? AND status NOT IN ('Client', 'Opportunity')",
-                           (existing[0],))
-
+            conn.execute("UPDATE contacts SET email_status=?, updated_at=? WHERE id=?", (email_status, datetime.now().isoformat(), existing[0]))
+            if email_status == 'Invalid': conn.execute("UPDATE contacts SET status='Bounced' WHERE id=? AND status NOT IN ('Client', 'Opportunity')", (existing[0],))
             stats['processed'] += 1
-        else:
-            stats['not_found'] += 1
-
-    # Log webhook event
-    conn.execute("""INSERT INTO webhook_events
-        (source, event_type, email, payload, processed)
-        VALUES (?, ?, ?, ?, 1)""",
-        ('bulkemailchecker', 'validation', None, json.dumps(payload)))
-
-    conn.commit()
-    conn.close()
-
-    return {
-        "status": "ok",
-        "message": f"Processed {stats['processed']} emails",
-        "stats": stats
-    }
+        else: stats['not_found'] += 1
+    conn.execute("INSERT INTO webhook_events (source, event_type, email, payload, processed) VALUES (?, ?, ?, ?, 1)", ('bulkemailchecker', 'validation', None, json.dumps(payload)))
+    conn.commit(); conn.close()
+    return {"status": "ok", "message": f"Processed {stats['processed']} emails", "stats": stats}
 
 @app.post("/webhook/{source}")
 async def generic_webhook(source: str, request: Request):
@@ -1420,14 +1513,14 @@ def get_webhooks(limit: int = 50):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "5.1"}
+    return {"status": "ok", "version": "5.2"}
 
 @app.get("/api/info")
 def info():
-    return {"name": "Deduply", "version": "5.1"}
+    return {"name": "Deduply", "version": "5.2"}
 
 if __name__ == "__main__":
     import uvicorn
-    print("Starting Deduply API v5.1")
+    print("Starting Deduply API v5.2")
     print("Login: admin@deduply.io / admin123")
     uvicorn.run(app, host="0.0.0.0", port=8001)

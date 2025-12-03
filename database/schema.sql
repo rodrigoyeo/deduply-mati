@@ -1,5 +1,6 @@
 -- Deduply Database Schema for Supabase/PostgreSQL
 -- Run this in Supabase SQL Editor to create all tables
+-- Version 5.2 - Uses junction tables for contact-campaign and contact-list relationships
 
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
@@ -13,7 +14,37 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Contacts table (main data)
+-- Campaigns table
+CREATE TABLE IF NOT EXISTS campaigns (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT,
+    country TEXT,
+    status TEXT DEFAULT 'Active',
+    total_leads INTEGER DEFAULT 0,
+    emails_sent INTEGER DEFAULT 0,
+    emails_opened INTEGER DEFAULT 0,
+    emails_clicked INTEGER DEFAULT 0,
+    emails_replied INTEGER DEFAULT 0,
+    emails_bounced INTEGER DEFAULT 0,
+    opportunities INTEGER DEFAULT 0,
+    meetings_booked INTEGER DEFAULT 0,
+    open_rate REAL DEFAULT 0,
+    click_rate REAL DEFAULT 0,
+    reply_rate REAL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Outreach lists table
+CREATE TABLE IF NOT EXISTS outreach_lists (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT,
+    contact_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Contacts table (main data) - NO longer has campaigns_assigned or outreach_lists TEXT columns
 CREATE TABLE IF NOT EXISTS contacts (
     id SERIAL PRIMARY KEY,
     first_name TEXT,
@@ -38,8 +69,6 @@ CREATE TABLE IF NOT EXISTS contacts (
     company_country TEXT,
     region TEXT,
     country_strategy TEXT,
-    outreach_lists TEXT,
-    campaigns_assigned TEXT,
     status TEXT DEFAULT 'Lead',
     email_status TEXT DEFAULT 'Unknown',
     times_contacted INTEGER DEFAULT 0,
@@ -54,25 +83,22 @@ CREATE TABLE IF NOT EXISTS contacts (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Campaigns table
-CREATE TABLE IF NOT EXISTS campaigns (
+-- Junction table: Contact-Campaign relationships (many-to-many)
+CREATE TABLE IF NOT EXISTS contact_campaigns (
     id SERIAL PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
-    description TEXT,
-    country TEXT,
-    status TEXT DEFAULT 'Active',
-    total_leads INTEGER DEFAULT 0,
-    emails_sent INTEGER DEFAULT 0,
-    emails_opened INTEGER DEFAULT 0,
-    emails_clicked INTEGER DEFAULT 0,
-    emails_replied INTEGER DEFAULT 0,
-    emails_bounced INTEGER DEFAULT 0,
-    opportunities INTEGER DEFAULT 0,
-    meetings_booked INTEGER DEFAULT 0,
-    open_rate REAL DEFAULT 0,
-    click_rate REAL DEFAULT 0,
-    reply_rate REAL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contact_id, campaign_id)
+);
+
+-- Junction table: Contact-List relationships (many-to-many)
+CREATE TABLE IF NOT EXISTS contact_lists (
+    id SERIAL PRIMARY KEY,
+    contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+    list_id INTEGER NOT NULL REFERENCES outreach_lists(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contact_id, list_id)
 );
 
 -- Email templates table
@@ -107,15 +133,6 @@ CREATE TABLE IF NOT EXISTS template_campaigns (
     UNIQUE(template_id, campaign_id)
 );
 
--- Outreach lists table
-CREATE TABLE IF NOT EXISTS outreach_lists (
-    id SERIAL PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
-    description TEXT,
-    contact_count INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 -- Webhook events table
 CREATE TABLE IF NOT EXISTS webhook_events (
     id SERIAL PRIMARY KEY,
@@ -132,11 +149,15 @@ CREATE TABLE IF NOT EXISTS webhook_events (
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
 CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company);
-CREATE INDEX IF NOT EXISTS idx_contacts_campaigns ON contacts(campaigns_assigned);
-CREATE INDEX IF NOT EXISTS idx_contacts_lists ON contacts(outreach_lists);
 CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
 CREATE INDEX IF NOT EXISTS idx_contacts_is_duplicate ON contacts(is_duplicate);
 CREATE INDEX IF NOT EXISTS idx_webhook_events_email ON webhook_events(email);
+
+-- Junction table indexes for fast lookups
+CREATE INDEX IF NOT EXISTS idx_contact_campaigns_contact ON contact_campaigns(contact_id);
+CREATE INDEX IF NOT EXISTS idx_contact_campaigns_campaign ON contact_campaigns(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_contact_lists_contact ON contact_lists(contact_id);
+CREATE INDEX IF NOT EXISTS idx_contact_lists_list ON contact_lists(list_id);
 
 -- Insert default admin user (password: admin123)
 -- Change this password after first login!
