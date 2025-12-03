@@ -30,6 +30,7 @@ if DATABASE_URL:
 if USE_POSTGRES:
     import psycopg2
     import psycopg2.extras
+    from psycopg2.extras import RealDictCursor
     print("[DB CONFIG] psycopg2 imported successfully")
 
 class DatabaseConnection:
@@ -56,7 +57,11 @@ class DatabaseConnection:
             query = query.replace(" 0)", " FALSE)").replace(" 1)", " TRUE)")
             query = query.replace("=0", "=FALSE").replace("=1", "=TRUE")
 
-        cursor = self.conn.cursor()
+        # Use RealDictCursor for PostgreSQL to return dict-like rows
+        if self.is_postgres:
+            cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+        else:
+            cursor = self.conn.cursor()
         if params:
             cursor.execute(query, params)
         else:
@@ -67,7 +72,9 @@ class DatabaseConnection:
         """Execute many queries"""
         if self.is_postgres:
             query = query.replace("?", "%s")
-        cursor = self.conn.cursor()
+            cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+        else:
+            cursor = self.conn.cursor()
         cursor.executemany(query, params_list)
         return cursor
 
