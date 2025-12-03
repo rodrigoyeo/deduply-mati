@@ -3,6 +3,7 @@ Database abstraction layer for Deduply
 Supports both SQLite (local development) and PostgreSQL (production/Supabase)
 """
 import os
+import re
 import sqlite3
 import socket
 from contextlib import contextmanager
@@ -53,9 +54,12 @@ class DatabaseConnection:
             if "INSERT OR IGNORE" in query:
                 query = query.replace("INSERT OR IGNORE", "INSERT")
                 query = query.rstrip(";") + " ON CONFLICT DO NOTHING"
-            # Handle boolean differences
-            query = query.replace(" 0)", " FALSE)").replace(" 1)", " TRUE)")
-            query = query.replace("=0", "=FALSE").replace("=1", "=TRUE")
+            # Handle boolean differences - only for known boolean columns
+            # Replace boolean column comparisons (is_duplicate=0, is_active=1, etc.)
+            query = re.sub(r'(is_duplicate|is_active|is_winner|processed)=0', r'\1=FALSE', query)
+            query = re.sub(r'(is_duplicate|is_active|is_winner|processed)=1', r'\1=TRUE', query)
+            query = re.sub(r'(is_duplicate|is_active|is_winner|processed) = 0', r'\1 = FALSE', query)
+            query = re.sub(r'(is_duplicate|is_active|is_winner|processed) = 1', r'\1 = TRUE', query)
             # Handle SQLite last_insert_rowid() -> PostgreSQL LASTVAL()
             query = query.replace("last_insert_rowid()", "LASTVAL()")
 
