@@ -18,6 +18,10 @@ import hashlib
 import secrets
 import os
 import bcrypt
+from data_cleaning import (
+    clean_name, clean_company_name, extract_domain_name,
+    preview_name_cleaning, preview_company_cleaning, analyze_data_quality
+)
 
 app = FastAPI(title="Deduply API", version="5.2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -542,13 +546,22 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
     return {"data": result, "total": total, "page": page, "page_size": page_size, "total_pages": max(1, (total+page_size-1)//page_size)}
 
 @app.get("/api/contacts/export")
-def export_contacts(columns: Optional[str] = None, status: Optional[str] = None, campaigns: Optional[str] = None, outreach_lists: Optional[str] = None):
+def export_contacts(columns: Optional[str] = None, search: Optional[str] = None, status: Optional[str] = None,
+                   campaigns: Optional[str] = None, outreach_lists: Optional[str] = None, country: Optional[str] = None,
+                   country_strategy: Optional[str] = None, seniority: Optional[str] = None, industry: Optional[str] = None):
     conn = get_db()
     where = ["c.is_duplicate=0"]
     params = []
     joins = []
 
+    if search:
+        where.append("(c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.company LIKE ? OR c.title LIKE ?)")
+        params.extend([f"%{search}%"]*5)
     if status: where.append("c.status=?"); params.append(status)
+    if country: where.append("c.company_country=?"); params.append(country)
+    if country_strategy: where.append("c.country_strategy=?"); params.append(country_strategy)
+    if seniority: where.append("c.seniority=?"); params.append(seniority)
+    if industry: where.append("c.industry LIKE ?"); params.append(f"%{industry}%")
     if campaigns:
         joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
         where.append("camp.name=?"); params.append(campaigns)
@@ -1628,6 +1641,167 @@ async def generic_webhook(source: str, request: Request):
 def get_webhooks(limit: int = 50):
     conn = get_db(); rows = conn.execute("SELECT * FROM webhook_events ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall(); conn.close()
     return {"data": [dict(r) for r in rows]}
+
+# ==================== DATA CLEANING ENDPOINTS ====================
+
+class CleaningApplyRequest(BaseModel):
+    contact_ids: List[int]
+    field: str  # 'names' or 'company'
+
+@app.get("/api/cleaning/stats")
+def get_cleaning_stats():
+    """Get data quality statistics for the contacts database."""
+    conn = get_db()
+    rows = conn.execute("SELECT id, first_name, last_name, company, domain FROM contacts WHERE is_duplicate=0").fetchall()
+    conn.close()
+    contacts = [dict(r) for r in rows]
+    stats = analyze_data_quality(contacts)
+    return stats
+
+@app.get("/api/cleaning/names/preview")
+def preview_name_changes(limit: int = 500):
+    """Preview name cleaning changes without applying them."""
+    conn = get_db()
+    # Fetch ALL contacts - let Python filter to match stats calculation
+    rows = conn.execute("""
+        SELECT id, first_name, last_name FROM contacts
+        WHERE is_duplicate=0
+        AND (first_name IS NOT NULL OR last_name IS NOT NULL)
+    """).fetchall()
+    conn.close()
+
+    contacts = [dict(r) for r in rows]
+    all_changes = preview_name_cleaning(contacts)
+    # Return up to 'limit' changes but report total count
+    return {"changes": all_changes[:limit], "total": len(all_changes)}
+
+@app.post("/api/cleaning/names/apply")
+def apply_name_cleaning(req: CleaningApplyRequest):
+    """Apply name cleaning to selected contacts."""
+    if not req.contact_ids:
+        raise HTTPException(400, "No contacts selected")
+
+    conn = get_db()
+    updated = 0
+    now = datetime.now().isoformat()
+
+    for cid in req.contact_ids:
+        row = conn.execute("SELECT first_name, last_name FROM contacts WHERE id=?", (cid,)).fetchone()
+        if row:
+            first_name = clean_name(row['first_name'], preserve_case_if_mixed=False)
+            last_name = clean_name(row['last_name'], preserve_case_if_mixed=False)
+            conn.execute(
+                "UPDATE contacts SET first_name=?, last_name=?, updated_at=? WHERE id=?",
+                (first_name, last_name, now, cid)
+            )
+            updated += 1
+
+    conn.commit()
+    conn.close()
+    return {"updated": updated, "message": f"Cleaned {updated} contact names"}
+
+@app.get("/api/cleaning/companies/preview")
+def preview_company_changes(limit: int = 500):
+    """Preview company name cleaning changes without applying them."""
+    conn = get_db()
+    # Fetch ALL companies - let Python do the filtering to match stats calculation
+    rows = conn.execute("""
+        SELECT id, company, domain FROM contacts
+        WHERE is_duplicate=0
+        AND company IS NOT NULL AND company != ''
+    """).fetchall()
+    conn.close()
+
+    contacts = [dict(r) for r in rows]
+    all_changes = preview_company_cleaning(contacts)
+    # Return up to 'limit' changes but report total count
+    return {"changes": all_changes[:limit], "total": len(all_changes)}
+
+@app.post("/api/cleaning/companies/apply")
+def apply_company_cleaning(req: CleaningApplyRequest):
+    """Apply company name cleaning to selected contacts."""
+    if not req.contact_ids:
+        raise HTTPException(400, "No contacts selected")
+
+    conn = get_db()
+    updated = 0
+    now = datetime.now().isoformat()
+
+    for cid in req.contact_ids:
+        row = conn.execute("SELECT company, domain FROM contacts WHERE id=?", (cid,)).fetchone()
+        if row:
+            cleaned, _ = clean_company_name(row['company'], row['domain'])
+            if cleaned and cleaned != row['company']:
+                conn.execute(
+                    "UPDATE contacts SET company=?, updated_at=? WHERE id=?",
+                    (cleaned, now, cid)
+                )
+                updated += 1
+
+    conn.commit()
+    conn.close()
+    return {"updated": updated, "message": f"Cleaned {updated} company names"}
+
+@app.post("/api/cleaning/names/apply-all")
+def apply_all_name_cleaning(limit: int = 10000):
+    """Apply name cleaning to all contacts that need it."""
+    conn = get_db()
+    # Fetch ALL contacts - let Python filter to match preview
+    rows = conn.execute("""
+        SELECT id, first_name, last_name FROM contacts
+        WHERE is_duplicate=0
+        AND (first_name IS NOT NULL OR last_name IS NOT NULL)
+    """).fetchall()
+
+    updated = 0
+    now = datetime.now().isoformat()
+
+    for row in rows:
+        first_name = clean_name(row['first_name'], preserve_case_if_mixed=False) if row['first_name'] else row['first_name']
+        last_name = clean_name(row['last_name'], preserve_case_if_mixed=False) if row['last_name'] else row['last_name']
+        if first_name != row['first_name'] or last_name != row['last_name']:
+            conn.execute(
+                "UPDATE contacts SET first_name=?, last_name=?, updated_at=? WHERE id=?",
+                (first_name, last_name, now, row['id'])
+            )
+            updated += 1
+            if updated >= limit:
+                break
+
+    conn.commit()
+    conn.close()
+    return {"updated": updated, "message": f"Cleaned {updated} contact names"}
+
+@app.post("/api/cleaning/companies/apply-all")
+def apply_all_company_cleaning(limit: int = 10000):
+    """Apply company cleaning to all contacts that need it."""
+    conn = get_db()
+    # Fetch ALL companies - let Python filter to match preview
+    rows = conn.execute("""
+        SELECT id, company, domain FROM contacts
+        WHERE is_duplicate=0
+        AND company IS NOT NULL AND company != ''
+    """).fetchall()
+
+    updated = 0
+    now = datetime.now().isoformat()
+
+    for row in rows:
+        cleaned, reason = clean_company_name(row['company'], row['domain'])
+        if reason and cleaned != row['company']:
+            conn.execute(
+                "UPDATE contacts SET company=?, updated_at=? WHERE id=?",
+                (cleaned, now, row['id'])
+            )
+            updated += 1
+            if updated >= limit:
+                break
+
+    conn.commit()
+    conn.close()
+    return {"updated": updated, "message": f"Cleaned {updated} company names"}
+
+# ==================== END DATA CLEANING ====================
 
 @app.get("/health")
 def health():

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
-import { LayoutDashboard, Users, Mail, FileText, Settings, Search, Plus, Trash2, X, Check, ArrowUpDown, Filter, Download, Upload, Edit2, LogOut, UserPlus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle, Copy, ArrowRight, Layers, Merge, Eye, Webhook, Database, Send, Target, MessageCircle, MessageSquare, Zap, GitMerge, AlertTriangle, Trophy, List, LayoutGrid } from 'lucide-react';
+import { LayoutDashboard, Users, Mail, FileText, Settings, Search, Plus, Trash2, X, Check, ArrowUpDown, Filter, Download, Upload, Edit2, LogOut, UserPlus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle, Copy, ArrowRight, Layers, Merge, Eye, Webhook, Database, Send, Target, MessageCircle, MessageSquare, Zap, GitMerge, AlertTriangle, Trophy, List, LayoutGrid, Sparkles, Building2, User, ArrowRightLeft } from 'lucide-react';
 
 const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8001';
 const API = `${API_BASE}/api`;
@@ -144,7 +144,7 @@ const MultiSelect = ({ options, value = [], onChange, placeholder = "Select...",
 // Sidebar with Arkode Branding
 const Sidebar = ({ page, setPage, user, onLogout }) => {
   const { data: stats } = useData('/stats');
-  const nav = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'duplicates', label: 'Duplicates', icon: Layers }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'templates', label: 'Templates', icon: FileText }, { id: 'settings', label: 'Settings', icon: Settings }];
+  const nav = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'duplicates', label: 'Duplicates', icon: Layers }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'templates', label: 'Templates', icon: FileText }, { id: 'settings', label: 'Settings', icon: Settings }];
   return (<aside className="sidebar">
     <div className="sidebar-header">
       <div className="logo">
@@ -634,7 +634,7 @@ const ContactsPage = () => {
   // Saved Views functions
   const saveCurrentView = () => {
     if (!newViewName.trim()) return;
-    const view = { id: Date.now(), name: newViewName.trim(), filters, visibleColumns, search };
+    const view = { id: Date.now(), name: newViewName.trim(), filters: {...filters}, visibleColumns: [...visibleColumns], search, sortBy, sortOrder };
     const updated = [...savedViews, view];
     setSavedViews(updated);
     localStorage.setItem('deduply_saved_views', JSON.stringify(updated));
@@ -646,6 +646,8 @@ const ContactsPage = () => {
     setFilters(view.filters || {});
     setVisibleColumns(view.visibleColumns || allColumns.filter(c => c.default).map(c => c.id));
     setSearch(view.search || '');
+    if (view.sortBy) setSortBy(view.sortBy);
+    if (view.sortOrder) setSortOrder(view.sortOrder);
     setPage(1);
     addToast(`Loaded view: ${view.name}`, 'success');
   };
@@ -865,7 +867,7 @@ const ContactsPage = () => {
       <select value={pageSize} onChange={e => { setPageSize(parseInt(e.target.value)); setPage(1); }}><option value={25}>25 / page</option><option value={50}>50 / page</option><option value={100}>100 / page</option></select></div>
 
     <Modal isOpen={showImport} onClose={() => setShowImport(false)} title="Import Contacts" size="xl"><ImportWizard onSuccess={() => { setShowImport(false); fetchContacts(); addToast('Import complete', 'success'); }} filterOptions={filterOptions} /></Modal>
-    <Modal isOpen={showExport} onClose={() => setShowExport(false)} title="Export Contacts"><ExportForm filters={filters} onClose={() => setShowExport(false)} /></Modal>
+    <Modal isOpen={showExport} onClose={() => setShowExport(false)} title="Export Contacts"><ExportForm filters={filters} search={search} onClose={() => setShowExport(false)} /></Modal>
     <Modal isOpen={showAddContact} onClose={() => setShowAddContact(false)} title="Add Contact" size="lg"><AddContactForm onSuccess={() => { setShowAddContact(false); fetchContacts(); addToast('Contact created', 'success'); }} /></Modal>
   </div>);
 };
@@ -960,7 +962,7 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
 };
 
 // Export Form
-const ExportForm = ({ filters, onClose }) => {
+const ExportForm = ({ filters, search, onClose }) => {
   const allColumns = [
     { id: 'first_name', label: 'First Name' }, { id: 'last_name', label: 'Last Name' }, { id: 'email', label: 'Email' },
     { id: 'title', label: 'Title' }, { id: 'headline', label: 'Headline' }, { id: 'company', label: 'Company' }, { id: 'seniority', label: 'Seniority' },
@@ -979,7 +981,7 @@ const ExportForm = ({ filters, onClose }) => {
     { id: 'last_contacted_at', label: 'Last Contact' }, { id: 'notes', label: 'Notes' }, { id: 'created_at', label: 'Created' }
   ];
   const [selected, setSelected] = useState(allColumns.slice(0, 10).map(c => c.id));
-  const handleExport = () => { const params = new URLSearchParams(); if (selected.length) params.append('columns', selected.join(',')); Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); }); window.open(`${API}/contacts/export?${params}`, '_blank'); onClose(); };
+  const handleExport = () => { const params = new URLSearchParams(); if (selected.length) params.append('columns', selected.join(',')); if (search) params.append('search', search); Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); }); window.open(`${API}/contacts/export?${params}`, '_blank'); onClose(); };
   return (<div>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
       <p style={{ margin: 0 }}>Select columns to include:</p>
@@ -1011,6 +1013,292 @@ const AddContactForm = ({ onSuccess }) => {
 };
 
 // Duplicates Page
+// Enrichment Page - Data Cleaning & Enrichment
+const EnrichmentPage = () => {
+  const { addToast } = useToast();
+  const [stats, setStats] = useState(null);
+  const [activeTab, setActiveTab] = useState('names');
+  const [nameChanges, setNameChanges] = useState([]);
+  const [companyChanges, setCompanyChanges] = useState([]);
+  const [nameTotalCount, setNameTotalCount] = useState(0);
+  const [companyTotalCount, setCompanyTotalCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const [selectedNames, setSelectedNames] = useState([]);
+  const [selectedCompanies, setSelectedCompanies] = useState([]);
+
+  const fetchStats = async () => {
+    try {
+      const s = await api.get('/cleaning/stats');
+      setStats(s);
+    } catch (e) { console.error(e); }
+  };
+
+  const fetchNamePreview = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/cleaning/names/preview?limit=500');
+      setNameChanges(r.changes || []);
+      setNameTotalCount(r.total || 0);
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const fetchCompanyPreview = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/cleaning/companies/preview?limit=500');
+      setCompanyChanges(r.changes || []);
+      setCompanyTotalCount(r.total || 0);
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchStats(); }, []);
+  useEffect(() => {
+    if (activeTab === 'names') fetchNamePreview();
+    else fetchCompanyPreview();
+  }, [activeTab]);
+
+  const handleApplySelected = async (type) => {
+    const ids = type === 'names' ? selectedNames : selectedCompanies;
+    if (ids.length === 0) { addToast('Select items to apply', 'error'); return; }
+    setApplying(true);
+    try {
+      const endpoint = type === 'names' ? '/cleaning/names/apply' : '/cleaning/companies/apply';
+      const r = await api.post(endpoint, { contact_ids: ids, field: type });
+      addToast(r.message, 'success');
+      if (type === 'names') { setSelectedNames([]); fetchNamePreview(); }
+      else { setSelectedCompanies([]); fetchCompanyPreview(); }
+      fetchStats();
+    } catch (e) { addToast(e.message, 'error'); }
+    setApplying(false);
+  };
+
+  const handleApplyAll = async (type) => {
+    const count = type === 'names' ? nameTotalCount : companyTotalCount;
+    if (!window.confirm(`Apply cleaning to ALL ${count.toLocaleString()} ${type}?\n\nThis will process all items in the database, not just the visible ones.\n\nThis action cannot be undone.`)) return;
+    setApplying(true);
+    try {
+      const endpoint = type === 'names' ? '/cleaning/names/apply-all' : '/cleaning/companies/apply-all';
+      const r = await api.post(endpoint);
+      addToast(r.message, 'success');
+      if (type === 'names') fetchNamePreview(); else fetchCompanyPreview();
+      fetchStats();
+    } catch (e) { addToast(e.message, 'error'); }
+    setApplying(false);
+  };
+
+  const toggleSelectAll = (type) => {
+    if (type === 'names') {
+      setSelectedNames(selectedNames.length === nameChanges.length ? [] : nameChanges.map(c => c.id));
+    } else {
+      setSelectedCompanies(selectedCompanies.length === companyChanges.length ? [] : companyChanges.map(c => c.id));
+    }
+  };
+
+  return (
+    <div className="page enrichment-page">
+      <div className="page-header">
+        <div>
+          <h1>Data Enrichment</h1>
+          <p className="subtitle">Clean and enrich your contact data</p>
+        </div>
+        <div className="header-actions">
+          <button className="btn btn-secondary" onClick={() => { fetchStats(); activeTab === 'names' ? fetchNamePreview() : fetchCompanyPreview(); }}>
+            <RefreshCw size={16} /> Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="duplicates-stats">
+        <div className="dup-stat-card">
+          <div className="dup-stat-icon"><User size={24} /></div>
+          <div className="dup-stat-info">
+            <span className="dup-stat-value">{stats?.names?.needs_cleaning?.toLocaleString() || 0}</span>
+            <span className="dup-stat-label">Names to Clean</span>
+          </div>
+        </div>
+        <div className="dup-stat-card warning">
+          <div className="dup-stat-icon"><Building2 size={24} /></div>
+          <div className="dup-stat-info">
+            <span className="dup-stat-value">{stats?.companies?.needs_cleaning?.toLocaleString() || 0}</span>
+            <span className="dup-stat-label">Companies to Clean</span>
+          </div>
+        </div>
+        <div className="dup-stat-card">
+          <div className="dup-stat-icon"><AlertTriangle size={24} /></div>
+          <div className="dup-stat-info">
+            <span className="dup-stat-value">{stats?.companies?.has_parentheses?.toLocaleString() || 0}</span>
+            <span className="dup-stat-label">With Parentheses</span>
+          </div>
+        </div>
+        <div className="dup-stat-card accent">
+          <div className="dup-stat-icon"><Database size={24} /></div>
+          <div className="dup-stat-info">
+            <span className="dup-stat-value">{stats?.total_contacts?.toLocaleString() || 0}</span>
+            <span className="dup-stat-label">Total Contacts</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="enrichment-tabs">
+        <button className={`tab-btn ${activeTab === 'names' ? 'active' : ''}`} onClick={() => setActiveTab('names')}>
+          <User size={18} /> Name Cleaning
+          {nameTotalCount > 0 && <span className="tab-badge">{nameTotalCount}</span>}
+        </button>
+        <button className={`tab-btn ${activeTab === 'companies' ? 'active' : ''}`} onClick={() => setActiveTab('companies')}>
+          <Building2 size={18} /> Company Cleaning
+          {companyTotalCount > 0 && <span className="tab-badge">{companyTotalCount}</span>}
+        </button>
+      </div>
+
+      {/* Action Bar */}
+      {((activeTab === 'names' && nameChanges.length > 0) || (activeTab === 'companies' && companyChanges.length > 0)) && (
+        <div className="duplicates-action-bar">
+          <div className="action-bar-info">
+            <input
+              type="checkbox"
+              checked={activeTab === 'names' ? selectedNames.length === nameChanges.length : selectedCompanies.length === companyChanges.length}
+              onChange={() => toggleSelectAll(activeTab)}
+            />
+            <span>
+              {activeTab === 'names' ? selectedNames.length : selectedCompanies.length} of {activeTab === 'names' ? nameChanges.length : companyChanges.length} selected
+              {activeTab === 'names' && nameTotalCount > nameChanges.length && <span style={{opacity: 0.7}}> (showing {nameChanges.length} of {nameTotalCount} total)</span>}
+              {activeTab === 'companies' && companyTotalCount > companyChanges.length && <span style={{opacity: 0.7}}> (showing {companyChanges.length} of {companyTotalCount} total)</span>}
+            </span>
+          </div>
+          <div className="action-bar-buttons">
+            <button
+              className="btn btn-secondary"
+              onClick={() => handleApplySelected(activeTab)}
+              disabled={applying || (activeTab === 'names' ? selectedNames.length === 0 : selectedCompanies.length === 0)}
+            >
+              {applying ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
+              Apply Selected
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => handleApplyAll(activeTab)}
+              disabled={applying}
+            >
+              {applying ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+              Apply All ({activeTab === 'names' ? nameTotalCount.toLocaleString() : companyTotalCount.toLocaleString()})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Content */}
+      {loading ? (
+        <div className="loading-container"><Loader2 className="spin" size={32} /></div>
+      ) : activeTab === 'names' ? (
+        nameChanges.length === 0 ? (
+          <div className="empty-state">
+            <CheckCircle size={48} />
+            <h3>All names look good!</h3>
+            <p>No name cleaning needed at this time.</p>
+          </div>
+        ) : (
+          <div className="enrichment-table-container">
+            <table className="enrichment-table">
+              <thead>
+                <tr>
+                  <th style={{width: '40px'}}></th>
+                  <th>First Name</th>
+                  <th style={{width: '40px'}}></th>
+                  <th>Last Name</th>
+                </tr>
+              </thead>
+              <tbody>
+                {nameChanges.map(change => (
+                  <tr key={change.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedNames.includes(change.id)}
+                        onChange={() => setSelectedNames(prev =>
+                          prev.includes(change.id) ? prev.filter(id => id !== change.id) : [...prev, change.id]
+                        )}
+                      />
+                    </td>
+                    <td>
+                      {change.first_name.changed ? (
+                        <div className="change-cell">
+                          <span className="before">{change.first_name.before}</span>
+                          <ArrowRightLeft size={14} />
+                          <span className="after">{change.first_name.after}</span>
+                        </div>
+                      ) : (
+                        <span className="no-change">{change.first_name.before || '-'}</span>
+                      )}
+                    </td>
+                    <td></td>
+                    <td>
+                      {change.last_name.changed ? (
+                        <div className="change-cell">
+                          <span className="before">{change.last_name.before}</span>
+                          <ArrowRightLeft size={14} />
+                          <span className="after">{change.last_name.after}</span>
+                        </div>
+                      ) : (
+                        <span className="no-change">{change.last_name.before || '-'}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        companyChanges.length === 0 ? (
+          <div className="empty-state">
+            <CheckCircle size={48} />
+            <h3>All company names look good!</h3>
+            <p>No company cleaning needed at this time.</p>
+          </div>
+        ) : (
+          <div className="enrichment-table-container">
+            <table className="enrichment-table">
+              <thead>
+                <tr>
+                  <th style={{width: '40px'}}></th>
+                  <th>Before</th>
+                  <th style={{width: '40px'}}></th>
+                  <th>After</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {companyChanges.map(change => (
+                  <tr key={change.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedCompanies.includes(change.id)}
+                        onChange={() => setSelectedCompanies(prev =>
+                          prev.includes(change.id) ? prev.filter(id => id !== change.id) : [...prev, change.id]
+                        )}
+                      />
+                    </td>
+                    <td><span className="before">{change.company.before}</span></td>
+                    <td><ArrowRightLeft size={14} /></td>
+                    <td><span className="after">{change.company.after}</span></td>
+                    <td><span className="reason-badge">{change.company.reason}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  );
+};
+
 const DuplicatesPage = () => {
   const { addToast } = useToast();
   const [stats, setStats] = useState(null);
@@ -2372,6 +2660,7 @@ function App() {
     {page === 'dashboard' && <DashboardPage />}
     {page === 'contacts' && <ContactsPage />}
     {page === 'duplicates' && <DuplicatesPage />}
+    {page === 'enrichment' && <EnrichmentPage />}
     {page === 'campaigns' && <CampaignsPage />}
     {page === 'templates' && <TemplatesPage />}
     {page === 'settings' && <SettingsPage />}
