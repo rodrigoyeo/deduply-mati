@@ -1,6 +1,15 @@
 -- Migration: Email Verification Feature
 -- Run this in Supabase SQL Editor
 
+-- 0. Create settings table for API keys and configuration
+CREATE TABLE IF NOT EXISTS settings (
+    id SERIAL PRIMARY KEY,
+    key TEXT UNIQUE NOT NULL,
+    value TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 1. Create verification_jobs table for background verification tracking
 CREATE TABLE IF NOT EXISTS verification_jobs (
     id SERIAL PRIMARY KEY,
