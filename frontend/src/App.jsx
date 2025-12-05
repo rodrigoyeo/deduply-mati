@@ -811,6 +811,16 @@ const ContactsPage = () => {
               {filterOptions.industries?.map(i => <option key={i} value={i}>{i}</option>)}
             </select>
           </div>
+          <div className="filter-group">
+            <label>Email Status</label>
+            <select value={filters.email_status || ''} onChange={e => setFilters({ ...filters, email_status: e.target.value })}>
+              <option value="">All Statuses</option>
+              <option value="Not Verified">Not Verified</option>
+              <option value="Valid">Valid</option>
+              <option value="Invalid">Invalid</option>
+              <option value="Unknown">Unknown</option>
+            </select>
+          </div>
           <div className="filter-group filter-actions">
             <button className="btn btn-text" onClick={() => setFilters({})}>Clear All Filters</button>
           </div>
@@ -860,6 +870,7 @@ const ContactsPage = () => {
           ) : col.type === 'status' ? <span className={`status-badge status-${contact[col.id]?.toLowerCase().replace(/ /g, '-')}`} onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}</span>
           : col.type === 'strategy' ? <span className={`strategy-badge strategy-${contact[col.id]?.toLowerCase().replace(/ /g, '-') || 'none'}`} onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}</span>
           : col.id === 'email' ? <a href={`mailto:${contact[col.id]}`} className="email-link">{contact[col.id]}</a>
+          : col.id === 'email_status' ? <span className={`email-status-badge ${(contact[col.id] || 'not-verified').toLowerCase().replace(/ /g, '-')}`}>{contact[col.id] || 'Not Verified'}</span>
           : (col.id === 'outreach_lists' || col.id === 'campaigns_assigned') ? (!contact[col.id] ? <span className="cell-empty" onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: '' })}>—</span> : <div className="tags-cell" onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] })}>{contact[col.id].split(',').slice(0, 2).map((t, i) => <span key={i} className="tag">{t.trim()}</span>)}{contact[col.id].split(',').length > 2 && <span className="tag tag-more">+{contact[col.id].split(',').length - 2}</span>}</div>)
           : <span className="cell-editable" onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}</span>}</td>))}
           <td className="col-actions"><button className="btn-icon-small danger" onClick={async () => { if (window.confirm('Delete?')) { await api.delete(`/contacts/${contact.id}`); fetchContacts(); addToast('Deleted', 'success'); } }}><Trash2 size={14} /></button></td></tr>))}</tbody></table></div>
@@ -888,8 +899,41 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
   const [countryStrategy, setCountryStrategy] = useState('');
   const [checkDuplicates, setCheckDuplicates] = useState(true);
   const [mergeDuplicates, setMergeDuplicates] = useState(true);
+  const [verifyEmails, setVerifyEmails] = useState(false);
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const [verificationJob, setVerificationJob] = useState(null);
+
+  // Check if API key is configured
+  useEffect(() => {
+    const checkApiKey = async () => {
+      try {
+        const res = await api.get('/settings/bulkemailchecker_api_key');
+        setApiKeyConfigured(res.configured);
+      } catch (e) { console.error('Failed to check API key:', e); }
+    };
+    checkApiKey();
+  }, []);
+
+  // Poll for verification job status
+  useEffect(() => {
+    if (!result?.verification_job_id) return;
+
+    const pollJob = async () => {
+      try {
+        const job = await api.get(`/verify/job/${result.verification_job_id}`);
+        setVerificationJob(job);
+        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+          return; // Stop polling
+        }
+      } catch (e) { console.error('Failed to poll job:', e); }
+    };
+
+    pollJob(); // Initial poll
+    const interval = setInterval(pollJob, 1000); // Poll every second
+    return () => clearInterval(interval);
+  }, [result?.verification_job_id]);
 
   // Fixed strategy options
   const strategyOptions = ['United States', 'Mexico', 'Spain', 'Germany'];
@@ -917,7 +961,8 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
       campaigns: newCampaignName || selectedCampaign || '',
       country_strategy: countryStrategy || '',
       check_duplicates: checkDuplicates,
-      merge_duplicates: mergeDuplicates
+      merge_duplicates: mergeDuplicates,
+      verify_emails: verifyEmails && apiKeyConfigured
     });
     try {
       const res = await fetch(`${API}/import/execute?${params}`, { method: 'POST', headers: api.token ? { 'Authorization': `Bearer ${api.token}` } : {}, body: formData });
@@ -935,7 +980,7 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
     // Company details
     'annual_revenue', 'annual_revenue_text', 'company_description', 'company_seo_description', 'company_technologies', 'company_founded_year',
     // System fields
-    'country_strategy', 'outreach_lists', 'campaigns_assigned', 'notes'];
+    'country_strategy', 'outreach_lists', 'campaigns_assigned', 'notes', 'email_status'];
 
   return (<div>
     <div className="import-steps"><div className={`import-step ${step >= 1 ? (step > 1 ? 'done' : 'active') : ''}`}><span className="import-step-num">1</span> Upload</div><div className={`import-step ${step >= 2 ? (step > 2 ? 'done' : 'active') : ''}`}><span className="import-step-num">2</span> Map Columns</div><div className={`import-step ${step >= 3 ? (step > 3 ? 'done' : 'active') : ''}`}><span className="import-step-num">3</span> Options</div><div className={`import-step ${step >= 4 ? 'active' : ''}`}><span className="import-step-num">4</span> Complete</div></div>
@@ -954,12 +999,102 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
       <div className="form-group"><label>Country Strategy</label><select value={countryStrategy} onChange={e => setCountryStrategy(e.target.value)}><option value="">Select strategy...</option>{strategyOptions.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
       <div></div>
       <div className="import-option"><label><input type="checkbox" checked={checkDuplicates} onChange={e => setCheckDuplicates(e.target.checked)} /> Check for duplicates</label></div>
-      <div className="import-option"><label><input type="checkbox" checked={mergeDuplicates} onChange={e => setMergeDuplicates(e.target.checked)} disabled={!checkDuplicates} /> Merge duplicates (add to existing lists/campaigns)</label></div></div>
-      <div className="modal-actions"><button className="btn btn-secondary" onClick={() => setStep(2)}>Back</button><button className="btn btn-primary" onClick={executeImport} disabled={loading}>{loading ? <Loader2 className="spin" size={16} /> : 'Import'}</button></div></div>)}
+      <div className="import-option"><label><input type="checkbox" checked={mergeDuplicates} onChange={e => setMergeDuplicates(e.target.checked)} disabled={!checkDuplicates} /> Merge duplicates (add to existing lists/campaigns)</label></div>
+      <div className="import-option verify-option">
+        <label>
+          <input type="checkbox" checked={verifyEmails} onChange={e => setVerifyEmails(e.target.checked)} disabled={!apiKeyConfigured} />
+          <Mail size={14} /> Verify emails during import
+        </label>
+        {!apiKeyConfigured && <span className="option-hint">Configure API key in Settings → Integrations</span>}
+        {apiKeyConfigured && verifyEmails && <span className="option-hint success">1 credit per verification</span>}
+      </div></div>
+      <div className="modal-actions"><button className="btn btn-secondary" onClick={() => setStep(2)}>Back</button><button className="btn btn-primary" onClick={executeImport} disabled={loading}>{loading ? <><Loader2 className="spin" size={16} /> {verifyEmails ? 'Importing & Verifying...' : 'Importing...'}</> : 'Import'}</button></div></div>)}
 
-    {step === 4 && result && (<div style={{ textAlign: 'center', padding: 40 }}><CheckCircle size={60} style={{ color: 'var(--success)', marginBottom: 20 }} /><h3 style={{ marginBottom: 20 }}>Import Complete!</h3>
-      <div style={{ fontSize: 16, lineHeight: 2 }}><p><strong>{result.imported}</strong> contacts imported</p><p><strong>{result.merged}</strong> contacts merged</p>{result.duplicates_found > 0 && <p><strong>{result.duplicates_found}</strong> duplicates found</p>}{result.failed > 0 && <p style={{ color: 'var(--error)' }}><strong>{result.failed}</strong> failed</p>}</div>
-      <button className="btn btn-primary" onClick={onSuccess} style={{ marginTop: 20 }}>Done</button></div>)}
+    {step === 4 && result && (<div style={{ textAlign: 'center', padding: 40 }}>
+      <CheckCircle size={60} style={{ color: 'var(--success)', marginBottom: 20 }} />
+      <h3 style={{ marginBottom: 20 }}>Import Complete!</h3>
+      <div style={{ fontSize: 16, lineHeight: 2 }}>
+        <p><strong>{result.imported}</strong> contacts imported</p>
+        <p><strong>{result.merged}</strong> contacts merged</p>
+        {result.duplicates_found > 0 && <p><strong>{result.duplicates_found}</strong> duplicates found</p>}
+        {result.failed > 0 && <p style={{ color: 'var(--error)' }}><strong>{result.failed}</strong> failed</p>}
+      </div>
+
+      {/* Background Verification Progress */}
+      {result.verification_job_id && verificationJob && (
+        <div className="verification-progress-card">
+          <h4><Mail size={16} /> Email Verification {verificationJob.status === 'running' ? 'In Progress' : verificationJob.status === 'completed' ? 'Complete' : verificationJob.status === 'cancelled' ? 'Cancelled' : 'Status'}</h4>
+
+          {/* Progress Bar */}
+          {verificationJob.status === 'running' && (
+            <div className="verification-progress-bar">
+              <div
+                className="verification-progress-fill"
+                style={{ width: `${verificationJob.total_contacts > 0 ? ((verificationJob.verified_count + verificationJob.skipped_count) / verificationJob.total_contacts * 100) : 0}%` }}
+              />
+            </div>
+          )}
+
+          {/* Current Status */}
+          {verificationJob.status === 'running' && (
+            <div className="verification-current">
+              <Loader2 className="spin" size={14} />
+              <span>Verifying: {verificationJob.current_email || '...'}</span>
+            </div>
+          )}
+
+          {/* Stats Grid */}
+          <div className="verification-stats">
+            <div className="verification-stat">
+              <div className="stat-value">{verificationJob.verified_count + verificationJob.skipped_count}/{verificationJob.total_contacts}</div>
+              <div className="stat-label">Progress</div>
+            </div>
+            <div className="verification-stat valid">
+              <div className="stat-value">{verificationJob.valid_count}</div>
+              <div className="stat-label">Valid</div>
+            </div>
+            <div className="verification-stat invalid">
+              <div className="stat-value">{verificationJob.invalid_count}</div>
+              <div className="stat-label">Invalid</div>
+            </div>
+            <div className="verification-stat">
+              <div className="stat-value">{verificationJob.unknown_count}</div>
+              <div className="stat-label">Unknown</div>
+            </div>
+          </div>
+
+          {verificationJob.skipped_count > 0 && (
+            <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 8 }}>{verificationJob.skipped_count} already verified (skipped)</p>
+          )}
+
+          {verificationJob.status === 'failed' && verificationJob.error_message && (
+            <p style={{ color: 'var(--error)', marginTop: 8 }}><AlertCircle size={14} /> {verificationJob.error_message}</p>
+          )}
+
+          {/* Cancel Button */}
+          {verificationJob.status === 'running' && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={async () => {
+                try {
+                  await api.post(`/verify/job/${result.verification_job_id}/cancel`);
+                } catch (e) { console.error('Failed to cancel:', e); }
+              }}
+              style={{ marginTop: 12 }}
+            >
+              <X size={14} /> Cancel Verification
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* No verification job but contacts could be verified */}
+      {result.contacts_to_verify > 0 && !result.verification_job_id && (
+        <p style={{ fontSize: 14, color: 'var(--text-3)', marginTop: 16 }}>{result.contacts_to_verify} contacts ready for verification</p>
+      )}
+
+      <button className="btn btn-primary" onClick={onSuccess} style={{ marginTop: 20 }}>Done</button>
+    </div>)}
   </div>);
 };
 
@@ -983,7 +1118,8 @@ const ExportForm = ({ filters, search, onClose }) => {
     { id: 'last_contacted_at', label: 'Last Contact' }, { id: 'notes', label: 'Notes' }, { id: 'created_at', label: 'Created' }
   ];
   const [selected, setSelected] = useState(allColumns.slice(0, 10).map(c => c.id));
-  const handleExport = () => { const params = new URLSearchParams(); if (selected.length) params.append('columns', selected.join(',')); if (search) params.append('search', search); Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); }); window.open(`${API}/contacts/export?${params}`, '_blank'); onClose(); };
+  const [validEmailsOnly, setValidEmailsOnly] = useState(false);
+  const handleExport = () => { const params = new URLSearchParams(); if (selected.length) params.append('columns', selected.join(',')); if (search) params.append('search', search); Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); }); if (validEmailsOnly) params.append('valid_emails_only', 'true'); window.open(`${API}/contacts/export?${params}`, '_blank'); onClose(); };
   return (<div>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
       <p style={{ margin: 0 }}>Select columns to include:</p>
@@ -994,6 +1130,15 @@ const ExportForm = ({ filters, search, onClose }) => {
     </div>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginBottom: 20, maxHeight: 300, overflowY: 'auto' }}>
       {allColumns.map(col => (<label key={col.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" checked={selected.includes(col.id)} onChange={e => { if (e.target.checked) setSelected([...selected, col.id]); else setSelected(selected.filter(c => c !== col.id)); }} />{col.label}</label>))}
+    </div>
+    <div className="export-option" style={{ padding: '16px', background: 'var(--bg-3)', borderRadius: '8px', marginBottom: '20px' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 500 }}>
+        <input type="checkbox" checked={validEmailsOnly} onChange={e => setValidEmailsOnly(e.target.checked)} />
+        <CheckCircle size={14} style={{ color: 'var(--success)' }} /> Export only verified valid emails
+      </label>
+      <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-3)', marginTop: '4px', marginLeft: '24px' }}>
+        Excludes Invalid and Unknown email statuses
+      </span>
     </div>
     <div className="modal-actions"><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={handleExport}><Download size={16} /> Export CSV</button></div>
   </div>);
@@ -2508,6 +2653,43 @@ const SettingsPage = () => {
   const [showAddUser, setShowAddUser] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
   const [changingPassword, setChangingPassword] = useState(false);
+
+  // Email verification API key state
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [savingApiKey, setSavingApiKey] = useState(false);
+  const [loadingApiKey, setLoadingApiKey] = useState(true);
+
+  // Load API key status on mount
+  useEffect(() => {
+    const loadApiKeyStatus = async () => {
+      try {
+        const res = await api.get('/settings/bulkemailchecker_api_key');
+        setApiKeyConfigured(res.configured);
+      } catch (e) {
+        console.error('Failed to load API key status:', e);
+      }
+      setLoadingApiKey(false);
+    };
+    loadApiKeyStatus();
+  }, []);
+
+  const saveApiKey = async () => {
+    if (!apiKey.trim()) {
+      addToast('Please enter an API key', 'error');
+      return;
+    }
+    setSavingApiKey(true);
+    try {
+      await api.put('/settings/bulkemailchecker_api_key', { value: apiKey.trim() });
+      addToast('API key saved successfully!', 'success');
+      setApiKeyConfigured(true);
+      setApiKey('');
+    } catch (e) {
+      addToast(e.message || 'Failed to save API key', 'error');
+    }
+    setSavingApiKey(false);
+  };
   const handleAddUser = async (data) => { try { await api.post('/auth/register', data); addToast('User created!', 'success'); setShowAddUser(false); refetch(); } catch (e) { addToast(e.message, 'error'); } };
   const handleDeleteUser = async (id) => { if (!window.confirm('Deactivate this user?')) return; try { await api.delete(`/users/${id}`); addToast('User deactivated', 'success'); refetch(); } catch (e) { addToast(e.message, 'error'); } };
   const copyUrl = (url) => { navigator.clipboard.writeText(url); addToast('URL copied to clipboard!', 'success'); };
@@ -2597,7 +2779,47 @@ const SettingsPage = () => {
 
     {tab === 'webhooks' && (
       <div className="settings-section">
-        <div className="section-header">
+        {/* Email Verification API Configuration */}
+        <div className="api-config-section">
+          <div className="section-header">
+            <h2><Mail size={20} /> Email Verification API</h2>
+          </div>
+          <p className="help-text">
+            Configure your BulkEmailChecker API key to verify emails during import.
+            Each verification costs 1 credit. <a href="https://bulkemailchecker.com" target="_blank" rel="noopener noreferrer">Get your API key →</a>
+          </p>
+
+          <div className="api-key-form">
+            <div className="api-key-status">
+              {loadingApiKey ? (
+                <span className="status-loading"><Loader2 size={14} className="spin" /> Checking...</span>
+              ) : apiKeyConfigured ? (
+                <span className="status-configured"><Check size={14} /> API Key Configured</span>
+              ) : (
+                <span className="status-not-configured"><AlertCircle size={14} /> Not Configured</span>
+              )}
+            </div>
+
+            <div className="api-key-input-group">
+              <input
+                type="password"
+                placeholder={apiKeyConfigured ? "Enter new API key to replace existing" : "Enter your BulkEmailChecker API key"}
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                className="api-key-input"
+              />
+              <button
+                className="btn btn-primary"
+                onClick={saveApiKey}
+                disabled={savingApiKey || !apiKey.trim()}
+              >
+                {savingApiKey ? <><Loader2 size={16} className="spin" /> Saving...</> : 'Save API Key'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="section-header" style={{marginTop: '32px'}}>
           <h2>Webhook Integrations</h2>
           <button className="btn btn-secondary" onClick={refetchWebhooks}><RefreshCw size={16} /> Refresh</button>
         </div>

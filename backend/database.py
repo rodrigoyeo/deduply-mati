@@ -56,10 +56,11 @@ class DatabaseConnection:
                 query = query.rstrip(";") + " ON CONFLICT DO NOTHING"
             # Handle boolean differences - only for known boolean columns
             # Replace boolean column comparisons (is_duplicate=0, is_active=1, etc.)
-            query = re.sub(r'(is_duplicate|is_active|is_winner|processed)=0', r'\1=FALSE', query)
-            query = re.sub(r'(is_duplicate|is_active|is_winner|processed)=1', r'\1=TRUE', query)
-            query = re.sub(r'(is_duplicate|is_active|is_winner|processed) = 0', r'\1 = FALSE', query)
-            query = re.sub(r'(is_duplicate|is_active|is_winner|processed) = 1', r'\1 = TRUE', query)
+            bool_cols = r'(is_duplicate|is_active|is_winner|processed|email_is_disposable|email_is_free_service|email_is_role_account)'
+            query = re.sub(bool_cols + r'=0', r'\1=FALSE', query)
+            query = re.sub(bool_cols + r'=1', r'\1=TRUE', query)
+            query = re.sub(bool_cols + r' = 0', r'\1 = FALSE', query)
+            query = re.sub(bool_cols + r' = 1', r'\1 = TRUE', query)
             # Handle SQLite last_insert_rowid() -> PostgreSQL LASTVAL()
             query = query.replace("last_insert_rowid()", "LASTVAL()")
             # Handle SQLite GROUP_CONCAT -> PostgreSQL STRING_AGG
@@ -207,6 +208,48 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT, event_type TEXT, email TEXT,
         campaign_name TEXT, template_id INTEGER, payload TEXT, processed BOOLEAN DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+    # Settings table for API keys and configuration
+    cur.execute("""CREATE TABLE IF NOT EXISTS settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE NOT NULL, value TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+    # Verification jobs table for background email verification
+    cur.execute("""CREATE TABLE IF NOT EXISTS verification_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        status TEXT DEFAULT 'pending',
+        total_contacts INTEGER DEFAULT 0,
+        verified_count INTEGER DEFAULT 0,
+        valid_count INTEGER DEFAULT 0,
+        invalid_count INTEGER DEFAULT 0,
+        unknown_count INTEGER DEFAULT 0,
+        skipped_count INTEGER DEFAULT 0,
+        current_email TEXT,
+        error_message TEXT,
+        contact_ids TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP)""")
+
+    # Add email verification columns to contacts table
+    try:
+        cur.execute("ALTER TABLE contacts ADD COLUMN email_verified_at TIMESTAMP")
+    except: pass
+    try:
+        cur.execute("ALTER TABLE contacts ADD COLUMN email_verification_event TEXT")
+    except: pass
+    try:
+        cur.execute("ALTER TABLE contacts ADD COLUMN email_is_disposable BOOLEAN DEFAULT 0")
+    except: pass
+    try:
+        cur.execute("ALTER TABLE contacts ADD COLUMN email_is_free_service BOOLEAN DEFAULT 0")
+    except: pass
+    try:
+        cur.execute("ALTER TABLE contacts ADD COLUMN email_is_role_account BOOLEAN DEFAULT 0")
+    except: pass
+    try:
+        cur.execute("ALTER TABLE contacts ADD COLUMN email_suggested TEXT")
+    except: pass
 
     # Create default admin user
     import hashlib

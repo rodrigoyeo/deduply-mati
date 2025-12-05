@@ -18,6 +18,8 @@ import hashlib
 import secrets
 import os
 import bcrypt
+import httpx
+import asyncio
 from data_cleaning import (
     clean_name, clean_company_name, extract_domain_name,
     preview_name_cleaning, preview_company_cleaning, analyze_data_quality
@@ -25,6 +27,9 @@ from data_cleaning import (
 
 app = FastAPI(title="Deduply API", version="5.2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# Global store for background verification tasks
+background_tasks = {}
 
 def init_db():
     conn = get_db()
@@ -68,7 +73,7 @@ def init_db():
         annual_revenue INTEGER, annual_revenue_text TEXT,
         company_description TEXT, company_seo_description TEXT, company_founded_year INTEGER,
         region TEXT, country_strategy TEXT, status TEXT DEFAULT 'Lead',
-        email_status TEXT DEFAULT 'Unknown', times_contacted INTEGER DEFAULT 0,
+        email_status TEXT DEFAULT 'Not Verified', times_contacted INTEGER DEFAULT 0,
         last_contacted_at TIMESTAMP, opportunities INTEGER DEFAULT 0, meetings_booked INTEGER DEFAULT 0,
         notes TEXT, source_file TEXT, is_duplicate BOOLEAN DEFAULT 0, duplicate_of INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
@@ -131,6 +136,31 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT, event_type TEXT, email TEXT,
         campaign_name TEXT, template_id INTEGER, payload TEXT, processed BOOLEAN DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+    # Settings table for API keys and configuration
+    conn.execute("""CREATE TABLE IF NOT EXISTS settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE NOT NULL, value TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+    # Add email verification columns to contacts (migration)
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN email_verified_at TIMESTAMP")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN email_verification_event TEXT")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN email_is_disposable BOOLEAN DEFAULT 0")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN email_is_free_service BOOLEAN DEFAULT 0")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN email_is_role_account BOOLEAN DEFAULT 0")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN email_suggested TEXT")
+    except: pass
 
     result = conn.execute("SELECT COUNT(*) FROM users").fetchone()
     if result[0] == 0:
@@ -548,7 +578,8 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
 @app.get("/api/contacts/export")
 def export_contacts(columns: Optional[str] = None, search: Optional[str] = None, status: Optional[str] = None,
                    campaigns: Optional[str] = None, outreach_lists: Optional[str] = None, country: Optional[str] = None,
-                   country_strategy: Optional[str] = None, seniority: Optional[str] = None, industry: Optional[str] = None):
+                   country_strategy: Optional[str] = None, seniority: Optional[str] = None, industry: Optional[str] = None,
+                   email_status: Optional[str] = None, valid_emails_only: bool = False):
     conn = get_db()
     where = ["c.is_duplicate=0"]
     params = []
@@ -562,6 +593,9 @@ def export_contacts(columns: Optional[str] = None, search: Optional[str] = None,
     if country_strategy: where.append("c.country_strategy=?"); params.append(country_strategy)
     if seniority: where.append("c.seniority=?"); params.append(seniority)
     if industry: where.append("c.industry LIKE ?"); params.append(f"%{industry}%")
+    # Email verification filters
+    if email_status: where.append("c.email_status=?"); params.append(email_status)
+    if valid_emails_only: where.append("c.email_status='Valid'")
     if campaigns:
         joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
         where.append("camp.name=?"); params.append(campaigns)
@@ -1109,7 +1143,8 @@ async def preview_import(file: UploadFile = File(...)):
 
 @app.post("/api/import/execute")
 async def execute_import(file: UploadFile = File(...), column_mapping: str = Query(...), outreach_list: str = Query(None),
-                        campaigns: str = Query(None), country_strategy: str = Query(None), check_duplicates: bool = Query(True), merge_duplicates: bool = Query(True)):
+                        campaigns: str = Query(None), country_strategy: str = Query(None), check_duplicates: bool = Query(True),
+                        merge_duplicates: bool = Query(True), verify_emails: bool = Query(False)):
     content = await file.read()
     df = None
     for enc in ['utf-8-sig', 'utf-8', 'latin-1', 'cp1252']:
@@ -1136,6 +1171,8 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
             email_index[row[1]] = row[0]
 
     stats = {'imported': 0, 'merged': 0, 'duplicates_found': 0, 'failed': 0}
+    new_contact_ids = []  # Track new contacts for verification
+    contacts_to_verify = []  # Track all contacts that need verification (new + merged unverified)
 
     for _, row in df.iterrows():
         try:
@@ -1159,6 +1196,47 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
                             csv_lists.update(l.strip() for l in str(val).split(',') if l.strip())
                         elif tgt_col == 'company_technologies':
                             csv_technologies.update(t.strip() for t in str(val).split(',') if t.strip())
+                        # Normalize email_status values
+                        elif tgt_col == 'email_status':
+                            raw = str(val).strip().lower()
+                            if raw in ['passed', 'valid', 'ok', 'good', 'verified', 'deliverable', 'true', '1']:
+                                data['email_status'] = 'Valid'
+                            elif raw in ['failed', 'invalid', 'bad', 'undeliverable', 'bounce', 'bounced', 'false', '0']:
+                                data['email_status'] = 'Invalid'
+                            elif raw in ['unknown', 'catchall', 'catch-all', 'catch_all', 'risky', 'accept_all', 'accept-all']:
+                                data['email_status'] = 'Unknown'
+                            elif raw in ['not verified', 'not_verified', 'unverified', 'pending', '']:
+                                data['email_status'] = 'Not Verified'
+                            else:
+                                data['email_status'] = 'Not Verified'  # Default for unrecognized values
+                        # Normalize lead status values
+                        elif tgt_col == 'status':
+                            raw = str(val).strip().lower()
+                            status_map = {
+                                # Lead
+                                'lead': 'Lead', 'new': 'Lead', 'prospect': 'Lead', 'new lead': 'Lead',
+                                # Contacted
+                                'contacted': 'Contacted', 'emailed': 'Contacted', 'reached': 'Contacted', 'sent': 'Contacted',
+                                # Replied
+                                'replied': 'Replied', 'responded': 'Replied', 'response': 'Replied', 'reply': 'Replied',
+                                # Engaged
+                                'engaged': 'Engaged', 'engaging': 'Engaged', 'interested': 'Engaged',
+                                # Meeting Booked
+                                'meeting': 'Meeting Booked', 'meeting booked': 'Meeting Booked', 'meetings': 'Meeting Booked',
+                                'booked': 'Meeting Booked', 'scheduled': 'Meeting Booked', 'call booked': 'Meeting Booked',
+                                # Opportunity
+                                'opportunity': 'Opportunity', 'deal': 'Opportunity', 'qualified': 'Opportunity', 'opp': 'Opportunity',
+                                # Client
+                                'client': 'Client', 'customer': 'Client', 'won': 'Client', 'closed': 'Client', 'closed won': 'Client',
+                                # Not Interested
+                                'not interested': 'Not Interested', 'unqualified': 'Not Interested', 'bad fit': 'Not Interested',
+                                'no interest': 'Not Interested', 'rejected': 'Not Interested', 'lost': 'Not Interested',
+                                # Bounced
+                                'bounced': 'Bounced', 'bounce': 'Bounced', 'hard bounce': 'Bounced', 'invalid email': 'Bounced',
+                                # Unsubscribed
+                                'unsubscribed': 'Unsubscribed', 'unsub': 'Unsubscribed', 'opted out': 'Unsubscribed', 'opt out': 'Unsubscribed'
+                            }
+                            data['status'] = status_map.get(raw, str(val).strip().title())  # Use mapped or title-case original
                         else:
                             data[tgt_col] = str(val).strip()
 
@@ -1191,6 +1269,10 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
                         conn.execute("UPDATE contacts SET country_strategy=?, updated_at=? WHERE id=?",
                                    (data['country_strategy'], datetime.now().isoformat(), existing_id))
                     stats['merged'] += 1
+                    # Track merged contacts that haven't been verified yet
+                    existing_status = conn.execute("SELECT email_status FROM contacts WHERE id=?", (existing_id,)).fetchone()
+                    if not existing_status or not existing_status[0] or existing_status[0] == 'Not Verified':
+                        contacts_to_verify.append(existing_id)
                 continue
 
             if data:
@@ -1207,12 +1289,39 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
                     add_contact_technology(conn, cid, tech)
 
                 stats['imported'] += 1
+                new_contact_ids.append(cid)  # Track for verification
+                # Only add to verification queue if no valid email_status was imported
+                imported_status = data.get('email_status', '').strip()
+                if not imported_status or imported_status == 'Not Verified':
+                    contacts_to_verify.append(cid)
                 if email:
                     email_index[email] = cid
         except Exception as e:
             stats['failed'] += 1
 
     conn.commit()
+
+    # Email verification (if enabled and API key configured) - Start background job
+    verification_job_id = None
+    print(f"[VERIFY] verify_emails={verify_emails}, contacts_to_verify count={len(contacts_to_verify)}")
+    if verify_emails and contacts_to_verify:
+        api_row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
+        print(f"[VERIFY] API key configured: {bool(api_row and api_row[0])}")
+        if api_row and api_row[0]:
+            # Create background verification job
+            conn.execute("""INSERT INTO verification_jobs (status, total_contacts, contact_ids, created_at)
+                VALUES ('pending', ?, ?, ?)""",
+                (len(contacts_to_verify), ','.join(map(str, contacts_to_verify)), datetime.now().isoformat()))
+            verification_job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.commit()
+            print(f"[VERIFY] Created background job {verification_job_id} for {len(contacts_to_verify)} contacts")
+
+            # Start background task
+            asyncio.create_task(run_verification_job(verification_job_id))
+            background_tasks[verification_job_id] = True
+
+    stats["verification_job_id"] = verification_job_id
+    stats["contacts_to_verify"] = len(contacts_to_verify) if verify_emails else 0
     conn.close()
     update_counts()
     return stats
@@ -1220,7 +1329,7 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
 @app.get("/api/filters")
 def get_filters():
     conn = get_db()
-    opts = {'statuses': ['Lead', 'Contacted', 'Engaged', 'Opportunity', 'Client', 'Not Interested', 'Bounced', 'Unsubscribed'],
+    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Engaged', 'Meeting Booked', 'Opportunity', 'Client', 'Not Interested', 'Bounced', 'Unsubscribed'],
             'countries': [r[0] for r in conn.execute("SELECT DISTINCT company_country FROM contacts WHERE company_country IS NOT NULL AND company_country != '' ORDER BY company_country")],
             'country_strategies': ['Mexico', 'United States', 'Germany', 'Spain'],
             'seniorities': [r[0] for r in conn.execute("SELECT DISTINCT seniority FROM contacts WHERE seniority IS NOT NULL AND seniority != '' ORDER BY seniority")],
@@ -1802,6 +1911,394 @@ def apply_all_company_cleaning(limit: int = 10000):
     return {"updated": updated, "message": f"Cleaned {updated} company names"}
 
 # ==================== END DATA CLEANING ====================
+
+# ==================== SETTINGS API ====================
+
+@app.get("/api/settings/{key}")
+def get_setting(key: str):
+    """Get a setting value. API keys are masked for security."""
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return {"configured": False, "value": None}
+    # Mask sensitive values (API keys)
+    if "api_key" in key.lower():
+        return {"configured": True, "value": "***configured***"}
+    return {"configured": True, "value": row[0]}
+
+@app.put("/api/settings/{key}")
+async def update_setting(key: str, request: Request):
+    """Update a setting value."""
+    body = await request.json()
+    value = body.get("value")
+    conn = get_db()
+    now = datetime.now().isoformat()
+    # Upsert the setting
+    conn.execute("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)", (key, value, now))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "key": key}
+
+# ==================== EMAIL VERIFICATION ====================
+
+BULKEMAILCHECKER_API_URL = "https://api.bulkemailchecker.com/real-time/"
+
+async def verify_email_realtime(email: str, api_key: str) -> dict:
+    """
+    Call BulkEmailChecker real-time API for single email verification.
+    Returns normalized verification result.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                BULKEMAILCHECKER_API_URL,
+                params={"key": api_key, "email": email}
+            )
+            data = response.json()
+
+            # Normalize status: passed -> Valid, failed -> Invalid, unknown -> Unknown
+            raw_status = data.get("status", "unknown").lower()
+            if raw_status == "passed":
+                status = "Valid"
+            elif raw_status == "failed":
+                status = "Invalid"
+            else:
+                status = "Unknown"
+
+            # Get event details
+            event = data.get("event", "")
+
+            return {
+                "email": email,
+                "status": status,
+                "event": event,
+                "is_disposable": data.get("isDisposable", False),
+                "is_free_service": data.get("isFreeService", False),
+                "is_role_account": data.get("isRoleAccount", False),
+                "email_suggested": data.get("emailSuggested"),
+                "credits_remaining": data.get("creditsRemaining")
+            }
+    except httpx.TimeoutException:
+        return {
+            "email": email,
+            "status": "Unknown",
+            "event": "timeout",
+            "is_disposable": False,
+            "is_free_service": False,
+            "is_role_account": False,
+            "email_suggested": None
+        }
+    except Exception as e:
+        return {
+            "email": email,
+            "status": "Unknown",
+            "event": f"error: {str(e)}",
+            "is_disposable": False,
+            "is_free_service": False,
+            "is_role_account": False,
+            "email_suggested": None
+        }
+
+def update_contact_verification(conn, contact_id: int, result: dict):
+    """Update a contact with verification results."""
+    now = datetime.now().isoformat()
+    conn.execute("""
+        UPDATE contacts SET
+            email_status = ?,
+            email_verification_event = ?,
+            email_is_disposable = ?,
+            email_is_free_service = ?,
+            email_is_role_account = ?,
+            email_suggested = ?,
+            email_verified_at = ?,
+            updated_at = ?
+        WHERE id = ?
+    """, (
+        result["status"],
+        result["event"],
+        1 if result["is_disposable"] else 0,
+        1 if result["is_free_service"] else 0,
+        1 if result["is_role_account"] else 0,
+        result["email_suggested"],
+        now,
+        now,
+        contact_id
+    ))
+
+@app.get("/api/verify/status")
+def get_verification_status():
+    """Check if email verification is configured."""
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
+    conn.close()
+    return {"configured": bool(row and row[0])}
+
+@app.post("/api/verify/single")
+async def verify_single_email(email: str = Query(...)):
+    """Verify a single email address (for testing)."""
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
+    conn.close()
+    if not row or not row[0]:
+        raise HTTPException(400, "BulkEmailChecker API key not configured. Go to Settings > Integrations.")
+
+    result = await verify_email_realtime(email, row[0])
+    return result
+
+@app.post("/api/verify/contacts")
+async def verify_contacts(contact_ids: List[int] = Query(...)):
+    """Verify emails for specific contact IDs (only unverified contacts)."""
+    conn = get_db()
+    row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
+    if not row or not row[0]:
+        conn.close()
+        raise HTTPException(400, "BulkEmailChecker API key not configured")
+
+    api_key = row[0]
+
+    # Get contacts that need verification (Unknown status and have email)
+    placeholders = ','.join(['?'] * len(contact_ids))
+    contacts = conn.execute(f"""
+        SELECT id, email FROM contacts
+        WHERE id IN ({placeholders})
+        AND email IS NOT NULL AND email != ''
+        AND (email_status = 'Not Verified' OR email_status IS NULL)
+    """, contact_ids).fetchall()
+
+    stats = {"verified": 0, "valid": 0, "invalid": 0, "unknown": 0}
+
+    for contact in contacts:
+        cid, email = contact[0], contact[1]
+
+        # Rate limiting - 200ms between requests (5/sec)
+        await asyncio.sleep(0.2)
+
+        result = await verify_email_realtime(email, api_key)
+        update_contact_verification(conn, cid, result)
+
+        stats["verified"] += 1
+        if result["status"] == "Valid":
+            stats["valid"] += 1
+        elif result["status"] == "Invalid":
+            stats["invalid"] += 1
+        elif result["status"] == "Risky":
+            stats["risky"] += 1
+        else:
+            stats["unknown"] += 1
+
+    conn.commit()
+    conn.close()
+    return stats
+
+# ==================== BACKGROUND VERIFICATION JOBS ====================
+
+async def run_verification_job(job_id: int):
+    """Background task to verify emails for a job."""
+    conn = get_db()
+    try:
+        # Get job details
+        job = conn.execute("SELECT contact_ids FROM verification_jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            return
+
+        contact_ids = [int(x) for x in job[0].split(',') if x]
+
+        # Get API key
+        api_row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
+        if not api_row or not api_row[0]:
+            conn.execute("UPDATE verification_jobs SET status='failed', error_message='API key not configured' WHERE id=?", (job_id,))
+            conn.commit()
+            return
+
+        api_key = api_row[0]
+
+        # Mark job as running
+        conn.execute("UPDATE verification_jobs SET status='running', started_at=? WHERE id=?",
+                    (datetime.now().isoformat(), job_id))
+        conn.commit()
+
+        verified = valid = invalid = unknown = skipped = 0
+
+        for cid in contact_ids:
+            # Check if job was cancelled
+            job_status = conn.execute("SELECT status FROM verification_jobs WHERE id=?", (job_id,)).fetchone()
+            if job_status and job_status[0] == 'cancelled':
+                break
+
+            # Get contact email and current status
+            contact = conn.execute(
+                "SELECT email, email_status FROM contacts WHERE id=? AND email IS NOT NULL AND email != ''",
+                (cid,)
+            ).fetchone()
+
+            if not contact:
+                continue
+
+            email, current_status = contact[0], contact[1]
+
+            # Skip if already verified
+            if current_status and current_status != 'Unknown':
+                skipped += 1
+                conn.execute("""UPDATE verification_jobs SET
+                    skipped_count=?, current_email=? WHERE id=?""",
+                    (skipped, f"Skipped: {email}", job_id))
+                conn.commit()
+                continue
+
+            # Update current email being processed
+            conn.execute("UPDATE verification_jobs SET current_email=? WHERE id=?", (email, job_id))
+            conn.commit()
+
+            # Rate limiting - 200ms between requests
+            await asyncio.sleep(0.2)
+
+            # Verify email
+            result = await verify_email_realtime(email, api_key)
+            update_contact_verification(conn, cid, result)
+
+            verified += 1
+            if result["status"] == "Valid":
+                valid += 1
+            elif result["status"] == "Invalid":
+                invalid += 1
+            else:
+                unknown += 1
+
+            # Update job progress
+            conn.execute("""UPDATE verification_jobs SET
+                verified_count=?, valid_count=?, invalid_count=?, unknown_count=?, skipped_count=?
+                WHERE id=?""",
+                (verified, valid, invalid, unknown, skipped, job_id))
+            conn.commit()
+
+        # Mark job as completed
+        conn.execute("""UPDATE verification_jobs SET
+            status='completed', current_email=NULL, completed_at=?
+            WHERE id=?""",
+            (datetime.now().isoformat(), job_id))
+        conn.commit()
+
+    except Exception as e:
+        conn.execute("UPDATE verification_jobs SET status='failed', error_message=? WHERE id=?",
+                    (str(e), job_id))
+        conn.commit()
+    finally:
+        conn.close()
+        # Remove from background tasks
+        if job_id in background_tasks:
+            del background_tasks[job_id]
+
+
+@app.post("/api/verify/job/start")
+async def start_verification_job(contact_ids: List[int] = Query(...)):
+    """Start a background verification job for multiple contacts."""
+
+    conn = get_db()
+
+    # Check API key
+    api_row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
+    if not api_row or not api_row[0]:
+        conn.close()
+        raise HTTPException(400, "BulkEmailChecker API key not configured")
+
+    # Filter to only unverified contacts
+    placeholders = ','.join(['?'] * len(contact_ids))
+    unverified = conn.execute(f"""
+        SELECT id FROM contacts
+        WHERE id IN ({placeholders})
+        AND email IS NOT NULL AND email != ''
+        AND (email_status = 'Not Verified' OR email_status IS NULL)
+    """, contact_ids).fetchall()
+
+    unverified_ids = [r[0] for r in unverified]
+
+    if not unverified_ids:
+        conn.close()
+        return {"job_id": None, "message": "No contacts need verification"}
+
+    # Create job
+    conn.execute("""INSERT INTO verification_jobs (status, total_contacts, contact_ids, created_at)
+        VALUES ('pending', ?, ?, ?)""",
+        (len(unverified_ids), ','.join(map(str, unverified_ids)), datetime.now().isoformat()))
+    job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    # Start background task
+    asyncio.create_task(run_verification_job(job_id))
+    background_tasks[job_id] = True
+
+    return {"job_id": job_id, "total_contacts": len(unverified_ids)}
+
+
+@app.get("/api/verify/job/{job_id}")
+def get_verification_job(job_id: int):
+    """Get status of a verification job."""
+    conn = get_db()
+    job = conn.execute("""SELECT id, status, total_contacts, verified_count, valid_count,
+        invalid_count, unknown_count, skipped_count, current_email, error_message,
+        created_at, started_at, completed_at
+        FROM verification_jobs WHERE id=?""", (job_id,)).fetchone()
+    conn.close()
+
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    return {
+        "id": job[0],
+        "status": job[1],
+        "total_contacts": job[2],
+        "verified_count": job[3],
+        "valid_count": job[4],
+        "invalid_count": job[5],
+        "unknown_count": job[6],
+        "skipped_count": job[7],
+        "current_email": job[8],
+        "error_message": job[9],
+        "created_at": job[10],
+        "started_at": job[11],
+        "completed_at": job[12],
+        "progress": round((job[3] + job[7]) / job[2] * 100, 1) if job[2] > 0 else 0
+    }
+
+
+@app.post("/api/verify/job/{job_id}/cancel")
+def cancel_verification_job(job_id: int):
+    """Cancel a running verification job."""
+    conn = get_db()
+    conn.execute("UPDATE verification_jobs SET status='cancelled' WHERE id=? AND status='running'", (job_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "cancelled"}
+
+
+@app.get("/api/verify/jobs/active")
+def get_active_verification_jobs():
+    """Get all active (pending/running) verification jobs."""
+    conn = get_db()
+    jobs = conn.execute("""SELECT id, status, total_contacts, verified_count, valid_count,
+        invalid_count, unknown_count, skipped_count, current_email, created_at
+        FROM verification_jobs WHERE status IN ('pending', 'running')
+        ORDER BY created_at DESC""").fetchall()
+    conn.close()
+
+    return [{
+        "id": j[0],
+        "status": j[1],
+        "total_contacts": j[2],
+        "verified_count": j[3],
+        "valid_count": j[4],
+        "invalid_count": j[5],
+        "unknown_count": j[6],
+        "skipped_count": j[7],
+        "current_email": j[8],
+        "created_at": j[9],
+        "progress": round((j[3] + j[7]) / j[2] * 100, 1) if j[2] > 0 else 0
+    } for j in jobs]
+
+
+# ==================== END EMAIL VERIFICATION ====================
 
 @app.get("/health")
 def health():
