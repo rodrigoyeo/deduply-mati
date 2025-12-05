@@ -2143,8 +2143,8 @@ async def run_verification_job(job_id: int):
 
             email, current_status = contact[0], contact[1]
 
-            # Skip if already verified
-            if current_status and current_status != 'Unknown':
+            # Skip if already verified (Valid or Invalid are final states)
+            if current_status in ['Valid', 'Invalid']:
                 skipped += 1
                 conn.execute("""UPDATE verification_jobs SET
                     skipped_count=?, current_email=? WHERE id=?""",
