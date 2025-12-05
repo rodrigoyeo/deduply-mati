@@ -1934,8 +1934,14 @@ async def update_setting(key: str, request: Request):
     value = body.get("value")
     conn = get_db()
     now = datetime.now().isoformat()
-    # Upsert the setting
-    conn.execute("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)", (key, value, now))
+    # Upsert the setting - PostgreSQL uses ON CONFLICT, SQLite uses OR REPLACE
+    if USE_POSTGRES:
+        conn.execute("""
+            INSERT INTO settings (key, value, updated_at) VALUES (%s, %s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+        """, (key, value, now))
+    else:
+        conn.execute("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)", (key, value, now))
     conn.commit()
     conn.close()
     return {"status": "ok", "key": key}
