@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
-import { LayoutDashboard, Users, Mail, FileText, Settings, Search, Plus, Trash2, X, Check, ArrowUpDown, Filter, Download, Upload, Edit2, LogOut, UserPlus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle, Copy, ArrowRight, Layers, Merge, Eye, Webhook, Database, Send, Target, MessageCircle, MessageSquare, Zap, GitMerge, AlertTriangle, Trophy, List, LayoutGrid, Sparkles, Building2, User, ArrowRightLeft } from 'lucide-react';
+import { LayoutDashboard, Users, Mail, FileText, Settings, Search, Plus, Trash2, X, Check, ArrowUpDown, Filter, Download, Upload, Edit2, LogOut, UserPlus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle, Copy, ArrowRight, Layers, Merge, Eye, Webhook, Database, Send, Target, MessageCircle, MessageSquare, Zap, GitMerge, AlertTriangle, Trophy, List, LayoutGrid, Sparkles, Building2, User, ArrowRightLeft, Bold, Italic, Type } from 'lucide-react';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
 const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8001';
 const API = `${API_BASE}/api`;
@@ -1861,9 +1863,30 @@ const TemplatesPage = () => {
   const handleCreate = async (data) => { try { await api.post('/templates', data); addToast('Template created successfully!', 'success'); setShowCreate(false); fetchTemplates(); if (activeTab === 'data') fetchGroupedTemplates(); } catch (e) { addToast(e.message, 'error'); } };
   const handleUpdate = async (id, data) => { try { await api.put(`/templates/${id}`, data); addToast('Template updated!', 'success'); setShowEdit(null); fetchTemplates(); if (activeTab === 'data') fetchGroupedTemplates(); } catch (e) { addToast(e.message, 'error'); } };
   const handleDelete = async (id) => { if (!window.confirm('Are you sure you want to delete this template?')) return; try { await api.delete(`/templates/${id}`); addToast('Template deleted', 'success'); fetchTemplates(); if (activeTab === 'data') fetchGroupedTemplates(); } catch (e) { addToast(e.message, 'error'); } };
-  const copyToClipboard = (template) => { const text = `Subject: ${template.subject || ''}\n\n${template.body || ''}`; navigator.clipboard.writeText(text); addToast('Copied to clipboard!', 'success'); };
+  const copyToClipboard = async (template) => {
+    // Convert Quill's HTML for Gmail compatibility
+    let cleanBody = (template.body || '')
+      .replace(/<p><br><\/p>/g, '<br><br>')       // Empty paragraphs become double line break (blank line)
+      .replace(/<p><br\/><\/p>/g, '<br><br>')     // Empty paragraphs (self-closing br)
+      .replace(/<\/p>\s*<p>/g, '<br><br>')        // Paragraph breaks become double line breaks (blank line between)
+      .replace(/<p>/g, '')                         // Remove opening p tags
+      .replace(/<\/p>/g, '');                      // Remove closing p tags
 
-  const variables = ['{{firstName}}', '{{lastName}}', '{{company}}', '{{title}}', '{{email}}'];
+    // Create HTML version with subject and body
+    const subject = template.subject || '';
+    const htmlContent = `<div><strong>Subject:</strong> ${subject}</div><br><br>${cleanBody}`;
+
+    // Create plain text version as fallback
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = template.body || '';
+    const plainBody = tempDiv.textContent || tempDiv.innerText || '';
+    const plainText = `Subject: ${subject}\n\n${plainBody}`;
+
+    await copyHtmlToClipboard(htmlContent, plainText);
+    addToast('Copied to clipboard with formatting!', 'success');
+  };
+
+  const variables = ['{{firstName}}', '{{lastName}}', '{{companyName}}', '{{Headline}}', '{{accountSignature}}'];
 
   // Filter templates
   const filteredTemplates = templates.filter(t => {
@@ -2339,6 +2362,77 @@ const TemplateDataView = ({ data, loading, onEdit, onDelete, copyToClipboard }) 
   );
 };
 
+// Rich Text Editor Component for Email Templates (Gmail-style toolbar)
+const RichTextEditor = ({ value, onChange, placeholder, variables, onInsertVariable }) => {
+  const quillRef = useRef(null);
+
+  const modules = {
+    toolbar: {
+      container: [
+        [{ 'font': [] }],
+        [{ 'size': ['small', false, 'large', 'huge'] }],
+        ['bold', 'italic', 'underline'],
+        [{ 'color': [] }],
+        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+        ['link'],
+        ['clean']
+      ]
+    }
+  };
+
+  const formats = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'list', 'bullet', 'link'];
+
+  const insertVariable = (variable) => {
+    if (quillRef.current) {
+      const editor = quillRef.current.getEditor();
+      const range = editor.getSelection(true);
+      editor.insertText(range ? range.index : editor.getLength(), variable);
+      editor.setSelection(range ? range.index + variable.length : editor.getLength());
+    }
+  };
+
+  return (
+    <div className="rich-text-editor">
+      <ReactQuill
+        ref={quillRef}
+        theme="snow"
+        value={value || ''}
+        onChange={onChange}
+        modules={modules}
+        formats={formats}
+        placeholder={placeholder}
+      />
+      <div className="variable-chips">
+        {variables.map(v => (
+          <span key={v} className="variable-chip" onClick={() => insertVariable(v)}>{v}</span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// Helper function to copy HTML content to clipboard (preserves formatting for Gmail)
+const copyHtmlToClipboard = async (html, plainText) => {
+  try {
+    // Create a blob with HTML content
+    const htmlBlob = new Blob([html], { type: 'text/html' });
+    const textBlob = new Blob([plainText], { type: 'text/plain' });
+
+    // Use the Clipboard API with both HTML and plain text
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        'text/html': htmlBlob,
+        'text/plain': textBlob
+      })
+    ]);
+    return true;
+  } catch (err) {
+    // Fallback to plain text copy
+    await navigator.clipboard.writeText(plainText);
+    return true;
+  }
+};
+
 const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }) => {
   const initialCampaignIds = initial.campaign_ids || (initial.campaigns ? initial.campaigns.map(c => c.id) : []);
   const [data, setData] = useState({ name: '', variant: 'A', step_type: 'Main', subject: '', body: '', campaign_ids: initialCampaignIds, ...initial, campaign_ids: initialCampaignIds });
@@ -2390,8 +2484,12 @@ const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }
       </div>
       <div className="form-group">
         <label>Email Body</label>
-        <textarea value={data.body || ''} onChange={e => setData({ ...data, body: e.target.value })} rows={8} placeholder="Hi {{firstName}},&#10;&#10;I noticed that..." />
-        <div className="variable-chips">{variables.map(v => (<span key={v} className="variable-chip" onClick={() => insertVariable(v, 'body')}>{v}</span>))}</div>
+        <RichTextEditor
+          value={data.body || ''}
+          onChange={(content) => setData({ ...data, body: content })}
+          placeholder="Hi {{firstName}}, I noticed that..."
+          variables={variables}
+        />
       </div>
       <div className="modal-actions">
         <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>

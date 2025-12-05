@@ -4777,3 +4777,294 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   padding: 60px 20px;
   color: var(--coral);
 }
+
+/* Rich Text Editor Styles - Gmail-inspired */
+.rich-text-editor {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-0);
+}
+
+.rich-text-editor .quill {
+  border: none;
+}
+
+.rich-text-editor .ql-toolbar.ql-snow {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: #f8f9fa;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rich-text-editor .ql-toolbar .ql-formats {
+  margin-right: 4px;
+  padding-right: 8px;
+  border-right: 1px solid #e0e0e0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.rich-text-editor .ql-toolbar .ql-formats:last-child {
+  border-right: none;
+  margin-right: 0;
+  padding-right: 0;
+}
+
+.rich-text-editor .ql-toolbar button {
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rich-text-editor .ql-toolbar button:hover {
+  background: #e8eaed;
+}
+
+.rich-text-editor .ql-toolbar button.ql-active {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.rich-text-editor .ql-toolbar button.ql-active .ql-stroke {
+  stroke: #1a73e8;
+}
+
+.rich-text-editor .ql-toolbar button.ql-active .ql-fill {
+  fill: #1a73e8;
+}
+
+.rich-text-editor .ql-toolbar .ql-stroke {
+  stroke: #5f6368;
+}
+
+.rich-text-editor .ql-toolbar .ql-fill {
+  fill: #5f6368;
+}
+
+.rich-text-editor .ql-toolbar button:hover .ql-stroke {
+  stroke: #202124;
+}
+
+.rich-text-editor .ql-toolbar button:hover .ql-fill {
+  fill: #202124;
+}
+
+/* Picker styles (dropdowns) */
+.rich-text-editor .ql-toolbar .ql-picker {
+  height: 32px;
+}
+
+.rich-text-editor .ql-toolbar .ql-picker-label {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #5f6368;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.rich-text-editor .ql-toolbar .ql-picker-label:hover {
+  background: #e8eaed;
+}
+
+.rich-text-editor .ql-toolbar .ql-picker-label .ql-stroke {
+  stroke: #5f6368;
+}
+
+.rich-text-editor .ql-toolbar .ql-picker.ql-expanded .ql-picker-label {
+  background: #e8f0fe;
+  color: #1a73e8;
+  border-color: transparent;
+}
+
+.rich-text-editor .ql-toolbar .ql-picker.ql-expanded .ql-picker-label .ql-stroke {
+  stroke: #1a73e8;
+}
+
+/* Font picker */
+.rich-text-editor .ql-snow .ql-picker.ql-font {
+  width: 100px;
+}
+
+.rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-label::before,
+.rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-item::before {
+  content: 'Sans Serif';
+}
+
+.rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-label[data-value=serif]::before,
+.rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-item[data-value=serif]::before {
+  content: 'Serif';
+  font-family: Georgia, serif;
+}
+
+.rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-label[data-value=monospace]::before,
+.rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-item[data-value=monospace]::before {
+  content: 'Monospace';
+  font-family: Monaco, monospace;
+}
+
+/* Size picker */
+.rich-text-editor .ql-snow .ql-picker.ql-size {
+  width: 70px;
+}
+
+.rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-label::before,
+.rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-item::before {
+  content: 'Normal';
+}
+
+.rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-label[data-value=small]::before,
+.rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-item[data-value=small]::before {
+  content: 'Small';
+}
+
+.rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-label[data-value=large]::before,
+.rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-item[data-value=large]::before {
+  content: 'Large';
+}
+
+.rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-label[data-value=huge]::before,
+.rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-item[data-value=huge]::before {
+  content: 'Huge';
+}
+
+/* Dropdown options */
+.rich-text-editor .ql-snow .ql-picker-options {
+  background: white;
+  border: none;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15), 0 0 1px rgba(0,0,0,0.1);
+  padding: 6px 0;
+  margin-top: 4px;
+}
+
+.rich-text-editor .ql-snow .ql-picker-item {
+  padding: 8px 16px;
+  color: #202124;
+  font-size: 13px;
+}
+
+.rich-text-editor .ql-snow .ql-picker-item:hover {
+  background: #f1f3f4;
+}
+
+.rich-text-editor .ql-snow .ql-picker-item.ql-selected {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+/* Color picker - custom palette icon */
+.rich-text-editor .ql-snow .ql-color-picker .ql-picker-label {
+  padding: 4px;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rich-text-editor .ql-snow .ql-color-picker .ql-picker-label svg {
+  display: none !important;
+}
+
+.rich-text-editor .ql-snow .ql-color-picker .ql-picker-label::before {
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%235f6368' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='13.5' cy='6.5' r='2'/%3E%3Ccircle cx='17.5' cy='10.5' r='2'/%3E%3Ccircle cx='8.5' cy='7.5' r='2'/%3E%3Ccircle cx='6.5' cy='12.5' r='2'/%3E%3Cpath d='M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2z'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.rich-text-editor .ql-snow .ql-color-picker .ql-picker-label:hover::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23202124' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='13.5' cy='6.5' r='2'/%3E%3Ccircle cx='17.5' cy='10.5' r='2'/%3E%3Ccircle cx='8.5' cy='7.5' r='2'/%3E%3Ccircle cx='6.5' cy='12.5' r='2'/%3E%3Cpath d='M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2z'/%3E%3C/svg%3E");
+}
+
+.rich-text-editor .ql-snow .ql-color-picker.ql-expanded .ql-picker-label::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%231a73e8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='13.5' cy='6.5' r='2'/%3E%3Ccircle cx='17.5' cy='10.5' r='2'/%3E%3Ccircle cx='8.5' cy='7.5' r='2'/%3E%3Ccircle cx='6.5' cy='12.5' r='2'/%3E%3Cpath d='M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2z'/%3E%3C/svg%3E");
+}
+
+.rich-text-editor .ql-snow .ql-color-picker .ql-picker-options,
+.rich-text-editor .ql-snow .ql-background .ql-picker-options {
+  padding: 8px;
+  width: auto;
+}
+
+.rich-text-editor .ql-snow .ql-color-picker .ql-picker-item,
+.rich-text-editor .ql-snow .ql-background .ql-picker-item {
+  border-radius: 2px;
+  margin: 1px;
+}
+
+/* Align picker - show as buttons not dropdown */
+.rich-text-editor .ql-snow .ql-align .ql-picker-label {
+  padding: 0;
+}
+
+.rich-text-editor .ql-snow .ql-align .ql-picker-options {
+  display: flex;
+  padding: 4px;
+}
+
+.rich-text-editor .ql-snow .ql-align .ql-picker-item {
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Editor container */
+.rich-text-editor .ql-container.ql-snow {
+  border: none;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 14px;
+}
+
+.rich-text-editor .ql-editor {
+  min-height: 180px;
+  max-height: 350px;
+  overflow-y: auto;
+  padding: 16px;
+  line-height: 1.5;
+  color: #202124;
+}
+
+.rich-text-editor .ql-editor.ql-blank::before {
+  color: #80868b;
+  font-style: normal;
+}
+
+.rich-text-editor .ql-editor p {
+  margin: 0;
+}
+
+.rich-text-editor .ql-editor strong {
+  font-weight: 700;
+}
+
+/* Variable chips below editor */
+.rich-text-editor + .variable-chips,
+.rich-text-editor .variable-chips {
+  margin-top: 0;
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border-top: 1px solid var(--border);
+}
