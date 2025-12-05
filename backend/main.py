@@ -2011,6 +2011,11 @@ async def verify_email_realtime(email: str, api_key: str) -> dict:
 def update_contact_verification(conn, contact_id: int, result: dict):
     """Update a contact with verification results."""
     now = datetime.now().isoformat()
+    # Use Python booleans for PostgreSQL compatibility
+    is_disposable = bool(result.get("is_disposable", False))
+    is_free_service = bool(result.get("is_free_service", False))
+    is_role_account = bool(result.get("is_role_account", False))
+
     conn.execute("""
         UPDATE contacts SET
             email_status = ?,
@@ -2024,11 +2029,11 @@ def update_contact_verification(conn, contact_id: int, result: dict):
         WHERE id = ?
     """, (
         result["status"],
-        result["event"],
-        1 if result["is_disposable"] else 0,
-        1 if result["is_free_service"] else 0,
-        1 if result["is_role_account"] else 0,
-        result["email_suggested"],
+        result.get("event", ""),
+        is_disposable,
+        is_free_service,
+        is_role_account,
+        result.get("email_suggested", ""),
         now,
         now,
         contact_id
@@ -2136,9 +2141,11 @@ def verify_email_sync(email: str, api_key: str) -> dict:
 
 def run_verification_job_sync(job_id: int):
     """Synchronous background task to verify emails (runs in thread)."""
+    import traceback
     print(f"[VERIFY THREAD] Starting job {job_id}")
-    conn = get_db()
+    conn = None
     try:
+        conn = get_db()
         # Get job details
         job = conn.execute("SELECT contact_ids FROM verification_jobs WHERE id=?", (job_id,)).fetchone()
         if not job:
@@ -2227,12 +2234,21 @@ def run_verification_job_sync(job_id: int):
         print(f"[VERIFY THREAD] Job {job_id} completed: {verified} verified, {valid} valid, {invalid} invalid")
 
     except Exception as e:
-        print(f"[VERIFY THREAD] Job {job_id} failed: {e}")
-        conn.execute("UPDATE verification_jobs SET status='failed', error_message=? WHERE id=?",
-                    (str(e), job_id))
-        conn.commit()
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"[VERIFY THREAD] Job {job_id} failed: {error_msg}")
+        try:
+            if conn:
+                conn.execute("UPDATE verification_jobs SET status='failed', error_message=? WHERE id=?",
+                            (str(e)[:500], job_id))
+                conn.commit()
+        except Exception as db_err:
+            print(f"[VERIFY THREAD] Failed to update job status: {db_err}")
     finally:
-        conn.close()
+        try:
+            if conn:
+                conn.close()
+        except:
+            pass
         if job_id in background_tasks:
             del background_tasks[job_id]
 
