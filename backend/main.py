@@ -4,7 +4,7 @@ Deduply v5.2 - Cold Email Operations Platform
 FastAPI Backend with proper relational database design
 """
 
-from fastapi import FastAPI, HTTPException, Request, Query, UploadFile, File, Depends, Header
+from fastapi import FastAPI, HTTPException, Request, Query, UploadFile, File, Depends, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -20,6 +20,8 @@ import os
 import bcrypt
 import httpx
 import asyncio
+import threading
+import time
 from data_cleaning import (
     clean_name, clean_company_name, extract_domain_name,
     preview_name_cleaning, preview_company_cleaning, analyze_data_quality
@@ -1316,8 +1318,8 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
             conn.commit()
             print(f"[VERIFY] Created background job {verification_job_id} for {len(contacts_to_verify)} contacts")
 
-            # Start background task
-            asyncio.create_task(run_verification_job(verification_job_id))
+            # Start background thread (doesn't block response)
+            start_verification_thread(verification_job_id)
             background_tasks[verification_job_id] = True
 
     stats["verification_job_id"] = verification_job_id
@@ -2099,16 +2101,52 @@ async def verify_contacts(contact_ids: List[int] = Query(...)):
 
 # ==================== BACKGROUND VERIFICATION JOBS ====================
 
-async def run_verification_job(job_id: int):
-    """Background task to verify emails for a job."""
+def verify_email_sync(email: str, api_key: str) -> dict:
+    """Synchronous email verification using httpx (for thread)."""
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(
+                BULKEMAILCHECKER_API_URL,
+                params={"key": api_key, "email": email}
+            )
+            data = response.json()
+
+            raw_status = data.get("status", "unknown").lower()
+            if raw_status == "passed":
+                status = "Valid"
+            elif raw_status == "failed":
+                status = "Invalid"
+            else:
+                status = "Unknown"
+
+            return {
+                "status": status,
+                "event": data.get("event", ""),
+                "is_disposable": data.get("isDisposable", False),
+                "is_free_service": data.get("isFreeService", False),
+                "is_role_account": data.get("isRoleAccount", False),
+                "email_suggested": data.get("emailSuggested", "")
+            }
+    except Exception as e:
+        print(f"[VERIFY] Error verifying {email}: {e}")
+        return {"status": "Unknown", "event": f"error: {str(e)}",
+                "is_disposable": False, "is_free_service": False,
+                "is_role_account": False, "email_suggested": ""}
+
+
+def run_verification_job_sync(job_id: int):
+    """Synchronous background task to verify emails (runs in thread)."""
+    print(f"[VERIFY THREAD] Starting job {job_id}")
     conn = get_db()
     try:
         # Get job details
         job = conn.execute("SELECT contact_ids FROM verification_jobs WHERE id=?", (job_id,)).fetchone()
         if not job:
+            print(f"[VERIFY THREAD] Job {job_id} not found")
             return
 
         contact_ids = [int(x) for x in job[0].split(',') if x]
+        print(f"[VERIFY THREAD] Processing {len(contact_ids)} contacts")
 
         # Get API key
         api_row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
@@ -2130,6 +2168,7 @@ async def run_verification_job(job_id: int):
             # Check if job was cancelled
             job_status = conn.execute("SELECT status FROM verification_jobs WHERE id=?", (job_id,)).fetchone()
             if job_status and job_status[0] == 'cancelled':
+                print(f"[VERIFY THREAD] Job {job_id} was cancelled")
                 break
 
             # Get contact email and current status
@@ -2157,10 +2196,10 @@ async def run_verification_job(job_id: int):
             conn.commit()
 
             # Rate limiting - 200ms between requests
-            await asyncio.sleep(0.2)
+            time.sleep(0.2)
 
             # Verify email
-            result = await verify_email_realtime(email, api_key)
+            result = verify_email_sync(email, api_key)
             update_contact_verification(conn, cid, result)
 
             verified += 1
@@ -2177,6 +2216,7 @@ async def run_verification_job(job_id: int):
                 WHERE id=?""",
                 (verified, valid, invalid, unknown, skipped, job_id))
             conn.commit()
+            print(f"[VERIFY THREAD] Verified {email}: {result['status']}")
 
         # Mark job as completed
         conn.execute("""UPDATE verification_jobs SET
@@ -2184,16 +2224,24 @@ async def run_verification_job(job_id: int):
             WHERE id=?""",
             (datetime.now().isoformat(), job_id))
         conn.commit()
+        print(f"[VERIFY THREAD] Job {job_id} completed: {verified} verified, {valid} valid, {invalid} invalid")
 
     except Exception as e:
+        print(f"[VERIFY THREAD] Job {job_id} failed: {e}")
         conn.execute("UPDATE verification_jobs SET status='failed', error_message=? WHERE id=?",
                     (str(e), job_id))
         conn.commit()
     finally:
         conn.close()
-        # Remove from background tasks
         if job_id in background_tasks:
             del background_tasks[job_id]
+
+
+def start_verification_thread(job_id: int):
+    """Start verification job in a background thread."""
+    thread = threading.Thread(target=run_verification_job_sync, args=(job_id,), daemon=True)
+    thread.start()
+    print(f"[VERIFY] Started background thread for job {job_id}")
 
 
 @app.post("/api/verify/job/start")
@@ -2231,8 +2279,8 @@ async def start_verification_job(contact_ids: List[int] = Query(...)):
     conn.commit()
     conn.close()
 
-    # Start background task
-    asyncio.create_task(run_verification_job(job_id))
+    # Start background thread (doesn't block response)
+    start_verification_thread(job_id)
     background_tasks[job_id] = True
 
     return {"job_id": job_id, "total_contacts": len(unverified_ids)}
