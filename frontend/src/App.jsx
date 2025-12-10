@@ -664,6 +664,7 @@ const ContactsPage = () => {
   // Bulk editable fields config
   const bulkEditableFields = [
     { id: 'status', label: 'Status', type: 'select', options: filterOptions?.statuses || [] },
+    { id: 'email_status', label: 'Email Status', type: 'select', options: ['Not Verified', 'Valid', 'Invalid', 'Unknown'] },
     { id: 'country_strategy', label: 'Country Strategy', type: 'select', options: filterOptions?.country_strategies || [] },
     { id: 'campaigns_assigned', label: 'Campaign', type: 'list', options: filterOptions?.campaigns || [] },
     { id: 'outreach_lists', label: 'Outreach List', type: 'list', options: filterOptions?.outreach_lists || [] },

@@ -2056,19 +2056,21 @@ def get_verification_status():
 
 @app.post("/api/verify/fix-unknown")
 def fix_unknown_contacts():
-    """Fix contacts that have 'Unknown' status but were never actually verified."""
+    """Fix contacts that have 'Unknown' status - reset them to 'Not Verified' so they can be re-verified."""
     conn = get_db()
-    # Update contacts where status is Unknown but email_verified_at is NULL (never verified)
+    # Update ALL contacts with Unknown status to Not Verified, and clear verified_at
+    # This allows them to be re-verified
     result = conn.execute("""
         UPDATE contacts
-        SET email_status = 'Not Verified'
+        SET email_status = 'Not Verified',
+            email_verified_at = NULL,
+            email_verification_event = NULL
         WHERE email_status = 'Unknown'
-        AND email_verified_at IS NULL
     """)
     count = result.rowcount
     conn.commit()
     conn.close()
-    return {"fixed": count, "message": f"Updated {count} contacts from 'Unknown' to 'Not Verified'"}
+    return {"fixed": count, "message": f"Reset {count} contacts from 'Unknown' to 'Not Verified' - ready for verification"}
 
 @app.post("/api/verify/single")
 async def verify_single_email(email: str = Query(...)):
