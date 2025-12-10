@@ -804,7 +804,7 @@ def bulk_update(req: BulkUpdateRequest):
             updated += 1
     # Handle simple field updates
     else:
-        allowed_fields = ['status', 'country_strategy', 'seniority', 'company_country', 'industry', 'title', 'company', 'first_name', 'last_name', 'notes']
+        allowed_fields = ['status', 'email_status', 'country_strategy', 'seniority', 'company_country', 'industry', 'title', 'company', 'first_name', 'last_name', 'notes']
         if field not in allowed_fields:
             conn.close()
             raise HTTPException(400, f"Field {field} cannot be bulk updated")
