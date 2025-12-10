@@ -523,7 +523,7 @@ def delete_user(user_id: int):
 def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = None, status: Optional[str] = None,
                 campaigns: Optional[str] = None, outreach_lists: Optional[str] = None, country: Optional[str] = None,
                 country_strategy: Optional[str] = None, seniority: Optional[str] = None, industry: Optional[str] = None,
-                show_duplicates: bool = False, sort_by: str = "id", sort_order: str = "desc"):
+                email_status: Optional[str] = None, show_duplicates: bool = False, sort_by: str = "id", sort_order: str = "desc"):
     conn = get_db()
     where = ["1=1"] if show_duplicates else ["c.is_duplicate=0"]
     params = []
@@ -537,6 +537,7 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
     if country_strategy: where.append("c.country_strategy=?"); params.append(country_strategy)
     if seniority: where.append("c.seniority=?"); params.append(seniority)
     if industry: where.append("c.industry LIKE ?"); params.append(f"%{industry}%")
+    if email_status: where.append("c.email_status=?"); params.append(email_status)
 
     # Filter by campaign using junction table
     if campaigns:
