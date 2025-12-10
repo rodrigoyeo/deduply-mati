@@ -2182,12 +2182,43 @@ def verify_email_sync(email: str, api_key: str) -> dict:
             )
             data = response.json()
 
-            raw_status = data.get("status", "unknown").lower()
+            # Check for API errors first (rate limit, invalid key, etc.)
+            if "error" in data:
+                error_msg = data.get("error", "Unknown error")
+                print(f"[VERIFY] API error for {email}: {error_msg}")
+                # Return special status to indicate API error (not a real "Unknown")
+                return {
+                    "status": "API_ERROR",
+                    "event": f"api_error: {error_msg}",
+                    "is_disposable": False,
+                    "is_free_service": False,
+                    "is_role_account": False,
+                    "email_suggested": "",
+                    "error": error_msg
+                }
+
+            # Check if status field exists
+            if "status" not in data:
+                print(f"[VERIFY] No status in response for {email}: {data}")
+                return {
+                    "status": "API_ERROR",
+                    "event": "api_error: no status in response",
+                    "is_disposable": False,
+                    "is_free_service": False,
+                    "is_role_account": False,
+                    "email_suggested": "",
+                    "error": "No status in response"
+                }
+
+            raw_status = data.get("status", "").lower()
             if raw_status == "passed":
                 status = "Valid"
             elif raw_status == "failed":
                 status = "Invalid"
+            elif raw_status == "unknown":
+                status = "Unknown"  # Genuine unknown from API
             else:
+                print(f"[VERIFY] Unexpected status '{raw_status}' for {email}")
                 status = "Unknown"
 
             return {
@@ -2199,10 +2230,11 @@ def verify_email_sync(email: str, api_key: str) -> dict:
                 "email_suggested": data.get("emailSuggested", "")
             }
     except Exception as e:
-        print(f"[VERIFY] Error verifying {email}: {e}")
-        return {"status": "Unknown", "event": f"error: {str(e)}",
+        print(f"[VERIFY] Exception verifying {email}: {e}")
+        return {"status": "API_ERROR", "event": f"exception: {str(e)}",
                 "is_disposable": False, "is_free_service": False,
-                "is_role_account": False, "email_suggested": ""}
+                "is_role_account": False, "email_suggested": "",
+                "error": str(e)}
 
 
 def run_verification_job_sync(job_id: int):
@@ -2210,6 +2242,13 @@ def run_verification_job_sync(job_id: int):
     import traceback
     print(f"[VERIFY THREAD] Starting job {job_id}")
     conn = None
+
+    # Rate limit settings: 1,500/hour = 2.4 seconds between requests
+    # We use 2.5 seconds to be safe (1,440/hour)
+    REQUEST_DELAY = 2.5
+    RATE_LIMIT_PAUSE = 300  # 5 minutes pause if rate limited
+    MAX_CONSECUTIVE_ERRORS = 10  # Stop if too many consecutive errors
+
     try:
         conn = get_db()
         # Get job details
@@ -2219,7 +2258,7 @@ def run_verification_job_sync(job_id: int):
             return
 
         contact_ids = [int(x) for x in job[0].split(',') if x]
-        print(f"[VERIFY THREAD] Processing {len(contact_ids)} contacts")
+        print(f"[VERIFY THREAD] Processing {len(contact_ids)} contacts (delay: {REQUEST_DELAY}s between requests)")
 
         # Get API key
         api_row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
@@ -2236,6 +2275,8 @@ def run_verification_job_sync(job_id: int):
         conn.commit()
 
         verified = valid = invalid = unknown = skipped = 0
+        api_errors = 0
+        consecutive_errors = 0
 
         for cid in contact_ids:
             # Check if job was cancelled
@@ -2268,20 +2309,56 @@ def run_verification_job_sync(job_id: int):
             conn.execute("UPDATE verification_jobs SET current_email=? WHERE id=?", (email, job_id))
             conn.commit()
 
-            # Rate limiting - 200ms between requests
-            time.sleep(0.2)
+            # Rate limiting delay between requests
+            time.sleep(REQUEST_DELAY)
 
-            # Verify email
+            # Verify email with retry logic
             result = verify_email_sync(email, api_key)
-            update_contact_verification(conn, cid, result)
 
-            verified += 1
-            if result["status"] == "Valid":
-                valid += 1
-            elif result["status"] == "Invalid":
-                invalid += 1
+            # Handle API errors (rate limit, etc.)
+            if result.get("status") == "API_ERROR":
+                error_msg = result.get("error", "").lower()
+                consecutive_errors += 1
+                api_errors += 1
+
+                # Check for rate limit
+                if "rate" in error_msg or "limit" in error_msg or "too many" in error_msg:
+                    print(f"[VERIFY THREAD] Rate limit detected! Pausing for {RATE_LIMIT_PAUSE} seconds...")
+                    conn.execute("UPDATE verification_jobs SET current_email=? WHERE id=?",
+                                (f"Rate limited - pausing {RATE_LIMIT_PAUSE}s...", job_id))
+                    conn.commit()
+                    time.sleep(RATE_LIMIT_PAUSE)
+                    consecutive_errors = 0  # Reset after pause
+                    # Retry this email
+                    result = verify_email_sync(email, api_key)
+                    if result.get("status") == "API_ERROR":
+                        print(f"[VERIFY THREAD] Still getting error after pause, skipping {email}")
+                        continue
+                elif consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    print(f"[VERIFY THREAD] Too many consecutive errors ({consecutive_errors}), stopping job")
+                    conn.execute("UPDATE verification_jobs SET status='failed', error_message=? WHERE id=?",
+                                (f"Too many consecutive API errors. Last error: {error_msg}", job_id))
+                    conn.commit()
+                    return
+                else:
+                    print(f"[VERIFY THREAD] API error for {email}, skipping: {error_msg}")
+                    continue
             else:
-                unknown += 1
+                consecutive_errors = 0  # Reset on success
+
+            # Only update contact if we got a real result (not API_ERROR)
+            if result.get("status") != "API_ERROR":
+                update_contact_verification(conn, cid, result)
+                verified += 1
+
+                if result["status"] == "Valid":
+                    valid += 1
+                elif result["status"] == "Invalid":
+                    invalid += 1
+                else:
+                    unknown += 1
+
+                print(f"[VERIFY THREAD] Verified {email}: {result['status']}")
 
             # Update job progress
             conn.execute("""UPDATE verification_jobs SET
@@ -2289,7 +2366,6 @@ def run_verification_job_sync(job_id: int):
                 WHERE id=?""",
                 (verified, valid, invalid, unknown, skipped, job_id))
             conn.commit()
-            print(f"[VERIFY THREAD] Verified {email}: {result['status']}")
 
         # Mark job as completed
         conn.execute("""UPDATE verification_jobs SET
@@ -2297,7 +2373,7 @@ def run_verification_job_sync(job_id: int):
             WHERE id=?""",
             (datetime.now().isoformat(), job_id))
         conn.commit()
-        print(f"[VERIFY THREAD] Job {job_id} completed: {verified} verified, {valid} valid, {invalid} invalid")
+        print(f"[VERIFY THREAD] Job {job_id} completed: {verified} verified, {valid} valid, {invalid} invalid, {unknown} unknown, {api_errors} API errors")
 
     except Exception as e:
         error_msg = f"{str(e)}\n{traceback.format_exc()}"

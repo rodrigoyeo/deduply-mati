@@ -1210,6 +1210,12 @@ const EnrichmentPage = () => {
     try {
       const s = await api.get('/verify/status');
       setVerifyStatus(s);
+      // Also check for any active jobs (running or pending)
+      const activeJobs = await api.get('/verify/jobs/active');
+      if (activeJobs && activeJobs.length > 0) {
+        // Set the first active job (most recent)
+        setVerifyJob(activeJobs[0]);
+      }
     } catch (e) { console.error(e); }
   };
 
@@ -1219,7 +1225,7 @@ const EnrichmentPage = () => {
       return;
     }
     const count = limit || verifyStatus?.unverified_count || 0;
-    if (!window.confirm(`Start verification for ${count.toLocaleString()} contacts?\n\nThis will use ${count.toLocaleString()} API credits.\n\nVerification runs in the background.`)) return;
+    if (!window.confirm(`Start verification for ${count.toLocaleString()} contacts?\n\nThis will use ${count.toLocaleString()} API credits.\n\nNote: Rate limit is ~1,500/hour. Large batches will take time.\n\nVerification runs in the background.`)) return;
 
     setVerifyLoading(true);
     try {
@@ -1233,14 +1239,6 @@ const EnrichmentPage = () => {
       }
     } catch (e) { addToast(e.message, 'error'); }
     setVerifyLoading(false);
-  };
-
-  const fixUnknownContacts = async () => {
-    try {
-      const r = await api.post('/verify/fix-unknown');
-      addToast(r.message, 'success');
-      fetchVerifyStatus();
-    } catch (e) { addToast(e.message, 'error'); }
   };
 
   useEffect(() => { fetchStats(); fetchVerifyStatus(); }, []);
@@ -1524,16 +1522,6 @@ const EnrichmentPage = () => {
                 <span className="verify-stat-label">Unverified Contacts</span>
               </div>
             </div>
-
-            {/* Fix Unknown Button */}
-            {verifyStatus?.unverified_count > 0 && (
-              <div className="verify-actions">
-                <button className="btn btn-secondary" onClick={fixUnknownContacts}>
-                  <RefreshCw size={16} /> Fix "Unknown" Labels
-                </button>
-                <span className="verify-hint">Converts old "Unknown" status to "Not Verified" for contacts never checked</span>
-              </div>
-            )}
 
             {/* Bulk Verify Button */}
             <div className="verify-actions" style={{ marginTop: 20 }}>
