@@ -2044,8 +2044,31 @@ def get_verification_status():
     """Check if email verification is configured."""
     conn = get_db()
     row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
+    # Count unverified contacts
+    unverified = conn.execute("""
+        SELECT COUNT(*) FROM contacts
+        WHERE email IS NOT NULL AND email != ''
+        AND (email_status IN ('Not Verified', 'Unknown') OR email_status IS NULL)
+        AND email_verified_at IS NULL
+    """).fetchone()[0]
     conn.close()
-    return {"configured": bool(row and row[0])}
+    return {"configured": bool(row and row[0]), "unverified_count": unverified}
+
+@app.post("/api/verify/fix-unknown")
+def fix_unknown_contacts():
+    """Fix contacts that have 'Unknown' status but were never actually verified."""
+    conn = get_db()
+    # Update contacts where status is Unknown but email_verified_at is NULL (never verified)
+    result = conn.execute("""
+        UPDATE contacts
+        SET email_status = 'Not Verified'
+        WHERE email_status = 'Unknown'
+        AND email_verified_at IS NULL
+    """)
+    count = result.rowcount
+    conn.commit()
+    conn.close()
+    return {"fixed": count, "message": f"Updated {count} contacts from 'Unknown' to 'Not Verified'"}
 
 @app.post("/api/verify/single")
 async def verify_single_email(email: str = Query(...)):
@@ -2070,13 +2093,14 @@ async def verify_contacts(contact_ids: List[int] = Query(...)):
 
     api_key = row[0]
 
-    # Get contacts that need verification (Unknown status and have email)
+    # Get contacts that need verification (Not Verified, Unknown, or NULL status)
     placeholders = ','.join(['?'] * len(contact_ids))
     contacts = conn.execute(f"""
         SELECT id, email FROM contacts
         WHERE id IN ({placeholders})
         AND email IS NOT NULL AND email != ''
-        AND (email_status = 'Not Verified' OR email_status IS NULL)
+        AND (email_status IN ('Not Verified', 'Unknown') OR email_status IS NULL)
+        AND email_verified_at IS NULL
     """, contact_ids).fetchall()
 
     stats = {"verified": 0, "valid": 0, "invalid": 0, "unknown": 0}
@@ -2103,6 +2127,48 @@ async def verify_contacts(contact_ids: List[int] = Query(...)):
     conn.commit()
     conn.close()
     return stats
+
+@app.post("/api/verify/bulk")
+def start_bulk_verification(limit: int = Query(None)):
+    """Start a background job to verify all unverified contacts."""
+    conn = get_db()
+
+    # Check API key
+    api_row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
+    if not api_row or not api_row[0]:
+        conn.close()
+        raise HTTPException(400, "BulkEmailChecker API key not configured")
+
+    # Get all unverified contacts
+    query = """
+        SELECT id FROM contacts
+        WHERE email IS NOT NULL AND email != ''
+        AND (email_status IN ('Not Verified', 'Unknown') OR email_status IS NULL)
+        AND email_verified_at IS NULL
+    """
+    if limit:
+        query += f" LIMIT {int(limit)}"
+
+    unverified = conn.execute(query).fetchall()
+    unverified_ids = [r[0] for r in unverified]
+
+    if not unverified_ids:
+        conn.close()
+        return {"job_id": None, "message": "No contacts need verification", "total_contacts": 0}
+
+    # Create job
+    conn.execute("""INSERT INTO verification_jobs (status, total_contacts, contact_ids, created_at)
+        VALUES ('pending', ?, ?, ?)""",
+        (len(unverified_ids), ','.join(map(str, unverified_ids)), datetime.now().isoformat()))
+    job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    # Start background thread
+    start_verification_thread(job_id)
+    background_tasks[job_id] = True
+
+    return {"job_id": job_id, "total_contacts": len(unverified_ids)}
 
 # ==================== BACKGROUND VERIFICATION JOBS ====================
 
@@ -2272,13 +2338,14 @@ async def start_verification_job(contact_ids: List[int] = Query(...)):
         conn.close()
         raise HTTPException(400, "BulkEmailChecker API key not configured")
 
-    # Filter to only unverified contacts
+    # Filter to only unverified contacts (Not Verified, Unknown, or NULL)
     placeholders = ','.join(['?'] * len(contact_ids))
     unverified = conn.execute(f"""
         SELECT id FROM contacts
         WHERE id IN ({placeholders})
         AND email IS NOT NULL AND email != ''
-        AND (email_status = 'Not Verified' OR email_status IS NULL)
+        AND (email_status IN ('Not Verified', 'Unknown') OR email_status IS NULL)
+        AND email_verified_at IS NULL
     """, contact_ids).fetchall()
 
     unverified_ids = [r[0] for r in unverified]

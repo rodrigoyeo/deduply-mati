@@ -1173,6 +1173,10 @@ const EnrichmentPage = () => {
   const [applying, setApplying] = useState(false);
   const [selectedNames, setSelectedNames] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
+  // Email verification state
+  const [verifyStatus, setVerifyStatus] = useState(null);
+  const [verifyJob, setVerifyJob] = useState(null);
+  const [verifyLoading, setVerifyLoading] = useState(false);
 
   const fetchStats = async () => {
     try {
@@ -1201,11 +1205,66 @@ const EnrichmentPage = () => {
     setLoading(false);
   };
 
-  useEffect(() => { fetchStats(); }, []);
+  const fetchVerifyStatus = async () => {
+    try {
+      const s = await api.get('/verify/status');
+      setVerifyStatus(s);
+    } catch (e) { console.error(e); }
+  };
+
+  const startBulkVerify = async (limit = null) => {
+    if (!verifyStatus?.configured) {
+      addToast('Configure API key in Settings → Integrations first', 'error');
+      return;
+    }
+    const count = limit || verifyStatus?.unverified_count || 0;
+    if (!window.confirm(`Start verification for ${count.toLocaleString()} contacts?\n\nThis will use ${count.toLocaleString()} API credits.\n\nVerification runs in the background.`)) return;
+
+    setVerifyLoading(true);
+    try {
+      const params = limit ? `?limit=${limit}` : '';
+      const r = await api.post(`/verify/bulk${params}`);
+      if (r.job_id) {
+        setVerifyJob({ id: r.job_id, status: 'running', total_contacts: r.total_contacts, verified_count: 0 });
+        addToast(`Started verification for ${r.total_contacts} contacts`, 'success');
+      } else {
+        addToast(r.message || 'No contacts need verification', 'info');
+      }
+    } catch (e) { addToast(e.message, 'error'); }
+    setVerifyLoading(false);
+  };
+
+  const fixUnknownContacts = async () => {
+    try {
+      const r = await api.post('/verify/fix-unknown');
+      addToast(r.message, 'success');
+      fetchVerifyStatus();
+    } catch (e) { addToast(e.message, 'error'); }
+  };
+
+  useEffect(() => { fetchStats(); fetchVerifyStatus(); }, []);
   useEffect(() => {
     if (activeTab === 'names') fetchNamePreview();
-    else fetchCompanyPreview();
+    else if (activeTab === 'companies') fetchCompanyPreview();
+    else if (activeTab === 'verify') fetchVerifyStatus();
   }, [activeTab]);
+
+  // Poll verification job status
+  useEffect(() => {
+    if (!verifyJob?.id || verifyJob?.status === 'completed' || verifyJob?.status === 'failed') return;
+    const poll = async () => {
+      try {
+        const job = await api.get(`/verify/job/${verifyJob.id}`);
+        setVerifyJob(job);
+        if (job.status === 'completed' || job.status === 'failed') {
+          fetchVerifyStatus();
+          if (job.status === 'completed') addToast(`Verification complete: ${job.valid_count} valid, ${job.invalid_count} invalid`, 'success');
+        }
+      } catch (e) { console.error(e); }
+    };
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
+  }, [verifyJob?.id, verifyJob?.status]);
 
   const handleApplySelected = async (type) => {
     const ids = type === 'names' ? selectedNames : selectedCompanies;
@@ -1299,6 +1358,10 @@ const EnrichmentPage = () => {
         <button className={`tab-btn ${activeTab === 'companies' ? 'active' : ''}`} onClick={() => setActiveTab('companies')}>
           <Building2 size={18} /> Company Cleaning
           {companyTotalCount > 0 && <span className="tab-badge">{companyTotalCount}</span>}
+        </button>
+        <button className={`tab-btn ${activeTab === 'verify' ? 'active' : ''}`} onClick={() => setActiveTab('verify')}>
+          <Mail size={18} /> Email Verification
+          {verifyStatus?.unverified_count > 0 && <span className="tab-badge">{verifyStatus.unverified_count.toLocaleString()}</span>}
         </button>
       </div>
 
@@ -1400,7 +1463,7 @@ const EnrichmentPage = () => {
             </table>
           </div>
         )
-      ) : (
+      ) : activeTab === 'companies' ? (
         companyChanges.length === 0 ? (
           <div className="empty-state">
             <CheckCircle size={48} />
@@ -1441,7 +1504,98 @@ const EnrichmentPage = () => {
             </table>
           </div>
         )
-      )}
+      ) : activeTab === 'verify' ? (
+        <div className="verify-tab-content">
+          {/* Verification Status Card */}
+          <div className="verify-status-card">
+            <div className="verify-status-header">
+              <h3><Mail size={20} /> Email Verification</h3>
+              {verifyStatus?.configured ? (
+                <span className="status-badge success">API Configured</span>
+              ) : (
+                <span className="status-badge warning">API Not Configured</span>
+              )}
+            </div>
+
+            <div className="verify-stats-grid">
+              <div className="verify-stat">
+                <span className="verify-stat-value">{verifyStatus?.unverified_count?.toLocaleString() || 0}</span>
+                <span className="verify-stat-label">Unverified Contacts</span>
+              </div>
+            </div>
+
+            {/* Fix Unknown Button */}
+            {verifyStatus?.unverified_count > 0 && (
+              <div className="verify-actions">
+                <button className="btn btn-secondary" onClick={fixUnknownContacts}>
+                  <RefreshCw size={16} /> Fix "Unknown" Labels
+                </button>
+                <span className="verify-hint">Converts old "Unknown" status to "Not Verified" for contacts never checked</span>
+              </div>
+            )}
+
+            {/* Bulk Verify Button */}
+            <div className="verify-actions" style={{ marginTop: 20 }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => startBulkVerify()}
+                disabled={verifyLoading || !verifyStatus?.configured || verifyStatus?.unverified_count === 0}
+              >
+                {verifyLoading ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                Verify All ({verifyStatus?.unverified_count?.toLocaleString() || 0} contacts)
+              </button>
+              {!verifyStatus?.configured && (
+                <span className="verify-hint warning">Configure API key in Settings → Integrations</span>
+              )}
+            </div>
+
+            {/* Batch Options */}
+            {verifyStatus?.unverified_count > 100 && verifyStatus?.configured && (
+              <div className="verify-batch-options">
+                <span>Or verify in batches:</span>
+                <button className="btn btn-secondary btn-sm" onClick={() => startBulkVerify(100)} disabled={verifyLoading}>100</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => startBulkVerify(500)} disabled={verifyLoading}>500</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => startBulkVerify(1000)} disabled={verifyLoading}>1,000</button>
+              </div>
+            )}
+          </div>
+
+          {/* Active Job Progress */}
+          {verifyJob && verifyJob.status === 'running' && (
+            <div className="verify-job-card">
+              <h4><Loader2 className="spin" size={16} /> Verification In Progress</h4>
+              <div className="verification-progress-bar">
+                <div
+                  className="verification-progress-fill"
+                  style={{ width: `${verifyJob.total_contacts > 0 ? (verifyJob.verified_count / verifyJob.total_contacts * 100) : 0}%` }}
+                />
+              </div>
+              <div className="verify-job-stats">
+                <span>{verifyJob.verified_count} / {verifyJob.total_contacts} verified</span>
+                <span className="valid">{verifyJob.valid_count} valid</span>
+                <span className="invalid">{verifyJob.invalid_count} invalid</span>
+                <span className="unknown">{verifyJob.unknown_count} unknown</span>
+              </div>
+              {verifyJob.current_email && (
+                <p className="current-email">Checking: {verifyJob.current_email}</p>
+              )}
+            </div>
+          )}
+
+          {/* Completed Job */}
+          {verifyJob && verifyJob.status === 'completed' && (
+            <div className="verify-job-card completed">
+              <h4><CheckCircle size={16} /> Verification Complete</h4>
+              <div className="verify-job-stats">
+                <span>{verifyJob.verified_count} verified</span>
+                <span className="valid">{verifyJob.valid_count} valid</span>
+                <span className="invalid">{verifyJob.invalid_count} invalid</span>
+                <span className="unknown">{verifyJob.unknown_count} unknown</span>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 };
