@@ -2044,12 +2044,11 @@ def get_verification_status():
     """Check if email verification is configured."""
     conn = get_db()
     row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
-    # Count unverified contacts
+    # Count unverified contacts - if status is 'Not Verified', count them regardless of timestamp
     unverified = conn.execute("""
         SELECT COUNT(*) FROM contacts
         WHERE email IS NOT NULL AND email != ''
-        AND (email_status IN ('Not Verified', 'Unknown') OR email_status IS NULL)
-        AND email_verified_at IS NULL
+        AND (email_status = 'Not Verified' OR email_status IS NULL)
     """).fetchone()[0]
     conn.close()
     return {"configured": bool(row and row[0]), "unverified_count": unverified}
@@ -2141,12 +2140,11 @@ def start_bulk_verification(limit: int = Query(None)):
         conn.close()
         raise HTTPException(400, "BulkEmailChecker API key not configured")
 
-    # Get all unverified contacts
+    # Get all unverified contacts - if status is 'Not Verified', include them regardless of timestamp
     query = """
         SELECT id FROM contacts
         WHERE email IS NOT NULL AND email != ''
-        AND (email_status IN ('Not Verified', 'Unknown') OR email_status IS NULL)
-        AND email_verified_at IS NULL
+        AND (email_status = 'Not Verified' OR email_status IS NULL)
     """
     if limit:
         query += f" LIMIT {int(limit)}"
@@ -2340,14 +2338,13 @@ async def start_verification_job(contact_ids: List[int] = Query(...)):
         conn.close()
         raise HTTPException(400, "BulkEmailChecker API key not configured")
 
-    # Filter to only unverified contacts (Not Verified, Unknown, or NULL)
+    # Filter to only unverified contacts - if status is 'Not Verified', include them
     placeholders = ','.join(['?'] * len(contact_ids))
     unverified = conn.execute(f"""
         SELECT id FROM contacts
         WHERE id IN ({placeholders})
         AND email IS NOT NULL AND email != ''
-        AND (email_status IN ('Not Verified', 'Unknown') OR email_status IS NULL)
-        AND email_verified_at IS NULL
+        AND (email_status = 'Not Verified' OR email_status IS NULL)
     """, contact_ids).fetchall()
 
     unverified_ids = [r[0] for r in unverified]
