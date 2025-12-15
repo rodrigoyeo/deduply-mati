@@ -4279,6 +4279,78 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   font-weight: 500;
 }
 
+/* Pie Chart */
+.ci-pie-container {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+}
+
+.ci-pie-chart {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.ci-pie-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100px;
+  height: 100px;
+  background: var(--bg-2);
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.ci-pie-total {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1.2;
+}
+
+.ci-pie-label {
+  font-size: 12px;
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.ci-pie-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ci-pie-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ci-pie-legend-item .ci-legend-name {
+  min-width: 100px;
+}
+
+.ci-pie-legend-item .ci-legend-value {
+  font-weight: 600;
+  color: var(--text-1);
+  min-width: 80px;
+  text-align: right;
+}
+
+.ci-pie-legend-item .ci-legend-pct {
+  color: var(--text-3);
+  min-width: 50px;
+  text-align: right;
+}
+
 /* Stacked Bar */
 .ci-stacked-bar {
   display: flex;

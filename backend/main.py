@@ -1378,6 +1378,8 @@ def get_database_stats():
         conn.execute("SELECT employee_bucket, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY employee_bucket ORDER BY cnt DESC")]
     insights['by_status'] = [{"name": r[0] or "Unknown", "value": r[1]} for r in
         conn.execute("SELECT status, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY status ORDER BY cnt DESC")]
+    insights['by_email_status'] = [{"name": r[0] or "Not Verified", "value": r[1]} for r in
+        conn.execute("SELECT email_status, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY email_status ORDER BY cnt DESC")]
     insights['top_companies'] = [{"name": r[0], "value": r[1]} for r in
         conn.execute("SELECT company, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 AND company IS NOT NULL AND company != '' GROUP BY company ORDER BY cnt DESC LIMIT 10")]
     insights['contacts_timeline'] = [{"date": r[0], "value": r[1]} for r in

@@ -224,6 +224,7 @@ const ContactsInsightsView = ({ data }) => {
   const countryData = data.by_country?.slice(0, 5) || [];
   const companySizeData = data.by_company_size || [];
   const topCompanies = data.top_companies?.slice(0, 5) || [];
+  const emailStatusData = data.by_email_status || [];
 
   // Calculate key metrics
   const seniorityTotal = seniorityData.reduce((sum, s) => sum + s.value, 0);
@@ -238,6 +239,22 @@ const ContactsInsightsView = ({ data }) => {
 
   // Stacked bar colors
   const stackColors = ['#FF6C5D', '#001C43', '#05E2C1', '#8B5CF6', '#F59E0B', '#EC4899', '#6B7280'];
+
+  // Email status colors and pie chart calculation
+  const emailStatusColors = { 'Valid': '#10B981', 'Invalid': '#EF4444', 'Unknown': '#F59E0B', 'Not Verified': '#6B7280' };
+  const emailStatusTotal = emailStatusData.reduce((sum, s) => sum + s.value, 0);
+  const emailStatusPieGradient = (() => {
+    if (emailStatusTotal === 0) return 'conic-gradient(#e5e7eb 0% 100%)';
+    let cumulative = 0;
+    const segments = emailStatusData.map(item => {
+      const start = cumulative;
+      const pct = (item.value / emailStatusTotal) * 100;
+      cumulative += pct;
+      const color = emailStatusColors[item.name] || '#6B7280';
+      return `${color} ${start}% ${cumulative}%`;
+    });
+    return `conic-gradient(${segments.join(', ')})`;
+  })();
 
   return (
     <div className="ci-dashboard">
@@ -267,6 +284,41 @@ const ContactsInsightsView = ({ data }) => {
             <div className="ci-hero-stat-value">{countryData.length}</div>
             <div className="ci-hero-stat-label">Countries</div>
             <div className="ci-hero-stat-sub">Top: {topCountry}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Email Status Distribution - Pie Chart */}
+      <div className="ci-section">
+        <div className="ci-section-header">
+          <h3>Email Verification Status</h3>
+          <span className="ci-section-insight">
+            {(() => {
+              const validItem = emailStatusData.find(s => s.name === 'Valid');
+              const validPct = emailStatusTotal > 0 && validItem ? ((validItem.value / emailStatusTotal) * 100).toFixed(0) : 0;
+              return validPct >= 50 ? '✓ Good email quality' : '⚠ Consider verifying more emails';
+            })()}
+          </span>
+        </div>
+        <div className="ci-pie-container">
+          <div className="ci-pie-chart" style={{ background: emailStatusPieGradient }}>
+            <div className="ci-pie-center">
+              <div className="ci-pie-total">{emailStatusTotal.toLocaleString()}</div>
+              <div className="ci-pie-label">Total</div>
+            </div>
+          </div>
+          <div className="ci-pie-legend">
+            {emailStatusData.map((item, i) => {
+              const pct = emailStatusTotal > 0 ? (item.value / emailStatusTotal) * 100 : 0;
+              return (
+                <div key={i} className="ci-pie-legend-item">
+                  <span className="ci-legend-dot" style={{ background: emailStatusColors[item.name] || '#6B7280' }} />
+                  <span className="ci-legend-name">{item.name}</span>
+                  <span className="ci-legend-value">{item.value.toLocaleString()}</span>
+                  <span className="ci-legend-pct">{pct.toFixed(1)}%</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
