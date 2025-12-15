@@ -1382,8 +1382,13 @@ def get_database_stats():
         conn.execute("SELECT email_status, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 GROUP BY email_status ORDER BY cnt DESC")]
     insights['top_companies'] = [{"name": r[0], "value": r[1]} for r in
         conn.execute("SELECT company, COUNT(*) as cnt FROM contacts WHERE is_duplicate=0 AND company IS NOT NULL AND company != '' GROUP BY company ORDER BY cnt DESC LIMIT 10")]
-    insights['contacts_timeline'] = [{"date": r[0], "value": r[1]} for r in
-        conn.execute("SELECT DATE(created_at), COUNT(*) FROM contacts WHERE is_duplicate=0 AND created_at >= DATE('now', '-30 days') GROUP BY DATE(created_at) ORDER BY DATE(created_at)")]
+    # Timeline query - different syntax for PostgreSQL vs SQLite
+    if USE_POSTGRES:
+        insights['contacts_timeline'] = [{"date": str(r[0]), "value": r[1]} for r in
+            conn.execute("SELECT DATE(created_at), COUNT(*) FROM contacts WHERE is_duplicate=0 AND created_at >= CURRENT_DATE - INTERVAL '30 days' GROUP BY DATE(created_at) ORDER BY DATE(created_at)")]
+    else:
+        insights['contacts_timeline'] = [{"date": r[0], "value": r[1]} for r in
+            conn.execute("SELECT DATE(created_at), COUNT(*) FROM contacts WHERE is_duplicate=0 AND created_at >= DATE('now', '-30 days') GROUP BY DATE(created_at) ORDER BY DATE(created_at)")]
     insights['data_quality'] = {
         'with_email': conn.execute("SELECT COUNT(*) FROM contacts WHERE is_duplicate=0 AND email IS NOT NULL AND email != ''").fetchone()[0],
         'with_phone': conn.execute("SELECT COUNT(*) FROM contacts WHERE is_duplicate=0 AND (first_phone IS NOT NULL OR corporate_phone IS NOT NULL)").fetchone()[0],
