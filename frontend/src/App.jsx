@@ -997,19 +997,12 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
       <div className="form-group"><label>Or Create New List</label><input type="text" value={newListName} onChange={e => setNewListName(e.target.value)} placeholder="New list name..." /></div>
       <div className="form-group"><label>Assign to Campaign</label><select value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)}><option value="">Select existing campaign...</option>{filterOptions?.campaigns?.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
       <div className="form-group"><label>Or Create New Campaign</label><input type="text" value={newCampaignName} onChange={e => setNewCampaignName(e.target.value)} placeholder="New campaign name..." /></div>
-      <div className="form-group"><label>Country Strategy</label><select value={countryStrategy} onChange={e => setCountryStrategy(e.target.value)}><option value="">Select strategy...</option>{strategyOptions.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+      <div className="form-group"><label>Country Strategy *</label><select value={countryStrategy} onChange={e => setCountryStrategy(e.target.value)} required><option value="">Select strategy...</option>{strategyOptions.map(s => <option key={s} value={s}>{s}</option>)}</select>{!countryStrategy && <span className="field-hint error">Required</span>}</div>
       <div></div>
       <div className="import-option"><label><input type="checkbox" checked={checkDuplicates} onChange={e => setCheckDuplicates(e.target.checked)} /> Check for duplicates</label></div>
       <div className="import-option"><label><input type="checkbox" checked={mergeDuplicates} onChange={e => setMergeDuplicates(e.target.checked)} disabled={!checkDuplicates} /> Merge duplicates (add to existing lists/campaigns)</label></div>
-      <div className="import-option verify-option">
-        <label>
-          <input type="checkbox" checked={verifyEmails} onChange={e => setVerifyEmails(e.target.checked)} disabled={!apiKeyConfigured} />
-          <Mail size={14} /> Verify emails during import
-        </label>
-        {!apiKeyConfigured && <span className="option-hint">Configure API key in Settings → Integrations</span>}
-        {apiKeyConfigured && verifyEmails && <span className="option-hint success">1 credit per verification</span>}
-      </div></div>
-      <div className="modal-actions"><button className="btn btn-secondary" onClick={() => setStep(2)}>Back</button><button className="btn btn-primary" onClick={executeImport} disabled={loading}>{loading ? <><Loader2 className="spin" size={16} /> {verifyEmails ? 'Importing & Verifying...' : 'Importing...'}</> : 'Import'}</button></div></div>)}
+      </div>
+      <div className="modal-actions"><button className="btn btn-secondary" onClick={() => setStep(2)}>Back</button><button className="btn btn-primary" onClick={executeImport} disabled={loading || !countryStrategy}>{loading ? <><Loader2 className="spin" size={16} /> Importing...</> : 'Import'}</button></div></div>)}
 
     {step === 4 && result && (<div style={{ textAlign: 'center', padding: 40 }}>
       <CheckCircle size={60} style={{ color: 'var(--success)', marginBottom: 20 }} />
