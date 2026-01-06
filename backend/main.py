@@ -1177,19 +1177,35 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
 
     # Create job record
     conn = get_db()
-    conn.execute("""
-        INSERT INTO import_jobs
-        (status, total_rows, file_name, file_path, column_mapping,
-         outreach_list, campaigns, country_strategy, check_duplicates,
-         merge_duplicates, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        'pending', total_rows, file.filename, temp_file_path,
-        column_mapping, outreach_list or '', campaigns or '',
-        country_strategy or '', 1 if check_duplicates else 0, 1 if merge_duplicates else 0,
-        datetime.now().isoformat()
-    ))
-    job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    if USE_POSTGRES:
+        result = conn.execute("""
+            INSERT INTO import_jobs
+            (status, total_rows, file_name, file_path, column_mapping,
+             outreach_list, campaigns, country_strategy, check_duplicates,
+             merge_duplicates, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            'pending', total_rows, file.filename, temp_file_path,
+            column_mapping, outreach_list or '', campaigns or '',
+            country_strategy or '', check_duplicates, merge_duplicates,
+            datetime.now().isoformat()
+        ))
+        job_id = result.fetchone()[0]
+    else:
+        conn.execute("""
+            INSERT INTO import_jobs
+            (status, total_rows, file_name, file_path, column_mapping,
+             outreach_list, campaigns, country_strategy, check_duplicates,
+             merge_duplicates, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            'pending', total_rows, file.filename, temp_file_path,
+            column_mapping, outreach_list or '', campaigns or '',
+            country_strategy or '', 1 if check_duplicates else 0, 1 if merge_duplicates else 0,
+            datetime.now().isoformat()
+        ))
+        job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
     conn.close()
 
@@ -1382,8 +1398,14 @@ def run_import_job_sync(job_id: int):
                 else:
                     if data:
                         fields = list(data.keys())
-                        conn.execute(f"INSERT INTO contacts ({','.join(fields)}) VALUES ({','.join(['?']*len(fields))})", list(data.values()))
-                        cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                        if USE_POSTGRES:
+                            placeholders = ','.join(['%s']*len(fields))
+                            result = conn.execute(f"INSERT INTO contacts ({','.join(fields)}) VALUES ({placeholders}) RETURNING id", list(data.values()))
+                            cid = result.fetchone()[0]
+                        else:
+                            placeholders = ','.join(['?']*len(fields))
+                            conn.execute(f"INSERT INTO contacts ({','.join(fields)}) VALUES ({placeholders})", list(data.values()))
+                            cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
                         for camp in csv_campaigns:
                             add_contact_campaign(conn, cid, camp)
