@@ -231,6 +231,30 @@ def init_db():
         started_at TIMESTAMP,
         completed_at TIMESTAMP)""")
 
+    # Import jobs table for background CSV import
+    cur.execute("""CREATE TABLE IF NOT EXISTS import_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        status TEXT DEFAULT 'pending',
+        total_rows INTEGER DEFAULT 0,
+        processed_count INTEGER DEFAULT 0,
+        imported_count INTEGER DEFAULT 0,
+        merged_count INTEGER DEFAULT 0,
+        duplicates_found INTEGER DEFAULT 0,
+        failed_count INTEGER DEFAULT 0,
+        current_row TEXT,
+        error_message TEXT,
+        file_name TEXT,
+        file_path TEXT,
+        column_mapping TEXT,
+        outreach_list TEXT,
+        campaigns TEXT,
+        country_strategy TEXT,
+        check_duplicates INTEGER DEFAULT 1,
+        merge_duplicates INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP)""")
+
     # Add email verification columns to contacts table
     try:
         cur.execute("ALTER TABLE contacts ADD COLUMN email_verified_at TIMESTAMP")

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
-import { LayoutDashboard, Users, Mail, FileText, Settings, Search, Plus, Trash2, X, Check, ArrowUpDown, Filter, Download, Upload, Edit2, LogOut, UserPlus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle, Copy, ArrowRight, Layers, Merge, Eye, Webhook, Database, Send, Target, MessageCircle, MessageSquare, Zap, GitMerge, AlertTriangle, Trophy, List, LayoutGrid, Sparkles, Building2, User, ArrowRightLeft, Bold, Italic, Type } from 'lucide-react';
+import { LayoutDashboard, Users, Mail, FileText, Settings, Search, Plus, Trash2, X, Check, ArrowUpDown, Filter, Download, Upload, Edit2, LogOut, UserPlus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle, Copy, ArrowRight, Layers, Merge, Eye, Webhook, Database, Send, Target, MessageCircle, MessageSquare, Zap, GitMerge, AlertTriangle, Trophy, List, LayoutGrid, Sparkles, Building2, User, ArrowRightLeft, Bold, Italic, Type, TrendingUp } from 'lucide-react';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 
@@ -41,6 +41,50 @@ const ToastProvider = ({ children }) => {
   </ToastContext.Provider>);
 };
 const useToast = () => useContext(ToastContext);
+
+// Import Job Context for global progress tracking
+const ImportJobContext = createContext();
+const ImportJobProvider = ({ children }) => {
+  const [importJob, setImportJob] = useState(null);
+
+  // Check for active import jobs on mount
+  useEffect(() => {
+    const checkActiveJobs = async () => {
+      try {
+        const jobs = await api.get('/import/jobs/active');
+        if (jobs.length > 0) {
+          setImportJob(jobs[0]);
+        }
+      } catch (e) { console.error('Failed to check active import jobs:', e); }
+    };
+    checkActiveJobs();
+  }, []);
+
+  // Poll for job status when active
+  useEffect(() => {
+    if (!importJob?.id || importJob?.status === 'completed' || importJob?.status === 'failed' || importJob?.status === 'cancelled') return;
+
+    const poll = async () => {
+      try {
+        const job = await api.get(`/import/job/${importJob.id}`);
+        setImportJob(job);
+      } catch (e) { console.error('Failed to poll import job:', e); }
+    };
+
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
+  }, [importJob?.id, importJob?.status]);
+
+  const startImportJob = (job) => setImportJob(job);
+  const clearImportJob = () => setImportJob(null);
+
+  return (
+    <ImportJobContext.Provider value={{ importJob, startImportJob, clearImportJob }}>
+      {children}
+    </ImportJobContext.Provider>
+  );
+};
+const useImportJob = () => useContext(ImportJobContext);
 
 // Modal
 const Modal = ({ isOpen, onClose, title, children, size = 'md' }) => {
@@ -146,7 +190,21 @@ const MultiSelect = ({ options, value = [], onChange, placeholder = "Select...",
 // Sidebar with Arkode Branding
 const Sidebar = ({ page, setPage, user, onLogout }) => {
   const { data: stats } = useData('/stats');
+  const { importJob, clearImportJob } = useImportJob();
+  const { addToast } = useToast();
   const nav = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'duplicates', label: 'Duplicates', icon: Layers }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'templates', label: 'Templates', icon: FileText }, { id: 'settings', label: 'Settings', icon: Settings }];
+
+  // Show toast when import completes
+  useEffect(() => {
+    if (importJob?.status === 'completed') {
+      addToast(`Import complete: ${importJob.imported_count} imported, ${importJob.merged_count} merged`, 'success');
+    } else if (importJob?.status === 'failed') {
+      addToast(`Import failed: ${importJob.error_message || 'Unknown error'}`, 'error');
+    }
+  }, [importJob?.status]);
+
+  const progress = importJob?.total_rows > 0 ? Math.round((importJob.processed_count / importJob.total_rows) * 100) : 0;
+
   return (<aside className="sidebar">
     <div className="sidebar-header">
       <div className="logo">
@@ -158,6 +216,42 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
       </div>
     </div>
     <nav className="sidebar-nav">{nav.map(item => (<button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}><item.icon size={20} /><span>{item.label}</span>{item.id === 'contacts' && stats && <span className="nav-badge">{stats.unique_contacts?.toLocaleString()}</span>}{item.id === 'duplicates' && stats?.duplicates > 0 && <span className="nav-badge danger">{stats.duplicates}</span>}{item.id === 'campaigns' && stats && <span className="nav-badge">{stats.total_campaigns}</span>}</button>))}</nav>
+
+    {/* Import Progress Indicator */}
+    {importJob && (importJob.status === 'pending' || importJob.status === 'running') && (
+      <div className="sidebar-import-progress">
+        <div className="import-progress-header">
+          <Upload size={14} />
+          <span>Importing {importJob.file_name || 'CSV'}...</span>
+        </div>
+        <div className="import-progress-bar">
+          <div className="import-progress-fill" style={{ width: `${progress}%` }} />
+        </div>
+        <div className="import-progress-stats">
+          {importJob.processed_count} / {importJob.total_rows} rows ({progress}%)
+        </div>
+        {importJob.current_row && (
+          <div className="import-progress-current">
+            <Loader2 className="spin" size={12} /> {importJob.current_row}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* Import Completed */}
+    {importJob && importJob.status === 'completed' && (
+      <div className="sidebar-import-progress completed">
+        <div className="import-progress-header">
+          <CheckCircle size={14} />
+          <span>Import Complete</span>
+          <button className="import-dismiss" onClick={clearImportJob}><X size={12} /></button>
+        </div>
+        <div className="import-progress-stats">
+          {importJob.imported_count} imported, {importJob.merged_count} merged
+        </div>
+      </div>
+    )}
+
     <div className="sidebar-footer">
       {user && (<div className="user-info"><div className="user-avatar">{user.name?.[0] || user.email[0]}</div><div className="user-details"><span className="user-name">{user.name || user.email}</span><span className="user-role">{user.role}</span></div><button className="logout-btn" onClick={onLogout} title="Logout"><LogOut size={18} /></button></div>)}
       <div className="sidebar-brand">
@@ -457,8 +551,10 @@ const DashboardPage = () => {
   const { data: stats, loading } = useData('/stats');
   const [dbStats, setDbStats] = useState(null);
   const [perfStats, setPerfStats] = useState(null);
+  const [funnelStats, setFunnelStats] = useState(null);
   const [loadingDb, setLoadingDb] = useState(false);
   const [loadingPerf, setLoadingPerf] = useState(false);
+  const [loadingFunnel, setLoadingFunnel] = useState(false);
 
   useEffect(() => {
     if (activeTab === 'database' && !dbStats) {
@@ -469,7 +565,11 @@ const DashboardPage = () => {
       setLoadingPerf(true);
       api.get('/stats/performance').then(setPerfStats).finally(() => setLoadingPerf(false));
     }
-  }, [activeTab, dbStats, perfStats]);
+    if (activeTab === 'funnel' && !funnelStats) {
+      setLoadingFunnel(true);
+      api.get('/stats/funnel').then(setFunnelStats).finally(() => setLoadingFunnel(false));
+    }
+  }, [activeTab, dbStats, perfStats, funnelStats]);
 
   if (loading || !stats) return <div className="page loading"><Loader2 className="spin" size={24} /></div>;
 
@@ -487,6 +587,9 @@ const DashboardPage = () => {
       </button>
       <button className={`dash-tab ${activeTab === 'database' ? 'active' : ''}`} onClick={() => setActiveTab('database')}>
         <Users size={18} /> Contacts Insights
+      </button>
+      <button className={`dash-tab ${activeTab === 'funnel' ? 'active' : ''}`} onClick={() => setActiveTab('funnel')}>
+        <TrendingUp size={18} /> Sales Funnel
       </button>
     </div>
 
@@ -533,6 +636,65 @@ const DashboardPage = () => {
     {activeTab === 'database' && (
       loadingDb ? <div className="loading-state"><Loader2 className="spin" size={32} /><span>Loading contacts insights...</span></div> : dbStats && (
         <ContactsInsightsView data={dbStats} />
+      )
+    )}
+
+    {activeTab === 'funnel' && (
+      loadingFunnel ? <div className="loading-state"><Loader2 className="spin" size={32} /><span>Loading funnel data...</span></div> : funnelStats && (
+        <>
+          <div className="stats-grid">
+            <div className="stat-card accent"><div className="stat-value">{funnelStats.conversions?.reply_rate?.toFixed(1) || 0}%</div><div className="stat-label">Reply Rate</div></div>
+            <div className="stat-card"><div className="stat-value">{funnelStats.conversions?.booked_rate?.toFixed(1) || 0}%</div><div className="stat-label">Booked Rate</div></div>
+            <div className="stat-card"><div className="stat-value">{funnelStats.conversions?.show_rate?.toFixed(1) || 0}%</div><div className="stat-label">Show Rate</div></div>
+            <div className="stat-card"><div className="stat-value">{funnelStats.conversions?.qualified_rate?.toFixed(1) || 0}%</div><div className="stat-label">Qualified Rate</div></div>
+            <div className="stat-card navy"><div className="stat-value">{funnelStats.conversions?.close_rate?.toFixed(1) || 0}%</div><div className="stat-label">Close Rate</div></div>
+            <div className="stat-card navy"><div className="stat-value">{funnelStats.conversions?.overall_conversion?.toFixed(2) || 0}%</div><div className="stat-label">Overall Conversion</div></div>
+          </div>
+          <div className="dashboard-grid">
+            <div className="card funnel-card">
+              <h3>Sales Funnel</h3>
+              <div className="funnel-chart">
+                {['Lead', 'Contacted', 'Replied', 'Scheduled', 'Show', 'Qualified', 'Client'].map((stage, idx, arr) => {
+                  const count = funnelStats.funnel?.[stage] || 0;
+                  const maxCount = Math.max(...Object.values(funnelStats.funnel || {}), 1);
+                  const width = Math.max(20, (count / maxCount) * 100);
+                  const nextStage = arr[idx + 1];
+                  const nextCount = nextStage ? (funnelStats.funnel?.[nextStage] || 0) : null;
+                  const conversionRate = count > 0 && nextCount !== null ? ((nextCount / count) * 100).toFixed(1) : null;
+                  return (
+                    <div key={stage} className="funnel-stage">
+                      <div className="funnel-bar-wrapper">
+                        <div className={`funnel-bar funnel-stage-${idx}`} style={{ width: `${width}%` }}>
+                          <span className="funnel-stage-name">{stage}</span>
+                          <span className="funnel-stage-count">{count.toLocaleString()}</span>
+                        </div>
+                      </div>
+                      {conversionRate && <div className="funnel-conversion">{conversionRate}%</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="card">
+              <h3>Other Statuses</h3>
+              <div className="chart-bars">
+                {['No-Show', 'Not Interested', 'Bounced', 'Unsubscribed'].map(status => {
+                  const count = funnelStats.funnel?.[status] || 0;
+                  const maxCount = Math.max(...['No-Show', 'Not Interested', 'Bounced', 'Unsubscribed'].map(s => funnelStats.funnel?.[s] || 0), 1);
+                  return (
+                    <div key={status} className="chart-row">
+                      <span className="chart-label">{status}</span>
+                      <div className="chart-bar-track">
+                        <div className="chart-bar-fill" style={{ width: `${(count / maxCount) * 100}%`, background: status === 'Bounced' || status === 'Unsubscribed' ? '#ef4444' : '#f59e0b' }}></div>
+                      </div>
+                      <span className="chart-count">{count.toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </>
       )
     )}
   </div>);
@@ -941,6 +1103,7 @@ const ContactsPage = () => {
 // Import Wizard
 const ImportWizard = ({ onSuccess, filterOptions }) => {
   const { addToast } = useToast();
+  const { startImportJob } = useImportJob();
   const [step, setStep] = useState(1);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -952,41 +1115,7 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
   const [countryStrategy, setCountryStrategy] = useState('');
   const [checkDuplicates, setCheckDuplicates] = useState(true);
   const [mergeDuplicates, setMergeDuplicates] = useState(true);
-  const [verifyEmails, setVerifyEmails] = useState(false);
-  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [verificationJob, setVerificationJob] = useState(null);
-
-  // Check if API key is configured
-  useEffect(() => {
-    const checkApiKey = async () => {
-      try {
-        const res = await api.get('/settings/bulkemailchecker_api_key');
-        setApiKeyConfigured(res.configured);
-      } catch (e) { console.error('Failed to check API key:', e); }
-    };
-    checkApiKey();
-  }, []);
-
-  // Poll for verification job status
-  useEffect(() => {
-    if (!result?.verification_job_id) return;
-
-    const pollJob = async () => {
-      try {
-        const job = await api.get(`/verify/job/${result.verification_job_id}`);
-        setVerificationJob(job);
-        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
-          return; // Stop polling
-        }
-      } catch (e) { console.error('Failed to poll job:', e); }
-    };
-
-    pollJob(); // Initial poll
-    const interval = setInterval(pollJob, 1000); // Poll every second
-    return () => clearInterval(interval);
-  }, [result?.verification_job_id]);
 
   // Fixed strategy options
   const strategyOptions = ['United States', 'Mexico', 'Spain', 'Germany'];
@@ -1014,14 +1143,26 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
       campaigns: newCampaignName || selectedCampaign || '',
       country_strategy: countryStrategy || '',
       check_duplicates: checkDuplicates,
-      merge_duplicates: mergeDuplicates,
-      verify_emails: verifyEmails && apiKeyConfigured
+      merge_duplicates: mergeDuplicates
     });
     try {
       const res = await fetch(`${API}/import/execute?${params}`, { method: 'POST', headers: api.token ? { 'Authorization': `Bearer ${api.token}` } : {}, body: formData });
       const data = await res.json();
-      setResult(data); setStep(4);
-    } catch (e) { addToast('Import failed', 'error'); }
+      if (data.job_id) {
+        // Start tracking the job globally
+        startImportJob({
+          id: data.job_id,
+          status: 'pending',
+          total_rows: data.total_rows,
+          processed_count: 0,
+          file_name: file.name
+        });
+        addToast(`Import started: ${data.total_rows} rows`, 'info');
+        onSuccess(); // Close modal immediately
+      } else {
+        throw new Error('Failed to start import job');
+      }
+    } catch (e) { addToast('Import failed to start', 'error'); }
     setLoading(false);
   };
 
@@ -2243,38 +2384,6 @@ const TemplatesPage = () => {
       </div>
     </div>
 
-    {/* Quick Stats */}
-    <div className="templates-stats">
-      <div className="template-stat-card">
-        <div className="stat-icon-sm"><FileText size={20} /></div>
-        <div className="stat-info">
-          <span className="stat-number">{templates.length}</span>
-          <span className="stat-label-sm">Total Templates</span>
-        </div>
-      </div>
-      <div className="template-stat-card">
-        <div className="stat-icon-sm variant-a"><span>A</span></div>
-        <div className="stat-info">
-          <span className="stat-number">{templates.filter(t => t.variant === 'A').length}</span>
-          <span className="stat-label-sm">Variant A</span>
-        </div>
-      </div>
-      <div className="template-stat-card">
-        <div className="stat-icon-sm variant-b"><span>B</span></div>
-        <div className="stat-info">
-          <span className="stat-number">{templates.filter(t => t.variant === 'B').length}</span>
-          <span className="stat-label-sm">Variant B</span>
-        </div>
-      </div>
-      <div className="template-stat-card winner">
-        <div className="stat-icon-sm winner"><Trophy size={20} /></div>
-        <div className="stat-info">
-          <span className="stat-number">{templates.filter(t => t.is_winner).length}</span>
-          <span className="stat-label-sm">Winners</span>
-        </div>
-      </div>
-    </div>
-
     {/* Tabs */}
     <div className="tabs-container">
       <div className="tabs">
@@ -3164,7 +3273,7 @@ function App() {
   if (loading) return <div className="loading-screen"><Loader2 className="spin" size={32} /></div>;
   if (!user) return <ToastProvider><LoginPage onLogin={setUser} /></ToastProvider>;
 
-  return (<ToastProvider><div className="app"><Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} /><main className="main-content">
+  return (<ToastProvider><ImportJobProvider><div className="app"><Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} /><main className="main-content">
     {page === 'dashboard' && <DashboardPage />}
     {page === 'contacts' && <ContactsPage />}
     {page === 'duplicates' && <DuplicatesPage />}
@@ -3172,7 +3281,7 @@ function App() {
     {page === 'campaigns' && <CampaignsPage />}
     {page === 'templates' && <TemplatesPage />}
     {page === 'settings' && <SettingsPage />}
-  </main></div></ToastProvider>);
+  </main></div></ImportJobProvider></ToastProvider>);
 }
 
 export default App;

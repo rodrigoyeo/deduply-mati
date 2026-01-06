@@ -22,6 +22,9 @@ import httpx
 import asyncio
 import threading
 import time
+import tempfile
+import uuid
+import traceback
 from data_cleaning import (
     clean_name, clean_company_name, extract_domain_name,
     preview_name_cleaning, preview_company_cleaning, analyze_data_quality
@@ -32,6 +35,13 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 # Global store for background verification tasks
 background_tasks = {}
+
+# Global store for background import tasks
+import_tasks = {}
+
+# Temp directory for import files
+IMPORT_TEMP_DIR = os.path.join(tempfile.gettempdir(), 'deduply_imports')
+os.makedirs(IMPORT_TEMP_DIR, exist_ok=True)
 
 def init_db():
     conn = get_db()
@@ -1148,6 +1158,8 @@ async def preview_import(file: UploadFile = File(...)):
 async def execute_import(file: UploadFile = File(...), column_mapping: str = Query(...), outreach_list: str = Query(None),
                         campaigns: str = Query(None), country_strategy: str = Query(None), check_duplicates: bool = Query(True),
                         merge_duplicates: bool = Query(True), verify_emails: bool = Query(False)):
+    """Start a background import job. Returns job_id immediately."""
+    # Read and validate file
     content = await file.read()
     df = None
     for enc in ['utf-8-sig', 'utf-8', 'latin-1', 'cp1252']:
@@ -1155,184 +1167,364 @@ async def execute_import(file: UploadFile = File(...), column_mapping: str = Que
         except: continue
     if df is None: raise HTTPException(400, "Cannot read CSV")
 
-    mapping = json.loads(column_mapping)
+    total_rows = len(df)
+
+    # Save file to temp location
+    job_uuid = str(uuid.uuid4())
+    temp_file_path = os.path.join(IMPORT_TEMP_DIR, f"{job_uuid}.csv")
+    with open(temp_file_path, 'wb') as f:
+        f.write(content)
+
+    # Create job record
     conn = get_db()
+    conn.execute("""
+        INSERT INTO import_jobs
+        (status, total_rows, file_name, file_path, column_mapping,
+         outreach_list, campaigns, country_strategy, check_duplicates,
+         merge_duplicates, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        'pending', total_rows, file.filename, temp_file_path,
+        column_mapping, outreach_list or '', campaigns or '',
+        country_strategy or '', 1 if check_duplicates else 0, 1 if merge_duplicates else 0,
+        datetime.now().isoformat()
+    ))
+    job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.commit()
+    conn.close()
 
-    # Ensure outreach list exists
-    if outreach_list:
-        conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (outreach_list,))
+    # Start background thread
+    start_import_thread(job_id)
+    import_tasks[job_id] = True
 
-    # Ensure campaigns exist
-    campaign_list = [c.strip() for c in (campaigns or '').split(',') if c.strip()]
-    for c in campaign_list:
-        conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (c,))
+    print(f"[IMPORT] Started background job {job_id} for {total_rows} rows")
+    return {
+        "job_id": job_id,
+        "total_rows": total_rows,
+        "message": "Import started in background"
+    }
 
-    # Build email index for duplicate checking (only non-duplicates)
-    email_index = {}
-    if check_duplicates:
-        for row in conn.execute("SELECT id, LOWER(email) FROM contacts WHERE email IS NOT NULL AND is_duplicate=0"):
-            email_index[row[1]] = row[0]
 
-    stats = {'imported': 0, 'merged': 0, 'duplicates_found': 0, 'failed': 0}
-    new_contact_ids = []  # Track new contacts for verification
-    contacts_to_verify = []  # Track all contacts that need verification (new + merged unverified)
+def start_import_thread(job_id: int):
+    """Start import job in a background thread."""
+    thread = threading.Thread(target=run_import_job_sync, args=(job_id,), daemon=True)
+    thread.start()
+    print(f"[IMPORT] Started background thread for job {job_id}")
 
-    for _, row in df.iterrows():
-        try:
-            data = {}
-            csv_campaigns = set()
-            csv_lists = set()
-            csv_technologies = set()
 
-            for src_col, tgt_col in mapping.items():
-                if tgt_col and src_col in row:
-                    val = row[src_col]
-                    if pd.notna(val):
-                        # Integer fields
-                        if tgt_col in ['employees', 'annual_revenue', 'company_founded_year']:
-                            try: data[tgt_col] = int(float(str(val).replace(',', '').replace('$', '')))
-                            except: pass
-                        # Junction table fields
-                        elif tgt_col == 'campaigns_assigned':
-                            csv_campaigns.update(c.strip() for c in str(val).split(',') if c.strip())
-                        elif tgt_col == 'outreach_lists':
-                            csv_lists.update(l.strip() for l in str(val).split(',') if l.strip())
-                        elif tgt_col == 'company_technologies':
-                            csv_technologies.update(t.strip() for t in str(val).split(',') if t.strip())
-                        # Normalize email_status values
-                        elif tgt_col == 'email_status':
-                            raw = str(val).strip().lower()
-                            if raw in ['passed', 'valid', 'ok', 'good', 'verified', 'deliverable', 'true', '1']:
-                                data['email_status'] = 'Valid'
-                            elif raw in ['failed', 'invalid', 'bad', 'undeliverable', 'bounce', 'bounced', 'false', '0']:
-                                data['email_status'] = 'Invalid'
-                            elif raw in ['unknown', 'catchall', 'catch-all', 'catch_all', 'risky', 'accept_all', 'accept-all']:
-                                data['email_status'] = 'Unknown'
-                            elif raw in ['not verified', 'not_verified', 'unverified', 'pending', '']:
-                                data['email_status'] = 'Not Verified'
-                            else:
-                                data['email_status'] = 'Not Verified'  # Default for unrecognized values
-                        # Normalize lead status values
-                        elif tgt_col == 'status':
-                            raw = str(val).strip().lower()
-                            status_map = {
-                                # Lead
-                                'lead': 'Lead', 'new': 'Lead', 'prospect': 'Lead', 'new lead': 'Lead',
-                                # Contacted
-                                'contacted': 'Contacted', 'emailed': 'Contacted', 'reached': 'Contacted', 'sent': 'Contacted',
-                                # Replied
-                                'replied': 'Replied', 'responded': 'Replied', 'response': 'Replied', 'reply': 'Replied',
-                                # Engaged
-                                'engaged': 'Engaged', 'engaging': 'Engaged', 'interested': 'Engaged',
-                                # Meeting Booked
-                                'meeting': 'Meeting Booked', 'meeting booked': 'Meeting Booked', 'meetings': 'Meeting Booked',
-                                'booked': 'Meeting Booked', 'scheduled': 'Meeting Booked', 'call booked': 'Meeting Booked',
-                                # Opportunity
-                                'opportunity': 'Opportunity', 'deal': 'Opportunity', 'qualified': 'Opportunity', 'opp': 'Opportunity',
-                                # Client
-                                'client': 'Client', 'customer': 'Client', 'won': 'Client', 'closed': 'Client', 'closed won': 'Client',
-                                # Not Interested
-                                'not interested': 'Not Interested', 'unqualified': 'Not Interested', 'bad fit': 'Not Interested',
-                                'no interest': 'Not Interested', 'rejected': 'Not Interested', 'lost': 'Not Interested',
-                                # Bounced
-                                'bounced': 'Bounced', 'bounce': 'Bounced', 'hard bounce': 'Bounced', 'invalid email': 'Bounced',
-                                # Unsubscribed
-                                'unsubscribed': 'Unsubscribed', 'unsub': 'Unsubscribed', 'opted out': 'Unsubscribed', 'opt out': 'Unsubscribed'
-                            }
-                            data['status'] = status_map.get(raw, str(val).strip().title())  # Use mapped or title-case original
-                        else:
-                            data[tgt_col] = str(val).strip()
+def run_import_job_sync(job_id: int):
+    """Synchronous background task to import CSV (runs in thread)."""
+    print(f"[IMPORT THREAD] Starting job {job_id}")
+    conn = None
 
-            # Add form-specified campaigns and lists
-            csv_campaigns.update(campaign_list)
-            if outreach_list:
-                csv_lists.add(outreach_list)
+    try:
+        conn = get_db()
 
-            # Apply country_strategy from form if not already set
-            if country_strategy and not data.get('country_strategy'):
-                data['country_strategy'] = country_strategy
+        # Get job details
+        job = conn.execute("""
+            SELECT file_path, column_mapping, outreach_list, campaigns,
+                   country_strategy, check_duplicates, merge_duplicates, file_name
+            FROM import_jobs WHERE id=?
+        """, (job_id,)).fetchone()
 
-            data['employee_bucket'] = compute_employee_bucket(data.get('employees'))
-            data['source_file'] = file.filename
-            email = (data.get('email') or '').lower().strip()
+        if not job:
+            print(f"[IMPORT THREAD] Job {job_id} not found")
+            return
 
-            if check_duplicates and email and email in email_index:
-                stats['duplicates_found'] += 1
-                if merge_duplicates:
-                    existing_id = email_index[email]
-                    # Add campaigns, lists, and technologies to existing contact
-                    for camp in csv_campaigns:
-                        add_contact_campaign(conn, existing_id, camp)
-                    for lst in csv_lists:
-                        add_contact_list(conn, existing_id, lst)
-                    for tech in csv_technologies:
-                        add_contact_technology(conn, existing_id, tech)
-                    # Update country_strategy if provided
-                    if data.get('country_strategy'):
-                        conn.execute("UPDATE contacts SET country_strategy=?, updated_at=? WHERE id=?",
-                                   (data['country_strategy'], datetime.now().isoformat(), existing_id))
-                    stats['merged'] += 1
-                    # Track merged contacts that haven't been verified yet
-                    existing_status = conn.execute("SELECT email_status FROM contacts WHERE id=?", (existing_id,)).fetchone()
-                    if not existing_status or not existing_status[0] or existing_status[0] == 'Not Verified':
-                        contacts_to_verify.append(existing_id)
+        file_path = job[0]
+        column_mapping = job[1]
+        outreach_list = job[2] if job[2] else None
+        campaigns = job[3] if job[3] else None
+        country_strategy = job[4] if job[4] else None
+        check_duplicates = bool(job[5])
+        merge_duplicates = bool(job[6])
+        file_name = job[7]
+
+        # Parse column mapping
+        mapping = json.loads(column_mapping)
+
+        # Read CSV file
+        df = None
+        with open(file_path, 'rb') as f:
+            content = f.read()
+        for enc in ['utf-8-sig', 'utf-8', 'latin-1', 'cp1252']:
+            try:
+                df = pd.read_csv(io.BytesIO(content), encoding=enc)
+                break
+            except:
                 continue
 
-            if data:
-                fields = list(data.keys())
-                conn.execute(f"INSERT INTO contacts ({','.join(fields)}) VALUES ({','.join(['?']*len(fields))})", list(data.values()))
-                cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-                # Add campaigns, lists, and technologies to junction tables
-                for camp in csv_campaigns:
-                    add_contact_campaign(conn, cid, camp)
-                for lst in csv_lists:
-                    add_contact_list(conn, cid, lst)
-                for tech in csv_technologies:
-                    add_contact_technology(conn, cid, tech)
-
-                stats['imported'] += 1
-                new_contact_ids.append(cid)  # Track for verification
-                # Only add to verification queue if no valid email_status was imported
-                imported_status = data.get('email_status', '').strip()
-                if not imported_status or imported_status == 'Not Verified':
-                    contacts_to_verify.append(cid)
-                if email:
-                    email_index[email] = cid
-        except Exception as e:
-            stats['failed'] += 1
-
-    conn.commit()
-
-    # Email verification (if enabled and API key configured) - Start background job
-    verification_job_id = None
-    print(f"[VERIFY] verify_emails={verify_emails}, contacts_to_verify count={len(contacts_to_verify)}")
-    if verify_emails and contacts_to_verify:
-        api_row = conn.execute("SELECT value FROM settings WHERE key='bulkemailchecker_api_key'").fetchone()
-        print(f"[VERIFY] API key configured: {bool(api_row and api_row[0])}")
-        if api_row and api_row[0]:
-            # Create background verification job
-            conn.execute("""INSERT INTO verification_jobs (status, total_contacts, contact_ids, created_at)
-                VALUES ('pending', ?, ?, ?)""",
-                (len(contacts_to_verify), ','.join(map(str, contacts_to_verify)), datetime.now().isoformat()))
-            verification_job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        if df is None:
+            conn.execute("""
+                UPDATE import_jobs SET status='failed', error_message='Cannot read CSV file'
+                WHERE id=?
+            """, (job_id,))
             conn.commit()
-            print(f"[VERIFY] Created background job {verification_job_id} for {len(contacts_to_verify)} contacts")
+            return
 
-            # Start background thread (doesn't block response)
-            start_verification_thread(verification_job_id)
-            background_tasks[verification_job_id] = True
+        # Mark job as running
+        conn.execute("""
+            UPDATE import_jobs SET status='running', started_at=? WHERE id=?
+        """, (datetime.now().isoformat(), job_id))
+        conn.commit()
 
-    stats["verification_job_id"] = verification_job_id
-    stats["contacts_to_verify"] = len(contacts_to_verify) if verify_emails else 0
+        # Ensure outreach list exists
+        if outreach_list:
+            conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (outreach_list,))
+
+        # Ensure campaigns exist
+        campaign_list = [c.strip() for c in (campaigns or '').split(',') if c.strip()]
+        for c in campaign_list:
+            conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (c,))
+
+        # Build email index for duplicate checking (only non-duplicates)
+        email_index = {}
+        if check_duplicates:
+            for row in conn.execute("SELECT id, LOWER(email) FROM contacts WHERE email IS NOT NULL AND is_duplicate=0"):
+                email_index[row[1]] = row[0]
+
+        stats = {'imported': 0, 'merged': 0, 'duplicates_found': 0, 'failed': 0}
+        processed = 0
+
+        for idx, row in df.iterrows():
+            # Check if job was cancelled
+            job_status = conn.execute("SELECT status FROM import_jobs WHERE id=?", (job_id,)).fetchone()
+            if job_status and job_status[0] == 'cancelled':
+                print(f"[IMPORT THREAD] Job {job_id} was cancelled")
+                break
+
+            try:
+                data = {}
+                csv_campaigns = set()
+                csv_lists = set()
+                csv_technologies = set()
+
+                for src_col, tgt_col in mapping.items():
+                    if tgt_col and src_col in row:
+                        val = row[src_col]
+                        if pd.notna(val):
+                            # Integer fields
+                            if tgt_col in ['employees', 'annual_revenue', 'company_founded_year']:
+                                try: data[tgt_col] = int(float(str(val).replace(',', '').replace('$', '')))
+                                except: pass
+                            # Junction table fields
+                            elif tgt_col == 'campaigns_assigned':
+                                csv_campaigns.update(c.strip() for c in str(val).split(',') if c.strip())
+                            elif tgt_col == 'outreach_lists':
+                                csv_lists.update(l.strip() for l in str(val).split(',') if l.strip())
+                            elif tgt_col == 'company_technologies':
+                                csv_technologies.update(t.strip() for t in str(val).split(',') if t.strip())
+                            # Normalize email_status values
+                            elif tgt_col == 'email_status':
+                                raw = str(val).strip().lower()
+                                if raw in ['passed', 'valid', 'ok', 'good', 'verified', 'deliverable', 'true', '1']:
+                                    data['email_status'] = 'Valid'
+                                elif raw in ['failed', 'invalid', 'bad', 'undeliverable', 'bounce', 'bounced', 'false', '0']:
+                                    data['email_status'] = 'Invalid'
+                                elif raw in ['unknown', 'catchall', 'catch-all', 'catch_all', 'risky', 'accept_all', 'accept-all']:
+                                    data['email_status'] = 'Unknown'
+                                elif raw in ['not verified', 'not_verified', 'unverified', 'pending', '']:
+                                    data['email_status'] = 'Not Verified'
+                                else:
+                                    data['email_status'] = 'Not Verified'
+                            # Normalize lead status values
+                            elif tgt_col == 'status':
+                                raw = str(val).strip().lower()
+                                status_map = {
+                                    'lead': 'Lead', 'new': 'Lead', 'prospect': 'Lead', 'new lead': 'Lead',
+                                    'contacted': 'Contacted', 'emailed': 'Contacted', 'reached': 'Contacted', 'sent': 'Contacted',
+                                    'replied': 'Replied', 'responded': 'Replied', 'response': 'Replied', 'reply': 'Replied',
+                                    'engaged': 'Engaged', 'engaging': 'Engaged', 'interested': 'Engaged',
+                                    'meeting': 'Meeting Booked', 'meeting booked': 'Meeting Booked', 'meetings': 'Meeting Booked',
+                                    'booked': 'Meeting Booked', 'scheduled': 'Meeting Booked', 'call booked': 'Meeting Booked',
+                                    'opportunity': 'Opportunity', 'deal': 'Opportunity', 'qualified': 'Opportunity', 'opp': 'Opportunity',
+                                    'client': 'Client', 'customer': 'Client', 'won': 'Client', 'closed': 'Client', 'closed won': 'Client',
+                                    'not interested': 'Not Interested', 'unqualified': 'Not Interested', 'bad fit': 'Not Interested',
+                                    'no interest': 'Not Interested', 'rejected': 'Not Interested', 'lost': 'Not Interested',
+                                    'bounced': 'Bounced', 'bounce': 'Bounced', 'hard bounce': 'Bounced', 'invalid email': 'Bounced',
+                                    'unsubscribed': 'Unsubscribed', 'unsub': 'Unsubscribed', 'opted out': 'Unsubscribed', 'opt out': 'Unsubscribed'
+                                }
+                                data['status'] = status_map.get(raw, str(val).strip().title())
+                            else:
+                                data[tgt_col] = str(val).strip()
+
+                # Add form-specified campaigns and lists
+                csv_campaigns.update(campaign_list)
+                if outreach_list:
+                    csv_lists.add(outreach_list)
+
+                # Apply country_strategy from form if not already set
+                if country_strategy and not data.get('country_strategy'):
+                    data['country_strategy'] = country_strategy
+
+                data['employee_bucket'] = compute_employee_bucket(data.get('employees'))
+                data['source_file'] = file_name
+                email = (data.get('email') or '').lower().strip()
+
+                # Update current row indicator
+                conn.execute("UPDATE import_jobs SET current_row=? WHERE id=?", (email or f"Row {idx+1}", job_id))
+                conn.commit()
+
+                if check_duplicates and email and email in email_index:
+                    stats['duplicates_found'] += 1
+                    if merge_duplicates:
+                        existing_id = email_index[email]
+                        for camp in csv_campaigns:
+                            add_contact_campaign(conn, existing_id, camp)
+                        for lst in csv_lists:
+                            add_contact_list(conn, existing_id, lst)
+                        for tech in csv_technologies:
+                            add_contact_technology(conn, existing_id, tech)
+                        if data.get('country_strategy'):
+                            conn.execute("UPDATE contacts SET country_strategy=?, updated_at=? WHERE id=?",
+                                       (data['country_strategy'], datetime.now().isoformat(), existing_id))
+                        stats['merged'] += 1
+                else:
+                    if data:
+                        fields = list(data.keys())
+                        conn.execute(f"INSERT INTO contacts ({','.join(fields)}) VALUES ({','.join(['?']*len(fields))})", list(data.values()))
+                        cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+                        for camp in csv_campaigns:
+                            add_contact_campaign(conn, cid, camp)
+                        for lst in csv_lists:
+                            add_contact_list(conn, cid, lst)
+                        for tech in csv_technologies:
+                            add_contact_technology(conn, cid, tech)
+
+                        stats['imported'] += 1
+                        if email:
+                            email_index[email] = cid
+
+            except Exception as e:
+                stats['failed'] += 1
+
+            processed += 1
+
+            # Update progress every 10 rows (or every row for small imports)
+            if processed % 10 == 0 or processed == len(df):
+                conn.execute("""
+                    UPDATE import_jobs SET
+                        processed_count=?, imported_count=?, merged_count=?,
+                        duplicates_found=?, failed_count=?
+                    WHERE id=?
+                """, (
+                    processed, stats['imported'], stats['merged'],
+                    stats['duplicates_found'], stats['failed'], job_id
+                ))
+                conn.commit()
+
+        # Mark job as completed
+        conn.execute("""
+            UPDATE import_jobs SET
+                status='completed', current_row=NULL, completed_at=?,
+                processed_count=?, imported_count=?, merged_count=?,
+                duplicates_found=?, failed_count=?
+            WHERE id=?
+        """, (
+            datetime.now().isoformat(), processed,
+            stats['imported'], stats['merged'],
+            stats['duplicates_found'], stats['failed'], job_id
+        ))
+        conn.commit()
+
+        # Cleanup temp file
+        try:
+            os.remove(file_path)
+        except:
+            pass
+
+        update_counts()
+        print(f"[IMPORT THREAD] Job {job_id} completed: {stats}")
+
+    except Exception as e:
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"[IMPORT THREAD] Job {job_id} failed: {error_msg}")
+        try:
+            if conn:
+                conn.execute("UPDATE import_jobs SET status='failed', error_message=? WHERE id=?",
+                            (str(e)[:500], job_id))
+                conn.commit()
+        except:
+            pass
+    finally:
+        try:
+            if conn:
+                conn.close()
+        except:
+            pass
+        if job_id in import_tasks:
+            del import_tasks[job_id]
+
+
+@app.get("/api/import/job/{job_id}")
+def get_import_job(job_id: int):
+    """Get status of an import job."""
+    conn = get_db()
+    job = conn.execute("""
+        SELECT id, status, total_rows, processed_count, imported_count,
+               merged_count, duplicates_found, failed_count, current_row,
+               error_message, file_name, created_at, started_at, completed_at
+        FROM import_jobs WHERE id=?
+    """, (job_id,)).fetchone()
     conn.close()
-    update_counts()
-    return stats
+
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    return {
+        "id": job[0],
+        "status": job[1],
+        "total_rows": job[2],
+        "processed_count": job[3],
+        "imported_count": job[4],
+        "merged_count": job[5],
+        "duplicates_found": job[6],
+        "failed_count": job[7],
+        "current_row": job[8],
+        "error_message": job[9],
+        "file_name": job[10],
+        "created_at": job[11],
+        "started_at": job[12],
+        "completed_at": job[13]
+    }
+
+
+@app.post("/api/import/job/{job_id}/cancel")
+def cancel_import_job(job_id: int):
+    """Cancel a running import job."""
+    conn = get_db()
+    conn.execute("UPDATE import_jobs SET status='cancelled' WHERE id=? AND status='running'", (job_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "cancelled"}
+
+
+@app.get("/api/import/jobs/active")
+def get_active_import_jobs():
+    """Get all active (pending/running) import jobs."""
+    conn = get_db()
+    jobs = conn.execute("""
+        SELECT id, status, total_rows, processed_count, imported_count,
+               merged_count, duplicates_found, failed_count, current_row,
+               file_name, created_at
+        FROM import_jobs WHERE status IN ('pending', 'running')
+        ORDER BY created_at DESC
+    """).fetchall()
+    conn.close()
+
+    return [{
+        "id": j[0], "status": j[1], "total_rows": j[2],
+        "processed_count": j[3], "imported_count": j[4],
+        "merged_count": j[5], "duplicates_found": j[6],
+        "failed_count": j[7], "current_row": j[8],
+        "file_name": j[9], "created_at": j[10]
+    } for j in jobs]
 
 @app.get("/api/filters")
 def get_filters():
     conn = get_db()
-    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Engaged', 'Meeting Booked', 'Opportunity', 'Client', 'Not Interested', 'Bounced', 'Unsubscribed'],
+    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Scheduled', 'Show', 'No-Show', 'Qualified', 'Client', 'Not Interested', 'Bounced', 'Unsubscribed'],
             'countries': [r[0] for r in conn.execute("SELECT DISTINCT company_country FROM contacts WHERE company_country IS NOT NULL AND company_country != '' ORDER BY company_country")],
             'country_strategies': ['Mexico', 'United States', 'Germany', 'Spain'],
             'seniorities': [r[0] for r in conn.execute("SELECT DISTINCT seniority FROM contacts WHERE seniority IS NOT NULL AND seniority != '' ORDER BY seniority")],
@@ -1361,6 +1553,64 @@ def get_stats():
     stats['by_list'] = [(r[0], r[1]) for r in conn.execute("SELECT name, contact_count FROM outreach_lists ORDER BY contact_count DESC LIMIT 10")]
     conn.close()
     return stats
+
+@app.get("/api/stats/funnel")
+def get_funnel_stats():
+    """Get sales funnel conversion metrics"""
+    conn = get_db()
+
+    # Define funnel stages in order
+    stages = ['Lead', 'Contacted', 'Replied', 'Scheduled', 'Show', 'No-Show', 'Qualified', 'Client']
+
+    # Count contacts at each stage
+    funnel = {}
+    for stage in stages:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE status=? AND is_duplicate=0",
+            (stage,)
+        ).fetchone()[0]
+        funnel[stage] = count
+
+    # Also count negative outcomes
+    funnel['Not Interested'] = conn.execute(
+        "SELECT COUNT(*) FROM contacts WHERE status='Not Interested' AND is_duplicate=0"
+    ).fetchone()[0]
+    funnel['Bounced'] = conn.execute(
+        "SELECT COUNT(*) FROM contacts WHERE status='Bounced' AND is_duplicate=0"
+    ).fetchone()[0]
+
+    # Calculate conversion rates (avoid division by zero)
+    total_contacts = sum(funnel[s] for s in stages)
+    conversions = {
+        'contact_rate': round(funnel['Contacted'] / max(funnel['Lead'] + funnel['Contacted'], 1) * 100, 1),
+        'reply_rate': round(funnel['Replied'] / max(funnel['Contacted'], 1) * 100, 1),
+        'booked_rate': round(funnel['Scheduled'] / max(funnel['Replied'], 1) * 100, 1),
+        'show_rate': round(funnel['Show'] / max(funnel['Scheduled'], 1) * 100, 1),
+        'qualified_rate': round(funnel['Qualified'] / max(funnel['Show'], 1) * 100, 1),
+        'close_rate': round(funnel['Client'] / max(funnel['Qualified'], 1) * 100, 1),
+        'overall_conversion': round(funnel['Client'] / max(total_contacts, 1) * 100, 2),
+    }
+
+    # Calculate totals for funnel visualization
+    total_in_funnel = sum(funnel[s] for s in stages)
+    max_stage = max(funnel[s] for s in stages) if stages else 1
+
+    # Build funnel data with percentages for bar widths
+    funnel_data = []
+    for stage in stages:
+        funnel_data.append({
+            'stage': stage,
+            'count': funnel[stage],
+            'percentage': round(funnel[stage] / max(max_stage, 1) * 100, 1)
+        })
+
+    conn.close()
+    return {
+        'funnel': funnel,
+        'conversions': conversions,
+        'funnel_data': funnel_data,
+        'total': total_in_funnel
+    }
 
 @app.get("/api/stats/database")
 def get_database_stats():
