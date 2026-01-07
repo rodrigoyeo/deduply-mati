@@ -1377,6 +1377,81 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   opacity: 1;
 }
 
+/* Templates Grouped View */
+.templates-grouped {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.template-step-group {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.step-group-header {
+  padding: 16px 20px;
+  background: var(--bg-1);
+  cursor: pointer;
+  transition: background 0.2s ease;
+  border-bottom: 1px solid transparent;
+}
+
+.step-group-header:hover {
+  background: var(--bg-hover);
+}
+
+.step-group-header.expanded {
+  border-bottom-color: var(--border);
+}
+
+.step-group-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.step-group-title svg {
+  color: var(--text-2);
+  transition: transform 0.2s ease;
+}
+
+.step-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.step-count {
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--bg-3);
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+.step-templates {
+  padding: 8px;
+}
+
+.step-templates .template-list-item {
+  border-radius: var(--radius-md);
+  margin: 0;
+}
+
+.step-templates .template-list-item:last-child {
+  border-bottom: none;
+}
+
+.step-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 14px;
+}
+
 /* Template Card V2 */
 .template-card-v2 {
   background: var(--bg-2);

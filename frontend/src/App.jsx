@@ -2299,9 +2299,10 @@ const TemplatesPage = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [showEdit, setShowEdit] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
-  const [viewMode, setViewMode] = useState('list'); // 'list' or 'cards'
+  const [viewMode, setViewMode] = useState('list'); // 'list', 'cards', or 'grouped'
   const [filterStep, setFilterStep] = useState('');
   const [filterVariant, setFilterVariant] = useState('');
+  const [expandedSteps, setExpandedSteps] = useState(['Main', 'Followup 1', 'Followup 2', 'Followup 3']); // All expanded by default
   const { data: campaigns } = useData('/campaigns');
 
   const fetchTemplates = async () => {
@@ -2329,10 +2330,21 @@ const TemplatesPage = () => {
   useEffect(() => {
     if (activeTab === 'all') {
       fetchTemplates();
+      if (viewMode === 'grouped') {
+        fetchGroupedTemplates();
+      }
     } else {
       fetchGroupedTemplates();
     }
-  }, [search, activeTab]);
+  }, [search, activeTab, viewMode]);
+
+  const toggleStep = (stepType) => {
+    setExpandedSteps(prev =>
+      prev.includes(stepType)
+        ? prev.filter(s => s !== stepType)
+        : [...prev, stepType]
+    );
+  };
 
   const handleCreate = async (data) => { try { await api.post('/templates', data); addToast('Template created successfully!', 'success'); setShowCreate(false); fetchTemplates(); if (activeTab === 'data') fetchGroupedTemplates(); } catch (e) { addToast(e.message, 'error'); } };
   const handleUpdate = async (id, data) => { try { await api.put(`/templates/${id}`, data); addToast('Template updated!', 'success'); setShowEdit(null); fetchTemplates(); if (activeTab === 'data') fetchGroupedTemplates(); } catch (e) { addToast(e.message, 'error'); } };
@@ -2418,6 +2430,7 @@ const TemplatesPage = () => {
             <div className="view-toggle">
               <button className={`view-toggle-btn ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')} title="List View"><List size={18} /></button>
               <button className={`view-toggle-btn ${viewMode === 'cards' ? 'active' : ''}`} onClick={() => setViewMode('cards')} title="Card View"><LayoutGrid size={18} /></button>
+              <button className={`view-toggle-btn ${viewMode === 'grouped' ? 'active' : ''}`} onClick={() => setViewMode('grouped')} title="Grouped by Step"><Layers size={18} /></button>
             </div>
           </div>
         </div>
@@ -2479,7 +2492,7 @@ const TemplatesPage = () => {
               </div>
             ))}
           </div>
-        ) : (
+        ) : viewMode === 'cards' ? (
           /* Card View */
           <div className="templates-grid">
             {filteredTemplates.map(t => (
@@ -2538,6 +2551,66 @@ const TemplatesPage = () => {
                 </div>
               </div>
             ))}
+          </div>
+        ) : (
+          /* Grouped by Step View */
+          <div className="templates-grouped">
+            {groupedData ? (
+              ['Main', 'Followup 1', 'Followup 2', 'Followup 3'].map(stepType => {
+                const stepData = groupedData.find(s => s.step_type === stepType);
+                const templates = stepData?.variants || [];
+                const isExpanded = expandedSteps.includes(stepType);
+                return (
+                  <div key={stepType} className="template-step-group">
+                    <div className={`step-group-header ${isExpanded ? 'expanded' : ''}`} onClick={() => toggleStep(stepType)}>
+                      <div className="step-group-title">
+                        {isExpanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                        <span className="step-name">{stepType}</span>
+                        <span className="step-count">{templates.length} template{templates.length !== 1 ? 's' : ''}</span>
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div className="step-templates">
+                        {templates.length === 0 ? (
+                          <div className="step-empty">No templates for this step</div>
+                        ) : (
+                          templates.map(t => (
+                            <div key={t.id} className={`template-list-item ${t.is_winner ? 'winner' : ''}`}>
+                              <div className="template-list-left">
+                                <span className={`variant-badge variant-${t.variant}`}>{t.variant}</span>
+                                <div className="template-list-info">
+                                  <div className="template-list-header">
+                                    <h4 className="template-list-name">{t.name}</h4>
+                                    {t.is_winner && <span className="winner-badge-sm"><Trophy size={12} /> Winner</span>}
+                                  </div>
+                                  <div className="template-list-meta">
+                                    {t.subject && <span className="subject-preview">Subject: {t.subject?.length > 50 ? t.subject.substring(0, 50) + '...' : t.subject}</span>}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="template-list-metrics">
+                                <div className="list-metric"><span className="list-metric-value">{t.total_sent || 0}</span><span className="list-metric-label">Sent</span></div>
+                                <div className="list-metric"><span className="list-metric-value">{t.total_opened || 0}</span><span className="list-metric-label">Opened</span></div>
+                                <div className="list-metric"><span className="list-metric-value">{t.total_replied || 0}</span><span className="list-metric-label">Replied</span></div>
+                                <div className="list-metric highlight"><span className="list-metric-value">{t.opportunities || 0}</span><span className="list-metric-label">Opps</span></div>
+                                <div className="list-metric highlight"><span className="list-metric-value">{t.meetings || 0}</span><span className="list-metric-label">Meetings</span></div>
+                              </div>
+                              <div className="template-list-actions">
+                                <button className="btn-icon-small" onClick={() => copyToClipboard(t)} title="Copy"><Copy size={14} /></button>
+                                <button className="btn-icon-small" onClick={() => setShowEdit(t)} title="Edit"><Edit2 size={14} /></button>
+                                <button className="btn-icon-small danger" onClick={() => handleDelete(t.id)} title="Delete"><Trash2 size={14} /></button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="loading-state"><Loader2 className="spin" size={32} /><span>Loading templates...</span></div>
+            )}
           </div>
         )}
       </>
