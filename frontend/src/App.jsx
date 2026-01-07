@@ -2404,10 +2404,9 @@ const TemplatesPage = () => {
             <select value={filterStep} onChange={e => setFilterStep(e.target.value)} className="filter-select">
               <option value="">All Steps</option>
               <option value="Main">Main</option>
-              <option value="Step 1">Step 1</option>
-              <option value="Step 2">Step 2</option>
-              <option value="Step 3">Step 3</option>
-              <option value="Follow-up">Follow-up</option>
+              <option value="Followup 1">Followup 1</option>
+              <option value="Followup 2">Followup 2</option>
+              <option value="Followup 3">Followup 3</option>
             </select>
             <select value={filterVariant} onChange={e => setFilterVariant(e.target.value)} className="filter-select">
               <option value="">All Variants</option>
@@ -2898,7 +2897,7 @@ const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }
         <div className="form-group">
           <label>Step</label>
           <select value={data.step_type} onChange={e => setData({ ...data, step_type: e.target.value })}>
-            <option>Main</option><option>Step 1</option><option>Step 2</option><option>Step 3</option><option>Follow-up</option>
+            <option>Main</option><option>Followup 1</option><option>Followup 2</option><option>Followup 3</option>
           </select>
         </div>
       </div>
