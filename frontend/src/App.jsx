@@ -1967,6 +1967,14 @@ const CampaignsPage = () => {
   const [campaignDetails, setCampaignDetails] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterCountries, setFilterCountries] = useState([]);
+
+  const countryOptions = [
+    { id: 'Mexico', name: 'Mexico' },
+    { id: 'United States', name: 'United States' },
+    { id: 'Germany', name: 'Germany' },
+    { id: 'Spain', name: 'Spain' }
+  ];
 
   const fetchCampaigns = async () => {
     setLoading(true);
@@ -1997,7 +2005,11 @@ const CampaignsPage = () => {
   const handleUpdate = async (id) => { try { await api.put(`/campaigns/${id}`, editData); addToast('Campaign updated!', 'success'); setEditingId(null); fetchCampaigns(); if (expandedCampaign === id) fetchCampaignDetails(id); } catch (e) { addToast(e.message, 'error'); } };
   const handleDelete = async (id) => { if (!window.confirm('Delete this campaign?')) return; try { await api.delete(`/campaigns/${id}`); addToast('Campaign deleted', 'success'); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
 
-  const filteredCampaigns = filterStatus ? campaigns.filter(c => c.status === filterStatus) : campaigns;
+  const filteredCampaigns = campaigns.filter(c => {
+    if (filterStatus && c.status !== filterStatus) return false;
+    if (filterCountries.length > 0 && !filterCountries.includes(c.country)) return false;
+    return true;
+  });
   const totalSent = campaigns.reduce((s, c) => s + (c.emails_sent || 0), 0);
   const totalOpened = campaigns.reduce((s, c) => s + (c.emails_opened || 0), 0);
   const totalReplied = campaigns.reduce((s, c) => s + (c.emails_replied || 0), 0);
@@ -2064,6 +2076,12 @@ const CampaignsPage = () => {
           <option value="Paused">Paused</option>
           <option value="Completed">Completed</option>
         </select>
+        <MultiSelect
+          options={countryOptions}
+          value={filterCountries}
+          onChange={setFilterCountries}
+          placeholder="All Countries"
+        />
       </div>
     </div>
 
@@ -2335,10 +2353,11 @@ const TemplatesPage = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [showEdit, setShowEdit] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
-  const [viewMode, setViewMode] = useState('list'); // 'list', 'cards', or 'grouped'
+  const [viewMode, setViewMode] = useState('grouped'); // 'grouped', 'list', or 'cards'
   const [filterSteps, setFilterSteps] = useState([]);
   const [filterVariants, setFilterVariants] = useState([]);
   const [filterCampaigns, setFilterCampaigns] = useState([]);
+  const [filterCountries, setFilterCountries] = useState([]);
   const [expandedSteps, setExpandedSteps] = useState(['Main', 'Followup 1', 'Followup 2', 'Followup 3']); // All expanded by default
   const [selected, setSelected] = useState(new Set());
   const [showBulkAssign, setShowBulkAssign] = useState(false);
@@ -2378,6 +2397,12 @@ const TemplatesPage = () => {
     { id: 'B', name: 'Variant B' },
     { id: 'C', name: 'Variant C' },
     { id: 'D', name: 'Variant D' }
+  ];
+  const countryOptions = [
+    { id: 'Mexico', name: 'Mexico' },
+    { id: 'United States', name: 'United States' },
+    { id: 'Germany', name: 'Germany' },
+    { id: 'Spain', name: 'Spain' }
   ];
   const campaignOptions = (campaigns?.data || []).map(c => ({ id: c.id, name: c.name }));
 
@@ -2475,6 +2500,7 @@ const TemplatesPage = () => {
       const tCamps = t.campaign_ids || [];
       if (!filterCampaigns.some(c => tCamps.includes(c))) return false;
     }
+    if (filterCountries.length > 0 && !filterCountries.includes(t.country)) return false;
     return true;
   });
 
@@ -2528,10 +2554,16 @@ const TemplatesPage = () => {
               onChange={setFilterCampaigns}
               placeholder="All Campaigns"
             />
+            <MultiSelect
+              options={countryOptions}
+              value={filterCountries}
+              onChange={setFilterCountries}
+              placeholder="All Countries"
+            />
             <div className="view-toggle">
+              <button className={`view-toggle-btn ${viewMode === 'grouped' ? 'active' : ''}`} onClick={() => setViewMode('grouped')} title="Grouped by Step"><Layers size={18} /></button>
               <button className={`view-toggle-btn ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')} title="List View"><List size={18} /></button>
               <button className={`view-toggle-btn ${viewMode === 'cards' ? 'active' : ''}`} onClick={() => setViewMode('cards')} title="Card View"><LayoutGrid size={18} /></button>
-              <button className={`view-toggle-btn ${viewMode === 'grouped' ? 'active' : ''}`} onClick={() => setViewMode('grouped')} title="Grouped by Step"><Layers size={18} /></button>
             </div>
           </div>
         </div>
@@ -3109,8 +3141,9 @@ const copyHtmlToClipboard = async (html, plainText) => {
 
 const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }) => {
   const initialCampaignIds = initial.campaign_ids || (initial.campaigns ? initial.campaigns.map(c => c.id) : []);
-  const [data, setData] = useState({ name: '', variant: 'A', step_type: 'Main', subject: '', body: '', campaign_ids: initialCampaignIds, ...initial, campaign_ids: initialCampaignIds });
+  const [data, setData] = useState({ name: '', variant: 'A', step_type: 'Main', country: '', subject: '', body: '', campaign_ids: initialCampaignIds, ...initial, campaign_ids: initialCampaignIds });
   const insertVariable = (v, field) => { setData({ ...data, [field]: (data[field] || '') + v }); };
+  const countries = ['Mexico', 'United States', 'Germany', 'Spain'];
 
   return (
     <form onSubmit={e => { e.preventDefault(); onSubmit(data); }} className="template-form">
@@ -3131,6 +3164,13 @@ const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }
           <label>Step</label>
           <select value={data.step_type} onChange={e => setData({ ...data, step_type: e.target.value })}>
             <option>Main</option><option>Followup 1</option><option>Followup 2</option><option>Followup 3</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Country Strategy</label>
+          <select value={data.country || ''} onChange={e => setData({ ...data, country: e.target.value })}>
+            <option value="">Select country...</option>
+            {countries.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
       </div>

@@ -174,6 +174,11 @@ def init_db():
         conn.execute("ALTER TABLE contacts ADD COLUMN email_suggested TEXT")
     except: pass
 
+    # Add country column to email_templates (migration)
+    try:
+        conn.execute("ALTER TABLE email_templates ADD COLUMN country TEXT")
+    except: pass
+
     result = conn.execute("SELECT COUNT(*) FROM users").fetchone()
     if result[0] == 0:
         token = secrets.token_urlsafe(32)
@@ -372,6 +377,7 @@ class TemplateCreate(BaseModel):
     step_type: str = "Main"
     subject: Optional[str] = None
     body: Optional[str] = None
+    country: Optional[str] = None
     campaign_ids: Optional[List[int]] = None
 
 class TemplateUpdate(BaseModel):
@@ -380,6 +386,7 @@ class TemplateUpdate(BaseModel):
     body: Optional[str] = None
     variant: Optional[str] = None
     step_type: Optional[str] = None
+    country: Optional[str] = None
     times_sent: Optional[int] = None
     times_opened: Optional[int] = None
     times_clicked: Optional[int] = None
@@ -1886,7 +1893,8 @@ def get_templates_grouped_by_step():
 @app.post("/api/templates")
 def create_template(template: TemplateCreate):
     conn = get_db()
-    conn.execute("INSERT INTO email_templates (name, variant, step_type, subject, body) VALUES (?, ?, ?, ?, ?)", (template.name, template.variant, template.step_type, template.subject, template.body))
+    conn.execute("INSERT INTO email_templates (name, variant, step_type, subject, body, country) VALUES (?, ?, ?, ?, ?, ?)",
+                (template.name, template.variant, template.step_type, template.subject, template.body, template.country))
     tid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     if template.campaign_ids:
         for cid in template.campaign_ids: conn.execute("INSERT OR IGNORE INTO template_campaigns (template_id, campaign_id) VALUES (?, ?)", (tid, cid))
