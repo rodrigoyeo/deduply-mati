@@ -2584,7 +2584,7 @@ const TemplatesPage = () => {
                       <span className="step-tag">{t.step_type}</span>
                       {t.subject && <span className="subject-preview">Subject: {t.subject.length > 50 ? t.subject.substring(0, 50) + '...' : t.subject}</span>}
                       {t.campaign_ids?.length > 0 && (
-                        <span className="campaign-count-badge" title={t.campaign_names}>
+                        <span className="campaign-count-badge" data-tooltip={t.campaign_names}>
                           <Briefcase size={11} />
                           {t.campaign_ids.length}
                         </span>
@@ -2730,7 +2730,7 @@ const TemplatesPage = () => {
                                   <div className="template-list-meta">
                                     {t.subject && <span className="subject-preview">Subject: {t.subject?.length > 50 ? t.subject.substring(0, 50) + '...' : t.subject}</span>}
                                     {t.campaign_ids?.length > 0 && (
-                                      <span className="campaign-count-badge" title={t.campaign_names}>
+                                      <span className="campaign-count-badge" data-tooltip={t.campaign_names}>
                                         <Briefcase size={11} />
                                         {t.campaign_ids.length}
                                       </span>
