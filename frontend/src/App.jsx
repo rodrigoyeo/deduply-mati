@@ -2583,15 +2583,11 @@ const TemplatesPage = () => {
                     <div className="template-list-meta">
                       <span className="step-tag">{t.step_type}</span>
                       {t.subject && <span className="subject-preview">Subject: {t.subject.length > 50 ? t.subject.substring(0, 50) + '...' : t.subject}</span>}
-                      {t.campaign_names && (
-                        <div className="template-campaign-tags">
-                          {t.campaign_names.split(', ').slice(0, 3).map((name, i) => (
-                            <span key={i} className="campaign-tag-sm">{name}</span>
-                          ))}
-                          {t.campaign_names.split(', ').length > 3 && (
-                            <span className="campaign-tag-sm more">+{t.campaign_names.split(', ').length - 3}</span>
-                          )}
-                        </div>
+                      {t.campaign_ids?.length > 0 && (
+                        <span className="campaign-count-badge" title={t.campaign_names}>
+                          <Briefcase size={11} />
+                          {t.campaign_ids.length}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -2733,15 +2729,11 @@ const TemplatesPage = () => {
                                   </div>
                                   <div className="template-list-meta">
                                     {t.subject && <span className="subject-preview">Subject: {t.subject?.length > 50 ? t.subject.substring(0, 50) + '...' : t.subject}</span>}
-                                    {t.campaign_names && (
-                                      <div className="template-campaign-tags">
-                                        {t.campaign_names.split(', ').slice(0, 3).map((name, i) => (
-                                          <span key={i} className="campaign-tag-sm">{name}</span>
-                                        ))}
-                                        {t.campaign_names.split(', ').length > 3 && (
-                                          <span className="campaign-tag-sm more">+{t.campaign_names.split(', ').length - 3}</span>
-                                        )}
-                                      </div>
+                                    {t.campaign_ids?.length > 0 && (
+                                      <span className="campaign-count-badge" title={t.campaign_names}>
+                                        <Briefcase size={11} />
+                                        {t.campaign_ids.length}
+                                      </span>
                                     )}
                                   </div>
                                 </div>
