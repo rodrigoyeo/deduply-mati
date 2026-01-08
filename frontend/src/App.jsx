@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
-import { LayoutDashboard, Users, Mail, FileText, Settings, Search, Plus, Trash2, X, Check, ArrowUpDown, Filter, Download, Upload, Edit2, LogOut, UserPlus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle, Copy, ArrowRight, Layers, Merge, Eye, Webhook, Database, Send, Target, MessageCircle, MessageSquare, Zap, GitMerge, AlertTriangle, Trophy, List, LayoutGrid, Sparkles, Building2, User, ArrowRightLeft, Bold, Italic, Type, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, Users, Mail, FileText, Settings, Search, Plus, Trash2, X, Check, ArrowUpDown, Filter, Download, Upload, Edit2, LogOut, UserPlus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, AlertCircle, CheckCircle, Copy, ArrowRight, Layers, Merge, Eye, Webhook, Database, Send, Target, MessageCircle, MessageSquare, Zap, GitMerge, AlertTriangle, Trophy, List, LayoutGrid, Sparkles, Building2, User, ArrowRightLeft, Bold, Italic, Type, TrendingUp, Briefcase } from 'lucide-react';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 
@@ -2289,6 +2289,42 @@ const CampaignForm = ({ onSubmit, onCancel, initial = {} }) => {
   </form>);
 };
 
+// Bulk Assign Form for Templates
+const BulkAssignForm = ({ campaigns, templateCount, onSubmit, onCancel }) => {
+  const [selectedCampaigns, setSelectedCampaigns] = useState([]);
+  const campaignOptions = campaigns.map(c => ({ id: c.id, name: c.name }));
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (selectedCampaigns.length === 0) return;
+    onSubmit(selectedCampaigns);
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <p className="form-help-text" style={{ marginBottom: '16px' }}>
+        Select campaigns to assign the {templateCount} selected template{templateCount !== 1 ? 's' : ''} to.
+        Templates will be added to selected campaigns without removing existing assignments.
+      </p>
+      <div className="form-group">
+        <label>Select Campaigns</label>
+        <MultiSelect
+          options={campaignOptions}
+          value={selectedCampaigns}
+          onChange={setSelectedCampaigns}
+          placeholder="Select campaigns..."
+        />
+      </div>
+      <div className="modal-actions">
+        <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="btn btn-primary" disabled={selectedCampaigns.length === 0}>
+          <Briefcase size={16} /> Assign to {selectedCampaigns.length || 0} Campaign{selectedCampaigns.length !== 1 ? 's' : ''}
+        </button>
+      </div>
+    </form>
+  );
+};
+
 // Templates Page with Tabs - Premium Design
 const TemplatesPage = () => {
   const { addToast } = useToast();
@@ -2300,10 +2336,50 @@ const TemplatesPage = () => {
   const [showEdit, setShowEdit] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
   const [viewMode, setViewMode] = useState('list'); // 'list', 'cards', or 'grouped'
-  const [filterStep, setFilterStep] = useState('');
-  const [filterVariant, setFilterVariant] = useState('');
+  const [filterSteps, setFilterSteps] = useState([]);
+  const [filterVariants, setFilterVariants] = useState([]);
+  const [filterCampaigns, setFilterCampaigns] = useState([]);
   const [expandedSteps, setExpandedSteps] = useState(['Main', 'Followup 1', 'Followup 2', 'Followup 3']); // All expanded by default
+  const [selected, setSelected] = useState(new Set());
+  const [showBulkAssign, setShowBulkAssign] = useState(false);
   const { data: campaigns } = useData('/campaigns');
+
+  // Toggle selection for a single template
+  const toggleSelect = (id, e) => {
+    if (e) e.stopPropagation();
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  // Toggle select all filtered templates
+  const toggleSelectAll = () => {
+    if (selected.size === filteredTemplates.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(filteredTemplates.map(t => t.id)));
+    }
+  };
+
+  // Clear selection
+  const clearSelection = () => setSelected(new Set());
+
+  // Filter options for multi-select
+  const stepOptions = [
+    { id: 'Main', name: 'Main' },
+    { id: 'Followup 1', name: 'Followup 1' },
+    { id: 'Followup 2', name: 'Followup 2' },
+    { id: 'Followup 3', name: 'Followup 3' }
+  ];
+  const variantOptions = [
+    { id: 'A', name: 'Variant A' },
+    { id: 'B', name: 'Variant B' },
+    { id: 'C', name: 'Variant C' },
+    { id: 'D', name: 'Variant D' }
+  ];
+  const campaignOptions = (campaigns?.data || []).map(c => ({ id: c.id, name: c.name }));
 
   const fetchTemplates = async () => {
     setLoading(true);
@@ -2349,6 +2425,23 @@ const TemplatesPage = () => {
   const handleCreate = async (data) => { try { await api.post('/templates', data); addToast('Template created successfully!', 'success'); setShowCreate(false); fetchTemplates(); if (activeTab === 'data') fetchGroupedTemplates(); } catch (e) { addToast(e.message, 'error'); } };
   const handleUpdate = async (id, data) => { try { await api.put(`/templates/${id}`, data); addToast('Template updated!', 'success'); setShowEdit(null); fetchTemplates(); if (activeTab === 'data') fetchGroupedTemplates(); } catch (e) { addToast(e.message, 'error'); } };
   const handleDelete = async (id) => { if (!window.confirm('Are you sure you want to delete this template?')) return; try { await api.delete(`/templates/${id}`); addToast('Template deleted', 'success'); fetchTemplates(); if (activeTab === 'data') fetchGroupedTemplates(); } catch (e) { addToast(e.message, 'error'); } };
+
+  // Bulk assign templates to campaigns
+  const handleBulkAssign = async (campaignIds) => {
+    try {
+      await api.post('/templates/bulk/assign-campaigns', {
+        template_ids: Array.from(selected),
+        campaign_ids: campaignIds
+      });
+      addToast(`Assigned ${selected.size} template${selected.size !== 1 ? 's' : ''} to ${campaignIds.length} campaign${campaignIds.length !== 1 ? 's' : ''}`, 'success');
+      setShowBulkAssign(false);
+      clearSelection();
+      fetchTemplates();
+    } catch (e) {
+      addToast(e.message, 'error');
+    }
+  };
+
   const copyToClipboard = async (template) => {
     // Convert Quill's HTML for Gmail compatibility
     let cleanBody = (template.body || '')
@@ -2376,8 +2469,12 @@ const TemplatesPage = () => {
 
   // Filter templates
   const filteredTemplates = templates.filter(t => {
-    if (filterStep && t.step_type !== filterStep) return false;
-    if (filterVariant && t.variant !== filterVariant) return false;
+    if (filterSteps.length > 0 && !filterSteps.includes(t.step_type)) return false;
+    if (filterVariants.length > 0 && !filterVariants.includes(t.variant)) return false;
+    if (filterCampaigns.length > 0) {
+      const tCamps = t.campaign_ids || [];
+      if (!filterCampaigns.some(c => tCamps.includes(c))) return false;
+    }
     return true;
   });
 
@@ -2413,20 +2510,24 @@ const TemplatesPage = () => {
         <div className="templates-toolbar">
           <div className="search-box"><Search size={18} /><input type="text" placeholder="Search templates..." value={search} onChange={e => setSearch(e.target.value)} /></div>
           <div className="template-filters">
-            <select value={filterStep} onChange={e => setFilterStep(e.target.value)} className="filter-select">
-              <option value="">All Steps</option>
-              <option value="Main">Main</option>
-              <option value="Followup 1">Followup 1</option>
-              <option value="Followup 2">Followup 2</option>
-              <option value="Followup 3">Followup 3</option>
-            </select>
-            <select value={filterVariant} onChange={e => setFilterVariant(e.target.value)} className="filter-select">
-              <option value="">All Variants</option>
-              <option value="A">Variant A</option>
-              <option value="B">Variant B</option>
-              <option value="C">Variant C</option>
-              <option value="D">Variant D</option>
-            </select>
+            <MultiSelect
+              options={stepOptions}
+              value={filterSteps}
+              onChange={setFilterSteps}
+              placeholder="All Steps"
+            />
+            <MultiSelect
+              options={variantOptions}
+              value={filterVariants}
+              onChange={setFilterVariants}
+              placeholder="All Variants"
+            />
+            <MultiSelect
+              options={campaignOptions}
+              value={filterCampaigns}
+              onChange={setFilterCampaigns}
+              placeholder="All Campaigns"
+            />
             <div className="view-toggle">
               <button className={`view-toggle-btn ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')} title="List View"><List size={18} /></button>
               <button className={`view-toggle-btn ${viewMode === 'cards' ? 'active' : ''}`} onClick={() => setViewMode('cards')} title="Card View"><LayoutGrid size={18} /></button>
@@ -2434,6 +2535,22 @@ const TemplatesPage = () => {
             </div>
           </div>
         </div>
+
+        {/* Bulk Action Bar */}
+        {selected.size > 0 && (
+          <div className="bulk-action-bar">
+            <div className="bulk-action-left">
+              <input type="checkbox" checked={selected.size === filteredTemplates.length} onChange={toggleSelectAll} />
+              <span>{selected.size} template{selected.size !== 1 ? 's' : ''} selected</span>
+            </div>
+            <div className="bulk-action-right">
+              <button className="btn btn-primary btn-sm" onClick={() => setShowBulkAssign(true)}>
+                <Briefcase size={14} /> Assign to Campaigns
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={clearSelection}>Clear</button>
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="loading-state"><Loader2 className="spin" size={32} /><span>Loading templates...</span></div>
@@ -2448,8 +2565,15 @@ const TemplatesPage = () => {
           /* List View - Similar to Campaigns */
           <div className="templates-list">
             {filteredTemplates.map(t => (
-              <div key={t.id} className={`template-list-item ${t.is_winner ? 'winner' : ''}`}>
+              <div key={t.id} className={`template-list-item ${t.is_winner ? 'winner' : ''} ${selected.has(t.id) ? 'selected' : ''}`} onClick={() => setShowEdit(t)}>
                 <div className="template-list-left">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(t.id)}
+                    onChange={(e) => toggleSelect(t.id, e)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="template-checkbox"
+                  />
                   <span className={`variant-badge variant-${t.variant}`}>{t.variant}</span>
                   <div className="template-list-info">
                     <div className="template-list-header">
@@ -2484,7 +2608,7 @@ const TemplatesPage = () => {
                     <span className="list-metric-label">Meetings</span>
                   </div>
                 </div>
-                <div className="template-list-actions">
+                <div className="template-list-actions" onClick={e => e.stopPropagation()}>
                   <button className="btn-icon-small" onClick={() => copyToClipboard(t)} title="Copy"><Copy size={14} /></button>
                   <button className="btn-icon-small" onClick={() => setShowEdit(t)} title="Edit"><Edit2 size={14} /></button>
                   <button className="btn-icon-small danger" onClick={() => handleDelete(t.id)} title="Delete"><Trash2 size={14} /></button>
@@ -2496,14 +2620,21 @@ const TemplatesPage = () => {
           /* Card View */
           <div className="templates-grid">
             {filteredTemplates.map(t => (
-              <div key={t.id} className={`template-card-v2 ${t.is_winner ? 'winner' : ''}`}>
+              <div key={t.id} className={`template-card-v2 ${t.is_winner ? 'winner' : ''} ${selected.has(t.id) ? 'selected' : ''}`} onClick={() => setShowEdit(t)}>
                 <div className="template-card-top">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(t.id)}
+                    onChange={(e) => toggleSelect(t.id, e)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="template-checkbox"
+                  />
                   <div className="template-badges">
                     <span className={`variant-badge-lg variant-${t.variant}`}>{t.variant}</span>
                     <span className="step-badge">{t.step_type}</span>
                     {t.is_winner && <span className="winner-badge-sm"><Trophy size={12} /> Winner</span>}
                   </div>
-                  <div className="template-actions-menu">
+                  <div className="template-actions-menu" onClick={e => e.stopPropagation()}>
                     <button className="btn-icon-small" onClick={() => copyToClipboard(t)} title="Copy"><Copy size={14} /></button>
                     <button className="btn-icon-small" onClick={() => setShowEdit(t)} title="Edit"><Edit2 size={14} /></button>
                     <button className="btn-icon-small danger" onClick={() => handleDelete(t.id)} title="Delete"><Trash2 size={14} /></button>
@@ -2575,8 +2706,15 @@ const TemplatesPage = () => {
                           <div className="step-empty">No templates for this step</div>
                         ) : (
                           templates.map(t => (
-                            <div key={t.id} className={`template-list-item ${t.is_winner ? 'winner' : ''}`}>
+                            <div key={t.id} className={`template-list-item ${t.is_winner ? 'winner' : ''} ${selected.has(t.id) ? 'selected' : ''}`} onClick={() => setShowEdit(t)}>
                               <div className="template-list-left">
+                                <input
+                                  type="checkbox"
+                                  checked={selected.has(t.id)}
+                                  onChange={(e) => toggleSelect(t.id, e)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="template-checkbox"
+                                />
                                 <span className={`variant-badge variant-${t.variant}`}>{t.variant}</span>
                                 <div className="template-list-info">
                                   <div className="template-list-header">
@@ -2595,7 +2733,7 @@ const TemplatesPage = () => {
                                 <div className="list-metric highlight"><span className="list-metric-value">{t.opportunities || 0}</span><span className="list-metric-label">Opps</span></div>
                                 <div className="list-metric highlight"><span className="list-metric-value">{t.meetings || 0}</span><span className="list-metric-label">Meetings</span></div>
                               </div>
-                              <div className="template-list-actions">
+                              <div className="template-list-actions" onClick={e => e.stopPropagation()}>
                                 <button className="btn-icon-small" onClick={() => copyToClipboard(t)} title="Copy"><Copy size={14} /></button>
                                 <button className="btn-icon-small" onClick={() => setShowEdit(t)} title="Edit"><Edit2 size={14} /></button>
                                 <button className="btn-icon-small danger" onClick={() => handleDelete(t.id)} title="Delete"><Trash2 size={14} /></button>
@@ -2620,6 +2758,16 @@ const TemplatesPage = () => {
 
     <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Create New Template" size="xl"><TemplateForm campaigns={campaigns?.data || []} onSubmit={handleCreate} onCancel={() => setShowCreate(false)} variables={variables} /></Modal>
     <Modal isOpen={!!showEdit} onClose={() => setShowEdit(null)} title="Edit Template" size="xl">{showEdit && <TemplateForm campaigns={campaigns?.data || []} initial={showEdit} onSubmit={(d) => handleUpdate(showEdit.id, d)} onCancel={() => setShowEdit(null)} variables={variables} />}</Modal>
+
+    {/* Bulk Assign Modal */}
+    <Modal isOpen={showBulkAssign} onClose={() => setShowBulkAssign(false)} title={`Assign ${selected.size} Template${selected.size !== 1 ? 's' : ''} to Campaigns`}>
+      <BulkAssignForm
+        campaigns={campaigns?.data || []}
+        templateCount={selected.size}
+        onSubmit={handleBulkAssign}
+        onCancel={() => setShowBulkAssign(false)}
+      />
+    </Modal>
   </div>);
 };
 

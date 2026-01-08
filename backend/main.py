@@ -1907,6 +1907,28 @@ def update_template(template_id: int, template: TemplateUpdate):
 def delete_template(template_id: int):
     conn = get_db(); conn.execute("DELETE FROM template_campaigns WHERE template_id=?", (template_id,)); conn.execute("DELETE FROM email_templates WHERE id=?", (template_id,)); conn.commit(); conn.close(); return {"message": "Deleted"}
 
+class BulkAssignTemplatesRequest(BaseModel):
+    template_ids: List[int]
+    campaign_ids: List[int]
+
+@app.post("/api/templates/bulk/assign-campaigns")
+def bulk_assign_templates_to_campaigns(request: BulkAssignTemplatesRequest):
+    """Bulk assign multiple templates to multiple campaigns"""
+    if not request.template_ids or not request.campaign_ids:
+        raise HTTPException(400, "template_ids and campaign_ids are required")
+
+    conn = get_db()
+    count = 0
+    for template_id in request.template_ids:
+        for campaign_id in request.campaign_ids:
+            # INSERT OR IGNORE to avoid duplicates
+            conn.execute("INSERT OR IGNORE INTO template_campaigns (template_id, campaign_id) VALUES (?, ?)",
+                        (template_id, campaign_id))
+            count += 1
+    conn.commit()
+    conn.close()
+    return {"message": f"Assigned {len(request.template_ids)} templates to {len(request.campaign_ids)} campaigns"}
+
 class TemplateCampaignMetricsUpdate(BaseModel):
     times_sent: Optional[int] = None
     times_opened: Optional[int] = None

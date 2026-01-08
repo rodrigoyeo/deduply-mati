@@ -1242,6 +1242,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   border-radius: var(--radius-lg);
   transition: all 0.25s ease;
   position: relative;
+  cursor: pointer;
 }
 
 .template-list-item::before {
@@ -1273,6 +1274,50 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 .template-list-item.winner::before {
   width: 4px;
   background: var(--success);
+}
+
+.template-list-item.selected {
+  background: rgba(255, 111, 97, 0.08);
+  border-color: var(--coral);
+}
+
+.template-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--coral);
+  flex-shrink: 0;
+}
+
+/* Bulk Action Bar */
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: linear-gradient(135deg, rgba(255, 111, 97, 0.1), rgba(255, 111, 97, 0.05));
+  border: 1px solid rgba(255, 111, 97, 0.3);
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+}
+
+.bulk-action-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.bulk-action-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 13px;
 }
 
 .template-list-left {
@@ -1462,6 +1507,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   display: flex;
   flex-direction: column;
   position: relative;
+  cursor: pointer;
 }
 
 .template-card-v2::before {
@@ -1498,6 +1544,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 
 .template-card-v2.winner:hover {
   border-color: var(--success);
+}
+
+.template-card-v2.selected {
+  background: rgba(255, 111, 97, 0.08);
+  border-color: var(--coral);
+  box-shadow: 0 0 0 1px var(--coral), var(--shadow-sm);
 }
 
 .template-card-top {
