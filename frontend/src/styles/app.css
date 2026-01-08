@@ -3694,7 +3694,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 .multi-select-dropdown {
   position: absolute;
   top: 100%;
-  left: 0;
   right: 0;
   margin-top: 4px;
   background: var(--bg-2);
@@ -3706,6 +3705,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: 220px;
+  width: max-content;
 }
 
 .multi-select-search {
@@ -3791,7 +3792,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 }
 
 .multi-select-option-content { flex: 1; min-width: 0; }
-.multi-select-option-label { font-size: 14px; font-weight: 500; color: var(--text-1); }
+.multi-select-option-label { font-size: 14px; font-weight: 500; color: var(--text-1); white-space: nowrap; }
 .multi-select-option-meta { font-size: 12px; color: var(--text-3); }
 
 .multi-select-empty {
