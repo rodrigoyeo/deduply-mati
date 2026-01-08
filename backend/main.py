@@ -1807,7 +1807,7 @@ def get_campaign(campaign_id: int):
 @app.post("/api/campaigns")
 def create_campaign(campaign: CampaignCreate):
     conn = get_db()
-    try: conn.execute("INSERT INTO campaigns (name, description, status) VALUES (?, ?, ?)", (campaign.name, campaign.description, campaign.status)); cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]; conn.commit(); return {"id": cid, "message": "Created"}
+    try: conn.execute("INSERT INTO campaigns (name, description, country, status) VALUES (?, ?, ?, ?)", (campaign.name, campaign.description, campaign.country, campaign.status)); cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]; conn.commit(); return {"id": cid, "message": "Created"}
     except sqlite3.IntegrityError: raise HTTPException(400, "Name exists")
     finally: conn.close()
 

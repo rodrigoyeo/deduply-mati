@@ -1968,6 +1968,7 @@ const CampaignsPage = () => {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCountries, setFilterCountries] = useState([]);
+  const [editingSettings, setEditingSettings] = useState(null);
 
   const countryOptions = [
     { id: 'Mexico', name: 'Mexico' },
@@ -2003,6 +2004,7 @@ const CampaignsPage = () => {
 
   const handleCreate = async (data) => { try { await api.post('/campaigns', data); addToast('Campaign created!', 'success'); setShowCreate(false); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
   const handleUpdate = async (id) => { try { await api.put(`/campaigns/${id}`, editData); addToast('Campaign updated!', 'success'); setEditingId(null); fetchCampaigns(); if (expandedCampaign === id) fetchCampaignDetails(id); } catch (e) { addToast(e.message, 'error'); } };
+  const handleUpdateSettings = async (data) => { try { await api.put(`/campaigns/${editingSettings.id}`, data); addToast('Campaign updated!', 'success'); setEditingSettings(null); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
   const handleDelete = async (id) => { if (!window.confirm('Delete this campaign?')) return; try { await api.delete(`/campaigns/${id}`); addToast('Campaign deleted', 'success'); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
 
   const filteredCampaigns = campaigns.filter(c => {
@@ -2119,6 +2121,7 @@ const CampaignsPage = () => {
                 <div className="c-metric highlight"><span className="c-metric-value">{camp.opportunities || 0}</span><span className="c-metric-label">Opps</span></div>
               </div>
               <div className="campaign-card-actions" onClick={e => e.stopPropagation()}>
+                <button className="btn-icon-small" onClick={() => setEditingSettings(camp)} title="Edit Settings"><Settings size={14} /></button>
                 <button className="btn-icon-small" onClick={() => { setEditingId(camp.id); setEditData({...camp}); }} title="Edit Metrics"><Edit2 size={14} /></button>
                 <button className="btn-icon-small danger" onClick={() => handleDelete(camp.id)} title="Delete"><Trash2 size={14} /></button>
               </div>
@@ -2173,6 +2176,7 @@ const CampaignsPage = () => {
       </div>
     </Modal>
     <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Create New Campaign"><CampaignForm onSubmit={handleCreate} onCancel={() => setShowCreate(false)} /></Modal>
+    <Modal isOpen={!!editingSettings} onClose={() => setEditingSettings(null)} title="Edit Campaign Settings">{editingSettings && <CampaignForm initial={editingSettings} onSubmit={handleUpdateSettings} onCancel={() => setEditingSettings(null)} />}</Modal>
   </div>);
 };
 
