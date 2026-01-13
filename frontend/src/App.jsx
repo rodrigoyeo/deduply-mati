@@ -803,14 +803,38 @@ const ContactsPage = () => {
   }, []);
 
   const columns = allColumns.filter(c => visibleColumns.includes(c.id));
-  const activeFiltersCount = Object.values(filters).filter(v => v).length;
+
+  // Calculate active filters count (handle both arrays and strings)
+  const activeFiltersCount = Object.entries(filters).filter(([k, v]) => {
+    if (Array.isArray(v)) return v.length > 0;
+    return v && v !== '';
+  }).length;
+
+  // Multi-select filter options
+  const statusOptions = (filterOptions?.statuses || []).map(s => ({ id: s, name: s }));
+  const emailStatusOptions = [
+    { id: 'Not Verified', name: 'Not Verified' },
+    { id: 'Valid', name: 'Valid' },
+    { id: 'Invalid', name: 'Invalid' },
+    { id: 'Unknown', name: 'Unknown' }
+  ];
+  const countryStrategyOptions = (filterOptions?.country_strategies || []).map(c => ({ id: c, name: c }));
+  const campaignFilterOptions = (filterOptions?.campaigns || []).map(c => ({ id: c, name: c }));
+  const listFilterOptions = (filterOptions?.outreach_lists || []).map(l => ({ id: l, name: l }));
 
   const fetchContacts = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page, page_size: pageSize, sort_by: sortBy, sort_order: sortOrder });
       if (search) params.append('search', search);
-      Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); });
+      // Handle both array and string filter values
+      Object.entries(filters).forEach(([k, v]) => {
+        if (Array.isArray(v) && v.length > 0) {
+          params.append(k, v.join(','));
+        } else if (v && !Array.isArray(v)) {
+          params.append(k, v);
+        }
+      });
       const r = await api.get(`/contacts?${params}`);
       setContacts(r.data); setTotal(r.total);
     } catch (e) { addToast(e.message, 'error'); }
@@ -973,73 +997,133 @@ const ContactsPage = () => {
     </div>
 
     {showFilters && filterOptions && (
-      <div className="filters-panel">
-        <div className="filters-row">
-          <div className="filter-group">
+      <div className="filters-panel-v2">
+        <div className="filters-grid">
+          <div className="filter-group-v2">
             <label>Status</label>
-            <select value={filters.status || ''} onChange={e => setFilters({ ...filters, status: e.target.value })}>
-              <option value="">All Statuses</option>
-              {filterOptions.statuses?.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <MultiSelect
+              options={statusOptions}
+              value={filters.status || []}
+              onChange={v => setFilters({ ...filters, status: v })}
+              placeholder="All Statuses"
+            />
           </div>
-          <div className="filter-group">
+          <div className="filter-group-v2">
+            <label>Email Status</label>
+            <MultiSelect
+              options={emailStatusOptions}
+              value={filters.email_status || []}
+              onChange={v => setFilters({ ...filters, email_status: v })}
+              placeholder="All Email Statuses"
+            />
+          </div>
+          <div className="filter-group-v2">
             <label>Country Strategy</label>
-            <select value={filters.country_strategy || ''} onChange={e => setFilters({ ...filters, country_strategy: e.target.value })}>
-              <option value="">All Strategies</option>
-              {filterOptions.country_strategies?.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <MultiSelect
+              options={countryStrategyOptions}
+              value={filters.country_strategy || []}
+              onChange={v => setFilters({ ...filters, country_strategy: v })}
+              placeholder="All Strategies"
+            />
           </div>
-          <div className="filter-group">
+          <div className="filter-group-v2">
             <label>Campaign</label>
-            <select value={filters.campaigns || ''} onChange={e => setFilters({ ...filters, campaigns: e.target.value })}>
-              <option value="">All Campaigns</option>
-              {filterOptions.campaigns?.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <MultiSelect
+              options={campaignFilterOptions}
+              value={filters.campaigns || []}
+              onChange={v => setFilters({ ...filters, campaigns: v })}
+              placeholder="All Campaigns"
+            />
           </div>
-          <div className="filter-group">
+          <div className="filter-group-v2">
             <label>Outreach List</label>
-            <select value={filters.outreach_lists || ''} onChange={e => setFilters({ ...filters, outreach_lists: e.target.value })}>
-              <option value="">All Lists</option>
-              {filterOptions.outreach_lists?.map(l => <option key={l} value={l}>{l}</option>)}
-            </select>
+            <MultiSelect
+              options={listFilterOptions}
+              value={filters.outreach_lists || []}
+              onChange={v => setFilters({ ...filters, outreach_lists: v })}
+              placeholder="All Lists"
+            />
           </div>
-        </div>
-        <div className="filters-row">
-          <div className="filter-group">
+          <div className="filter-group-v2">
             <label>Country</label>
             <select value={filters.country || ''} onChange={e => setFilters({ ...filters, country: e.target.value })}>
               <option value="">All Countries</option>
               {filterOptions.countries?.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
-          <div className="filter-group">
+          <div className="filter-group-v2">
             <label>Seniority</label>
             <select value={filters.seniority || ''} onChange={e => setFilters({ ...filters, seniority: e.target.value })}>
               <option value="">All Seniorities</option>
               {filterOptions.seniorities?.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
-          <div className="filter-group">
+          <div className="filter-group-v2">
             <label>Industry</label>
             <select value={filters.industry || ''} onChange={e => setFilters({ ...filters, industry: e.target.value })}>
               <option value="">All Industries</option>
               {filterOptions.industries?.map(i => <option key={i} value={i}>{i}</option>)}
             </select>
           </div>
-          <div className="filter-group">
-            <label>Email Status</label>
-            <select value={filters.email_status || ''} onChange={e => setFilters({ ...filters, email_status: e.target.value })}>
-              <option value="">All Statuses</option>
-              <option value="Not Verified">Not Verified</option>
-              <option value="Valid">Valid</option>
-              <option value="Invalid">Invalid</option>
-              <option value="Unknown">Unknown</option>
-            </select>
-          </div>
-          <div className="filter-group filter-actions">
-            <button className="btn btn-text" onClick={() => setFilters({})}>Clear All Filters</button>
-          </div>
         </div>
+        {activeFiltersCount > 0 && (
+          <div className="active-filters-bar">
+            <span className="active-filters-label">Active filters:</span>
+            <div className="filter-chips">
+              {(filters.status || []).map(s => (
+                <span key={`status-${s}`} className="filter-chip">
+                  <span className="filter-chip-type">Status:</span> {s}
+                  <X size={14} onClick={() => setFilters({ ...filters, status: filters.status.filter(x => x !== s) })} />
+                </span>
+              ))}
+              {(filters.email_status || []).map(s => (
+                <span key={`email-${s}`} className="filter-chip">
+                  <span className="filter-chip-type">Email:</span> {s}
+                  <X size={14} onClick={() => setFilters({ ...filters, email_status: filters.email_status.filter(x => x !== s) })} />
+                </span>
+              ))}
+              {(filters.country_strategy || []).map(s => (
+                <span key={`strategy-${s}`} className="filter-chip">
+                  <span className="filter-chip-type">Strategy:</span> {s}
+                  <X size={14} onClick={() => setFilters({ ...filters, country_strategy: filters.country_strategy.filter(x => x !== s) })} />
+                </span>
+              ))}
+              {(filters.campaigns || []).map(s => (
+                <span key={`campaign-${s}`} className="filter-chip">
+                  <span className="filter-chip-type">Campaign:</span> {s}
+                  <X size={14} onClick={() => setFilters({ ...filters, campaigns: filters.campaigns.filter(x => x !== s) })} />
+                </span>
+              ))}
+              {(filters.outreach_lists || []).map(s => (
+                <span key={`list-${s}`} className="filter-chip">
+                  <span className="filter-chip-type">List:</span> {s}
+                  <X size={14} onClick={() => setFilters({ ...filters, outreach_lists: filters.outreach_lists.filter(x => x !== s) })} />
+                </span>
+              ))}
+              {filters.country && (
+                <span className="filter-chip">
+                  <span className="filter-chip-type">Country:</span> {filters.country}
+                  <X size={14} onClick={() => setFilters({ ...filters, country: '' })} />
+                </span>
+              )}
+              {filters.seniority && (
+                <span className="filter-chip">
+                  <span className="filter-chip-type">Seniority:</span> {filters.seniority}
+                  <X size={14} onClick={() => setFilters({ ...filters, seniority: '' })} />
+                </span>
+              )}
+              {filters.industry && (
+                <span className="filter-chip">
+                  <span className="filter-chip-type">Industry:</span> {filters.industry}
+                  <X size={14} onClick={() => setFilters({ ...filters, industry: '' })} />
+                </span>
+              )}
+            </div>
+            <button className="btn btn-text btn-clear-filters" onClick={() => setFilters({})}>
+              <X size={14} /> Clear All
+            </button>
+          </div>
+        )}
       </div>
     )}
 

@@ -549,24 +549,56 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
     if search:
         where.append("(c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.company LIKE ? OR c.title LIKE ?)")
         params.extend([f"%{search}%"]*5)
-    if status: where.append("c.status=?"); params.append(status)
+
+    # Handle multi-select filters (comma-separated values)
+    if status:
+        status_list = [s.strip() for s in status.split(',') if s.strip()]
+        if len(status_list) == 1:
+            where.append("c.status=?"); params.append(status_list[0])
+        elif len(status_list) > 1:
+            placeholders = ','.join(['?'] * len(status_list))
+            where.append(f"c.status IN ({placeholders})"); params.extend(status_list)
+
     if country: where.append("c.company_country=?"); params.append(country)
-    if country_strategy: where.append("c.country_strategy=?"); params.append(country_strategy)
+
+    if country_strategy:
+        cs_list = [s.strip() for s in country_strategy.split(',') if s.strip()]
+        if len(cs_list) == 1:
+            where.append("c.country_strategy=?"); params.append(cs_list[0])
+        elif len(cs_list) > 1:
+            placeholders = ','.join(['?'] * len(cs_list))
+            where.append(f"c.country_strategy IN ({placeholders})"); params.extend(cs_list)
+
     if seniority: where.append("c.seniority=?"); params.append(seniority)
     if industry: where.append("c.industry LIKE ?"); params.append(f"%{industry}%")
-    if email_status: where.append("c.email_status=?"); params.append(email_status)
 
-    # Filter by campaign using junction table
+    if email_status:
+        es_list = [s.strip() for s in email_status.split(',') if s.strip()]
+        if len(es_list) == 1:
+            where.append("c.email_status=?"); params.append(es_list[0])
+        elif len(es_list) > 1:
+            placeholders = ','.join(['?'] * len(es_list))
+            where.append(f"c.email_status IN ({placeholders})"); params.extend(es_list)
+
+    # Filter by campaign using junction table (supports multi-select)
     if campaigns:
+        camp_list = [c.strip() for c in campaigns.split(',') if c.strip()]
         joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
-        where.append("camp.name = ?")
-        params.append(campaigns)
+        if len(camp_list) == 1:
+            where.append("camp.name = ?"); params.append(camp_list[0])
+        else:
+            placeholders = ','.join(['?'] * len(camp_list))
+            where.append(f"camp.name IN ({placeholders})"); params.extend(camp_list)
 
-    # Filter by outreach list using junction table
+    # Filter by outreach list using junction table (supports multi-select)
     if outreach_lists:
+        list_list = [l.strip() for l in outreach_lists.split(',') if l.strip()]
         joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
-        where.append("ol.name = ?")
-        params.append(outreach_lists)
+        if len(list_list) == 1:
+            where.append("ol.name = ?"); params.append(list_list[0])
+        else:
+            placeholders = ','.join(['?'] * len(list_list))
+            where.append(f"ol.name IN ({placeholders})"); params.extend(list_list)
 
     where_sql = " AND ".join(where)
     joins_sql = " ".join(joins)
@@ -765,19 +797,59 @@ def bulk_update(req: BulkUpdateRequest):
         if f.get('search'):
             where.append("(c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.company LIKE ? OR c.title LIKE ?)")
             s = f"%{f['search']}%"; params.extend([s]*5)
-        if f.get('status'): where.append("c.status=?"); params.append(f['status'])
-        if f.get('email_status'): where.append("c.email_status=?"); params.append(f['email_status'])
-        # Support both singular and plural filter keys for campaigns
+
+        # Handle multi-select status filter
+        if f.get('status'):
+            status_val = f['status']
+            status_list = [s.strip() for s in status_val.split(',') if s.strip()] if isinstance(status_val, str) else status_val
+            if len(status_list) == 1:
+                where.append("c.status=?"); params.append(status_list[0])
+            elif len(status_list) > 1:
+                ph = ','.join(['?'] * len(status_list))
+                where.append(f"c.status IN ({ph})"); params.extend(status_list)
+
+        # Handle multi-select email_status filter
+        if f.get('email_status'):
+            es_val = f['email_status']
+            es_list = [s.strip() for s in es_val.split(',') if s.strip()] if isinstance(es_val, str) else es_val
+            if len(es_list) == 1:
+                where.append("c.email_status=?"); params.append(es_list[0])
+            elif len(es_list) > 1:
+                ph = ','.join(['?'] * len(es_list))
+                where.append(f"c.email_status IN ({ph})"); params.extend(es_list)
+
+        # Support both singular and plural filter keys for campaigns (multi-select)
         campaign_filter = f.get('campaign') or f.get('campaigns')
         if campaign_filter:
+            camp_list = [c.strip() for c in campaign_filter.split(',') if c.strip()] if isinstance(campaign_filter, str) else campaign_filter
             joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
-            where.append("camp.name=?"); params.append(campaign_filter)
-        # Support both singular and plural filter keys for outreach lists
+            if len(camp_list) == 1:
+                where.append("camp.name=?"); params.append(camp_list[0])
+            else:
+                ph = ','.join(['?'] * len(camp_list))
+                where.append(f"camp.name IN ({ph})"); params.extend(camp_list)
+
+        # Support both singular and plural filter keys for outreach lists (multi-select)
         list_filter = f.get('outreach_list') or f.get('outreach_lists')
         if list_filter:
+            list_list = [l.strip() for l in list_filter.split(',') if l.strip()] if isinstance(list_filter, str) else list_filter
             joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
-            where.append("ol.name=?"); params.append(list_filter)
-        if f.get('country_strategy'): where.append("c.country_strategy=?"); params.append(f['country_strategy'])
+            if len(list_list) == 1:
+                where.append("ol.name=?"); params.append(list_list[0])
+            else:
+                ph = ','.join(['?'] * len(list_list))
+                where.append(f"ol.name IN ({ph})"); params.extend(list_list)
+
+        # Handle multi-select country_strategy filter
+        if f.get('country_strategy'):
+            cs_val = f['country_strategy']
+            cs_list = [s.strip() for s in cs_val.split(',') if s.strip()] if isinstance(cs_val, str) else cs_val
+            if len(cs_list) == 1:
+                where.append("c.country_strategy=?"); params.append(cs_list[0])
+            elif len(cs_list) > 1:
+                ph = ','.join(['?'] * len(cs_list))
+                where.append(f"c.country_strategy IN ({ph})"); params.extend(cs_list)
+
         if f.get('country'): where.append("c.company_country=?"); params.append(f['country'])
         if f.get('seniority'): where.append("c.seniority=?"); params.append(f['seniority'])
         if f.get('industry'): where.append("c.industry=?"); params.append(f['industry'])
