@@ -1089,44 +1089,75 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 }
 
 /* Templates Toolbar */
+/* ===========================================
+   UNIFIED TOOLBAR DESIGN - Linear/Clay inspired
+   =========================================== */
+
 .templates-toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 24px;
-  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.templates-toolbar .search-box {
+  padding: 8px 14px;
+  max-width: 320px;
+}
+
+.templates-toolbar .search-box input {
+  font-size: 13px;
 }
 
 .template-filters {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
 }
 
-/* Unified filter-select style (matches MultiSelect) */
-.filter-select {
-  height: 38px;
+/* Compact filter styling for toolbars */
+.template-filters .multi-select-trigger,
+.campaign-filters .multi-select-trigger {
+  height: 34px;
+  min-height: 34px;
   padding: 0 12px;
-  padding-right: 32px;
+  font-size: 13px;
+  background: var(--bg-2);
+  border-color: var(--border);
+  white-space: nowrap;
+}
+
+.template-filters .multi-select-trigger:hover,
+.campaign-filters .multi-select-trigger:hover {
   background: var(--bg-3);
+  border-color: var(--text-3);
+}
+
+/* Unified filter-select style */
+.filter-select {
+  height: 34px;
+  padding: 0 10px;
+  padding-right: 28px;
+  background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: var(--text-1);
-  font-size: 13px;
-  font-weight: 400;
+  font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
-  min-width: 130px;
+  min-width: 100px;
   transition: all 0.15s ease;
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236D758F' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236D758F' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 10px center;
+  background-position: right 8px center;
 }
 
 .filter-select:hover {
+  background: var(--bg-3);
   border-color: var(--text-3);
 }
 
@@ -1136,14 +1167,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   box-shadow: 0 0 0 2px var(--coral-light);
 }
 
-/* MultiSelect in template filters */
-.template-filters .multi-select-container {
-  min-width: 140px;
-}
-
-.template-filters .multi-select-trigger {
-  height: 38px;
-  min-height: 38px;
+/* Separator between filters and view toggle */
+.filter-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 4px;
 }
 
 /* Loading State */
@@ -1218,32 +1247,40 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 /* View Toggle */
 .view-toggle {
   display: flex;
-  background: var(--bg-3);
+  background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .view-toggle-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 12px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   background: transparent;
   border: none;
-  color: var(--text-2);
+  color: var(--text-3);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s ease;
 }
 
 .view-toggle-btn:hover {
   color: var(--coral);
-  background: var(--bg-2);
+  background: var(--bg-3);
 }
 
 .view-toggle-btn.active {
   background: var(--coral);
   color: white;
+}
+
+.view-toggle-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Templates List View */
@@ -2573,22 +2610,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
-.campaign-filters {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.campaign-filters .multi-select-container {
-  min-width: 140px;
-}
-
-.campaign-filters .multi-select-trigger {
-  height: 38px;
-  min-height: 38px;
-}
-
 /* Campaigns List V2 */
 .campaigns-list-v2 { display: flex; flex-direction: column; gap: 12px; }
 
@@ -3027,14 +3048,23 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 .campaigns-toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 24px;
-  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
-.campaigns-filters {
+.campaigns-toolbar .search-box {
+  padding: 8px 14px;
+  max-width: 320px;
+}
+
+.campaigns-toolbar .search-box input {
+  font-size: 13px;
+}
+
+.campaign-filters {
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
 }
 
@@ -3693,7 +3723,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 
 .multi-select-container {
   position: relative;
-  width: 100%;
+  min-width: fit-content;
 }
 
 .multi-select-trigger {
@@ -3709,6 +3739,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   cursor: pointer;
   transition: all 0.15s ease;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .multi-select-trigger:hover {
@@ -3724,6 +3755,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   color: var(--text-2);
   font-size: 13px;
   font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .multi-select-tags {
@@ -4219,6 +4253,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 
 .filter-group-v2 .multi-select-container {
   width: 100%;
+  min-width: 0;
 }
 
 /* Active Filters Bar */
@@ -4591,19 +4626,33 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   color: var(--coral);
 }
 
-.view-delete-btn {
-  padding: 12px 14px;
-  background: transparent;
-  border: none;
-  border-left: 1px solid var(--border-light);
-  color: var(--text-3);
-  cursor: pointer;
+.view-item-actions {
   display: flex;
   align-items: center;
+  gap: 2px;
+  padding-right: 8px;
+}
+
+.view-action-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
   transition: all 0.15s;
 }
 
-.view-delete-btn:hover {
+.view-action-btn:hover {
+  background: var(--coral-light);
+  color: var(--coral);
+}
+
+.view-action-btn.danger:hover {
   background: var(--error-light);
   color: var(--error);
 }
@@ -5379,6 +5428,25 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   .campaigns-stats { flex-wrap: wrap; }
   .campaign-stat-card { flex: 1; min-width: 160px; }
   .campaign-metrics-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* Toolbar responsive - allow wrapping at 1200px */
+  .templates-toolbar,
+  .campaigns-toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .templates-toolbar .search-box,
+  .campaigns-toolbar .search-box {
+    min-width: 200px;
+    flex: 1;
+  }
+
+  .template-filters,
+  .campaign-filters {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
 }
 
 @media (max-width: 768px) {

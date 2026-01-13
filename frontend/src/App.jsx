@@ -883,13 +883,42 @@ const ContactsPage = () => {
   };
 
   const loadView = (view) => {
-    setFilters(view.filters || {});
+    // Convert old string-based filters to new array format
+    const convertedFilters = {};
+    const arrayFilterKeys = ['status', 'email_status', 'country_strategy', 'campaigns', 'outreach_lists'];
+    Object.entries(view.filters || {}).forEach(([key, value]) => {
+      if (arrayFilterKeys.includes(key)) {
+        // Convert string to array if needed
+        if (typeof value === 'string' && value) {
+          convertedFilters[key] = [value];
+        } else if (Array.isArray(value)) {
+          convertedFilters[key] = value;
+        } else {
+          convertedFilters[key] = [];
+        }
+      } else {
+        convertedFilters[key] = value;
+      }
+    });
+    setFilters(convertedFilters);
     setVisibleColumns(view.visibleColumns || allColumns.filter(c => c.default).map(c => c.id));
     setSearch(view.search || '');
     if (view.sortBy) setSortBy(view.sortBy);
     if (view.sortOrder) setSortOrder(view.sortOrder);
     setPage(1);
+    setShowViewsDropdown(false);
     addToast(`Loaded view: ${view.name}`, 'success');
+  };
+
+  const updateView = (viewId) => {
+    const updated = savedViews.map(v =>
+      v.id === viewId
+        ? { ...v, filters: {...filters}, visibleColumns: [...visibleColumns], search, sortBy, sortOrder }
+        : v
+    );
+    setSavedViews(updated);
+    localStorage.setItem('deduply_saved_views', JSON.stringify(updated));
+    addToast('View updated', 'success');
   };
 
   const deleteView = (viewId) => {
@@ -977,10 +1006,13 @@ const ContactsPage = () => {
                       <div className="views-empty">No saved views yet</div>
                     ) : savedViews.map(v => (
                       <div key={v.id} className="views-dropdown-item">
-                        <button className="view-load-btn" onClick={() => { loadView(v); setShowViewsDropdown(false); }}>
+                        <button className="view-load-btn" onClick={() => loadView(v)}>
                           <Eye size={14} /><span>{v.name}</span>
                         </button>
-                        <button className="view-delete-btn" onClick={() => deleteView(v.id)}><Trash2 size={14} /></button>
+                        <div className="view-item-actions">
+                          <button className="view-action-btn" onClick={() => updateView(v.id)} title="Update with current filters"><RefreshCw size={13} /></button>
+                          <button className="view-action-btn danger" onClick={() => deleteView(v.id)} title="Delete view"><Trash2 size={13} /></button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2050,10 +2082,15 @@ const CampaignsPage = () => {
   const [expandedCampaign, setExpandedCampaign] = useState(null);
   const [campaignDetails, setCampaignDetails] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
-  const [filterStatus, setFilterStatus] = useState('');
+  const [filterStatuses, setFilterStatuses] = useState([]);
   const [filterCountries, setFilterCountries] = useState([]);
   const [editingSettings, setEditingSettings] = useState(null);
 
+  const statusOptions = [
+    { id: 'Active', name: 'Active' },
+    { id: 'Paused', name: 'Paused' },
+    { id: 'Completed', name: 'Completed' }
+  ];
   const countryOptions = [
     { id: 'Mexico', name: 'Mexico' },
     { id: 'United States', name: 'United States' },
@@ -2092,7 +2129,7 @@ const CampaignsPage = () => {
   const handleDelete = async (id) => { if (!window.confirm('Delete this campaign?')) return; try { await api.delete(`/campaigns/${id}`); addToast('Campaign deleted', 'success'); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
 
   const filteredCampaigns = campaigns.filter(c => {
-    if (filterStatus && c.status !== filterStatus) return false;
+    if (filterStatuses.length > 0 && !filterStatuses.includes(c.status)) return false;
     if (filterCountries.length > 0 && !filterCountries.includes(c.country)) return false;
     return true;
   });
@@ -2156,12 +2193,12 @@ const CampaignsPage = () => {
     <div className="campaigns-toolbar">
       <div className="search-box"><Search size={18} /><input type="text" placeholder="Search campaigns..." value={search} onChange={e => setSearch(e.target.value)} /></div>
       <div className="campaign-filters">
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="filter-select">
-          <option value="">All Status</option>
-          <option value="Active">Active</option>
-          <option value="Paused">Paused</option>
-          <option value="Completed">Completed</option>
-        </select>
+        <MultiSelect
+          options={statusOptions}
+          value={filterStatuses}
+          onChange={setFilterStatuses}
+          placeholder="All Statuses"
+        />
         <MultiSelect
           options={countryOptions}
           value={filterCountries}
@@ -2170,6 +2207,27 @@ const CampaignsPage = () => {
         />
       </div>
     </div>
+
+    {/* Filter Chips */}
+    {(filterStatuses.length > 0 || filterCountries.length > 0) && (
+      <div className="filter-chips">
+        {filterStatuses.map(status => (
+          <span key={status} className="filter-chip">
+            {status}
+            <button onClick={() => setFilterStatuses(filterStatuses.filter(s => s !== status))}><X size={12} /></button>
+          </span>
+        ))}
+        {filterCountries.map(country => (
+          <span key={country} className="filter-chip">
+            {country}
+            <button onClick={() => setFilterCountries(filterCountries.filter(c => c !== country))}><X size={12} /></button>
+          </span>
+        ))}
+        <button className="filter-chip-clear" onClick={() => { setFilterStatuses([]); setFilterCountries([]); }}>
+          Clear all
+        </button>
+      </div>
+    )}
 
     {loading ? (
       <div className="loading-state"><Loader2 className="spin" size={32} /><span>Loading campaigns...</span></div>
