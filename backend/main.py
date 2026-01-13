@@ -766,12 +766,17 @@ def bulk_update(req: BulkUpdateRequest):
             where.append("(c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.company LIKE ? OR c.title LIKE ?)")
             s = f"%{f['search']}%"; params.extend([s]*5)
         if f.get('status'): where.append("c.status=?"); params.append(f['status'])
-        if f.get('campaign'):
+        if f.get('email_status'): where.append("c.email_status=?"); params.append(f['email_status'])
+        # Support both singular and plural filter keys for campaigns
+        campaign_filter = f.get('campaign') or f.get('campaigns')
+        if campaign_filter:
             joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
-            where.append("camp.name=?"); params.append(f['campaign'])
-        if f.get('outreach_list'):
+            where.append("camp.name=?"); params.append(campaign_filter)
+        # Support both singular and plural filter keys for outreach lists
+        list_filter = f.get('outreach_list') or f.get('outreach_lists')
+        if list_filter:
             joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
-            where.append("ol.name=?"); params.append(f['outreach_list'])
+            where.append("ol.name=?"); params.append(list_filter)
         if f.get('country_strategy'): where.append("c.country_strategy=?"); params.append(f['country_strategy'])
         if f.get('country'): where.append("c.company_country=?"); params.append(f['country'])
         if f.get('seniority'): where.append("c.seniority=?"); params.append(f['seniority'])
@@ -798,28 +803,48 @@ def bulk_update(req: BulkUpdateRequest):
         placeholders = ','.join(['?'] * len(contact_ids))
         conn.execute(f"DELETE FROM contacts WHERE id IN ({placeholders})", contact_ids)
         updated = len(contact_ids)
-    # Handle campaigns_assigned
+    # Handle campaigns_assigned - optimized for bulk operations
     elif field == 'campaigns_assigned':
-        for cid in contact_ids:
-            if action == 'add' and value:
-                add_contact_campaign(conn, cid, value)
-            elif action == 'remove' and value:
-                remove_contact_campaign(conn, cid, value)
-            elif action == 'set':
+        placeholders = ','.join(['?'] * len(contact_ids))
+        if action == 'remove' and value:
+            # Bulk remove: single query to delete campaign associations
+            camp = conn.execute("SELECT id FROM campaigns WHERE name=?", (value,)).fetchone()
+            if camp:
+                conn.execute(f"DELETE FROM contact_campaigns WHERE contact_id IN ({placeholders}) AND campaign_id=?", contact_ids + [camp[0]])
+        elif action == 'add' and value:
+            # Bulk add: ensure campaign exists, then bulk insert
+            conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (value,))
+            camp = conn.execute("SELECT id FROM campaigns WHERE name=?", (value,)).fetchone()
+            if camp:
+                for cid in contact_ids:
+                    conn.execute("INSERT OR IGNORE INTO contact_campaigns (contact_id, campaign_id) VALUES (?, ?)", (cid, camp[0]))
+        elif action == 'set':
+            for cid in contact_ids:
                 set_contact_campaigns(conn, cid, value)
-            conn.execute("UPDATE contacts SET updated_at=? WHERE id=?", (now, cid))
-            updated += 1
-    # Handle outreach_lists
+        # Bulk update timestamps
+        conn.execute(f"UPDATE contacts SET updated_at=? WHERE id IN ({placeholders})", [now] + contact_ids)
+        updated = len(contact_ids)
+    # Handle outreach_lists - optimized for bulk operations
     elif field == 'outreach_lists':
-        for cid in contact_ids:
-            if action == 'add' and value:
-                add_contact_list(conn, cid, value)
-            elif action == 'remove' and value:
-                remove_contact_list(conn, cid, value)
-            elif action == 'set':
+        placeholders = ','.join(['?'] * len(contact_ids))
+        if action == 'remove' and value:
+            # Bulk remove: single query to delete list associations
+            lst = conn.execute("SELECT id FROM outreach_lists WHERE name=?", (value,)).fetchone()
+            if lst:
+                conn.execute(f"DELETE FROM contact_lists WHERE contact_id IN ({placeholders}) AND list_id=?", contact_ids + [lst[0]])
+        elif action == 'add' and value:
+            # Bulk add: ensure list exists, then bulk insert
+            conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (value,))
+            lst = conn.execute("SELECT id FROM outreach_lists WHERE name=?", (value,)).fetchone()
+            if lst:
+                for cid in contact_ids:
+                    conn.execute("INSERT OR IGNORE INTO contact_lists (contact_id, list_id) VALUES (?, ?)", (cid, lst[0]))
+        elif action == 'set':
+            for cid in contact_ids:
                 set_contact_lists(conn, cid, value)
-            conn.execute("UPDATE contacts SET updated_at=? WHERE id=?", (now, cid))
-            updated += 1
+        # Bulk update timestamps
+        conn.execute(f"UPDATE contacts SET updated_at=? WHERE id IN ({placeholders})", [now] + contact_ids)
+        updated = len(contact_ids)
     # Handle simple field updates
     else:
         allowed_fields = ['status', 'email_status', 'country_strategy', 'seniority', 'company_country', 'industry', 'title', 'company', 'first_name', 'last_name', 'notes']
