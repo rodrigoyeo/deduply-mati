@@ -717,6 +717,7 @@ body {
 .event-tag.valid { background: var(--success-light); color: var(--success); }
 .event-tag.invalid { background: var(--error-light); color: var(--error); }
 .event-tag.risky { background: rgba(245, 158, 11, 0.15); color: #d97706; }
+.event-tag.interest { background: rgba(16, 185, 129, 0.15); color: #059669; }
 .webhook-info { padding-top: 16px; border-top: 1px solid var(--border); }
 .webhook-info p { font-size: 13px; color: var(--text-2); margin-bottom: 12px; line-height: 1.6; }
 .webhook-info pre { padding: 14px 16px; background: var(--navy); color: #a5b4fc; border-radius: var(--radius-md); font-size: 12px; font-family: 'SF Mono', monospace; overflow-x: auto; line-height: 1.5; }

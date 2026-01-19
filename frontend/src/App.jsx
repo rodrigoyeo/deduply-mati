@@ -3560,15 +3560,16 @@ const SettingsPage = () => {
               <span className="event-tag">clicked</span>
               <span className="event-tag">replied</span>
               <span className="event-tag">bounced</span>
+              <span className="event-tag interest">lead_interested</span>
+              <span className="event-tag interest">lead_not_interested</span>
             </div>
             <div className="webhook-info">
-              <p><strong>What it does:</strong> Automatically updates campaign metrics and contact status based on email engagement events.</p>
+              <p><strong>What it does:</strong> Updates campaign metrics, contact status, and interest tags based on email engagement events.</p>
               <p><strong>Payload format:</strong></p>
               <pre>{`{
-  "event": "opened",
-  "email": "user@example.com",
-  "campaign_name": "Campaign Name",
-  "template_id": 123 // optional
+  "event": "LEAD_INTERESTED",
+  "lead_email": "user@example.com",
+  "campaign_name": "Campaign Name"
 }`}</pre>
             </div>
           </div>
