@@ -2073,61 +2073,68 @@ async def reachinbox_webhook_verify():
 
 @app.post("/webhook/reachinbox")
 async def reachinbox_webhook(request: Request):
-    try: payload = await request.json()
-    except: payload = {}
-    conn = get_db()
-    event_type = payload.get('event', payload.get('type', payload.get('event_type', 'unknown')))
-    email = payload.get('lead_email', payload.get('email', payload.get('to', payload.get('recipient', payload.get('recipient_email')))))
-    campaign_name = payload.get('campaign_name', payload.get('campaign', payload.get('campaignName', payload.get('sequence_name'))))
-    template_id = payload.get('template_id', payload.get('templateId', payload.get('step_id')))
-    el = event_type.lower().strip()
-    normalized_event = 'unknown'
-    if 'sent' in el or 'deliver' in el: normalized_event = 'sent'
-    elif 'open' in el: normalized_event = 'opened'
-    elif 'click' in el: normalized_event = 'clicked'
-    elif 'repl' in el or 'response' in el: normalized_event = 'replied'
-    elif 'bounce' in el: normalized_event = 'bounced'
-    elif 'unsub' in el: normalized_event = 'unsubscribed'
-    elif 'fail' in el or 'error' in el: normalized_event = 'failed'
-    elif el == 'lead_interested': normalized_event = 'lead_interested'
-    elif el == 'lead_not_interested': normalized_event = 'lead_not_interested'
-    conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, 1)""",
-        ('reachinbox', normalized_event, email, campaign_name, template_id, json.dumps(payload)))
-    campaign_id = None
-    if campaign_name:
-        camp = conn.execute("SELECT id FROM campaigns WHERE LOWER(name) = LOWER(?) OR name LIKE ?", (campaign_name, f"%{campaign_name}%")).fetchone()
-        if camp:
-            campaign_id = camp[0]
-            if normalized_event == 'sent': conn.execute("UPDATE campaigns SET emails_sent=emails_sent+1 WHERE id=?", (campaign_id,))
-            elif normalized_event == 'opened': conn.execute("UPDATE campaigns SET emails_opened=emails_opened+1 WHERE id=?", (campaign_id,))
-            elif normalized_event == 'clicked': conn.execute("UPDATE campaigns SET emails_clicked=emails_clicked+1 WHERE id=?", (campaign_id,))
-            elif normalized_event == 'replied': conn.execute("UPDATE campaigns SET emails_replied=emails_replied+1 WHERE id=?", (campaign_id,))
-            elif normalized_event == 'bounced': conn.execute("UPDATE campaigns SET emails_bounced=emails_bounced+1 WHERE id=?", (campaign_id,))
-            recalc_rates(campaign_id, conn)
-    if template_id and campaign_id:
-        tc = conn.execute("SELECT id FROM template_campaigns WHERE template_id=? AND campaign_id=?", (template_id, campaign_id)).fetchone()
-        if tc:
-            if normalized_event == 'sent': conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-            elif normalized_event == 'opened': conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-            elif normalized_event == 'replied': conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-            recalc_template_rates(template_id, conn)
-    if email:
-        contact = conn.execute("SELECT id, status FROM contacts WHERE LOWER(email)=?", (email.lower(),)).fetchone()
-        if contact:
-            if normalized_event == 'sent':
-                conn.execute("UPDATE contacts SET times_contacted=times_contacted+1, last_contacted_at=?, status=CASE WHEN status='Lead' THEN 'Contacted' ELSE status END WHERE id=?", (datetime.now().isoformat(), contact[0]))
-            elif normalized_event == 'replied':
-                conn.execute("UPDATE contacts SET status='Engaged' WHERE id=? AND status IN ('Lead','Contacted')", (contact[0],))
-            elif normalized_event == 'bounced':
-                conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact[0],))
-            elif normalized_event == 'unsubscribed':
-                conn.execute("UPDATE contacts SET status='Unsubscribed' WHERE id=?", (contact[0],))
-            elif normalized_event == 'lead_interested':
-                conn.execute("UPDATE contacts SET status='Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
-            elif normalized_event == 'lead_not_interested':
-                conn.execute("UPDATE contacts SET status='Not Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
-    conn.commit(); conn.close()
-    return {"status": "ok", "message": "Processed", "event": normalized_event, "campaign_matched": campaign_id is not None, "contact_matched": email is not None}
+    try:
+        payload = await request.json()
+    except:
+        payload = {}
+    try:
+        conn = get_db()
+        event_type = payload.get('event', payload.get('type', payload.get('event_type', 'unknown')))
+        email = payload.get('lead_email', payload.get('email', payload.get('to', payload.get('recipient', payload.get('recipient_email')))))
+        campaign_name = payload.get('campaign_name', payload.get('campaign', payload.get('campaignName', payload.get('sequence_name'))))
+        template_id = payload.get('template_id', payload.get('templateId', payload.get('step_id')))
+        el = event_type.lower().strip()
+        normalized_event = 'unknown'
+        if 'sent' in el or 'deliver' in el: normalized_event = 'sent'
+        elif 'open' in el: normalized_event = 'opened'
+        elif 'click' in el: normalized_event = 'clicked'
+        elif 'repl' in el or 'response' in el: normalized_event = 'replied'
+        elif 'bounce' in el: normalized_event = 'bounced'
+        elif 'unsub' in el: normalized_event = 'unsubscribed'
+        elif 'fail' in el or 'error' in el: normalized_event = 'failed'
+        elif el == 'lead_interested': normalized_event = 'lead_interested'
+        elif el == 'lead_not_interested': normalized_event = 'lead_not_interested'
+        conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, 1)""",
+            ('reachinbox', normalized_event, email, campaign_name, template_id, json.dumps(payload)))
+        campaign_id = None
+        if campaign_name:
+            camp = conn.execute("SELECT id FROM campaigns WHERE LOWER(name) = LOWER(?) OR name LIKE ?", (campaign_name, f"%{campaign_name}%")).fetchone()
+            if camp:
+                campaign_id = camp[0]
+                if normalized_event == 'sent': conn.execute("UPDATE campaigns SET emails_sent=emails_sent+1 WHERE id=?", (campaign_id,))
+                elif normalized_event == 'opened': conn.execute("UPDATE campaigns SET emails_opened=emails_opened+1 WHERE id=?", (campaign_id,))
+                elif normalized_event == 'clicked': conn.execute("UPDATE campaigns SET emails_clicked=emails_clicked+1 WHERE id=?", (campaign_id,))
+                elif normalized_event == 'replied': conn.execute("UPDATE campaigns SET emails_replied=emails_replied+1 WHERE id=?", (campaign_id,))
+                elif normalized_event == 'bounced': conn.execute("UPDATE campaigns SET emails_bounced=emails_bounced+1 WHERE id=?", (campaign_id,))
+                recalc_rates(campaign_id, conn)
+        if template_id and campaign_id:
+            tc = conn.execute("SELECT id FROM template_campaigns WHERE template_id=? AND campaign_id=?", (template_id, campaign_id)).fetchone()
+            if tc:
+                if normalized_event == 'sent': conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+                elif normalized_event == 'opened': conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+                elif normalized_event == 'replied': conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+                recalc_template_rates(template_id, conn)
+        if email:
+            contact = conn.execute("SELECT id, status FROM contacts WHERE LOWER(email)=?", (email.lower(),)).fetchone()
+            if contact:
+                if normalized_event == 'sent':
+                    conn.execute("UPDATE contacts SET times_contacted=times_contacted+1, last_contacted_at=?, status=CASE WHEN status='Lead' THEN 'Contacted' ELSE status END WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                elif normalized_event == 'replied':
+                    conn.execute("UPDATE contacts SET status='Engaged' WHERE id=? AND status IN ('Lead','Contacted')", (contact[0],))
+                elif normalized_event == 'bounced':
+                    conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact[0],))
+                elif normalized_event == 'unsubscribed':
+                    conn.execute("UPDATE contacts SET status='Unsubscribed' WHERE id=?", (contact[0],))
+                elif normalized_event == 'lead_interested':
+                    conn.execute("UPDATE contacts SET status='Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                elif normalized_event == 'lead_not_interested':
+                    conn.execute("UPDATE contacts SET status='Not Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+        conn.commit()
+        conn.close()
+        return {"status": "ok", "message": "Processed", "event": normalized_event, "campaign_matched": campaign_id is not None, "contact_matched": email is not None}
+    except Exception as e:
+        import traceback
+        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
 
 @app.post("/webhook/bulkemailchecker")
 async def bulkemailchecker_webhook(request: Request):
