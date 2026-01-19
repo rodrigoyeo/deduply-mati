@@ -2066,6 +2066,11 @@ def delete_list(list_id: int):
     conn.commit(); conn.close()
     return {"message": "Deleted"}
 
+@app.get("/webhook/reachinbox")
+async def reachinbox_webhook_verify():
+    """Verification endpoint for ReachInbox webhook setup"""
+    return {"status": "ok", "message": "Webhook endpoint active"}
+
 @app.post("/webhook/reachinbox")
 async def reachinbox_webhook(request: Request):
     try: payload = await request.json()
