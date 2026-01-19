@@ -654,7 +654,7 @@ const DashboardPage = () => {
             <div className="card funnel-card">
               <h3>Sales Funnel</h3>
               <div className="funnel-chart">
-                {['Lead', 'Contacted', 'Replied', 'Scheduled', 'Show', 'Qualified', 'Client'].map((stage, idx, arr) => {
+                {['Lead', 'Contacted', 'Replied', 'Interested', 'Scheduled', 'Show', 'Qualified', 'Client'].map((stage, idx, arr) => {
                   const count = funnelStats.funnel?.[stage] || 0;
                   const maxCount = Math.max(...Object.values(funnelStats.funnel || {}), 1);
                   const width = Math.max(20, (count / maxCount) * 100);

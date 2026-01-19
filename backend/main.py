@@ -1650,7 +1650,7 @@ def get_active_import_jobs():
 @app.get("/api/filters")
 def get_filters():
     conn = get_db()
-    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Scheduled', 'Show', 'No-Show', 'Qualified', 'Client', 'Not Interested', 'Bounced', 'Unsubscribed'],
+    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Interested', 'Scheduled', 'Show', 'No-Show', 'Qualified', 'Client', 'Not Interested', 'Bounced', 'Unsubscribed'],
             'countries': [r[0] for r in conn.execute("SELECT DISTINCT company_country FROM contacts WHERE company_country IS NOT NULL AND company_country != '' ORDER BY company_country")],
             'country_strategies': ['Mexico', 'United States', 'Germany', 'Spain'],
             'seniorities': [r[0] for r in conn.execute("SELECT DISTINCT seniority FROM contacts WHERE seniority IS NOT NULL AND seniority != '' ORDER BY seniority")],
@@ -2072,7 +2072,7 @@ async def reachinbox_webhook(request: Request):
     except: payload = {}
     conn = get_db()
     event_type = payload.get('event', payload.get('type', payload.get('event_type', 'unknown')))
-    email = payload.get('email', payload.get('to', payload.get('recipient', payload.get('recipient_email'))))
+    email = payload.get('lead_email', payload.get('email', payload.get('to', payload.get('recipient', payload.get('recipient_email')))))
     campaign_name = payload.get('campaign_name', payload.get('campaign', payload.get('campaignName', payload.get('sequence_name'))))
     template_id = payload.get('template_id', payload.get('templateId', payload.get('step_id')))
     el = event_type.lower().strip()
@@ -2084,6 +2084,8 @@ async def reachinbox_webhook(request: Request):
     elif 'bounce' in el: normalized_event = 'bounced'
     elif 'unsub' in el: normalized_event = 'unsubscribed'
     elif 'fail' in el or 'error' in el: normalized_event = 'failed'
+    elif el == 'lead_interested': normalized_event = 'lead_interested'
+    elif el == 'lead_not_interested': normalized_event = 'lead_not_interested'
     conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, 1)""",
         ('reachinbox', normalized_event, email, campaign_name, template_id, json.dumps(payload)))
     campaign_id = None
@@ -2115,6 +2117,10 @@ async def reachinbox_webhook(request: Request):
                 conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact[0],))
             elif normalized_event == 'unsubscribed':
                 conn.execute("UPDATE contacts SET status='Unsubscribed' WHERE id=?", (contact[0],))
+            elif normalized_event == 'lead_interested':
+                conn.execute("UPDATE contacts SET status='Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+            elif normalized_event == 'lead_not_interested':
+                conn.execute("UPDATE contacts SET status='Not Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
     conn.commit(); conn.close()
     return {"status": "ok", "message": "Processed", "event": normalized_event, "campaign_matched": campaign_id is not None, "contact_matched": email is not None}
 

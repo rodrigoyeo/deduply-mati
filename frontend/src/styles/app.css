@@ -193,13 +193,14 @@ body {
   min-width: 100px;
   transition: width 0.3s ease;
 }
-.funnel-stage-0 { background: linear-gradient(135deg, #FF6C5D 0%, #ff8577 100%); }
-.funnel-stage-1 { background: linear-gradient(135deg, #F59E0B 0%, #FBBF24 100%); }
-.funnel-stage-2 { background: linear-gradient(135deg, #05E2C1 0%, #34D399 100%); }
-.funnel-stage-3 { background: linear-gradient(135deg, #3B82F6 0%, #60A5FA 100%); }
-.funnel-stage-4 { background: linear-gradient(135deg, #8B5CF6 0%, #A78BFA 100%); }
-.funnel-stage-5 { background: linear-gradient(135deg, #EC4899 0%, #F472B6 100%); }
-.funnel-stage-6 { background: linear-gradient(135deg, #001C43 0%, #0F3460 100%); }
+.funnel-stage-0 { background: linear-gradient(135deg, #FF6C5D 0%, #ff8577 100%); } /* Lead - coral */
+.funnel-stage-1 { background: linear-gradient(135deg, #F59E0B 0%, #FBBF24 100%); } /* Contacted - orange */
+.funnel-stage-2 { background: linear-gradient(135deg, #05E2C1 0%, #34D399 100%); } /* Replied - teal */
+.funnel-stage-3 { background: linear-gradient(135deg, #10B981 0%, #6EE7B7 100%); } /* Interested - green */
+.funnel-stage-4 { background: linear-gradient(135deg, #3B82F6 0%, #60A5FA 100%); } /* Scheduled - blue */
+.funnel-stage-5 { background: linear-gradient(135deg, #8B5CF6 0%, #A78BFA 100%); } /* Show - purple */
+.funnel-stage-6 { background: linear-gradient(135deg, #EC4899 0%, #F472B6 100%); } /* Qualified - pink */
+.funnel-stage-7 { background: linear-gradient(135deg, #001C43 0%, #0F3460 100%); } /* Client - navy */
 .funnel-stage-name {
   font-size: 13px;
   font-weight: 600;
