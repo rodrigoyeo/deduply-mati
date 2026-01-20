@@ -654,7 +654,7 @@ const DashboardPage = () => {
             <div className="card funnel-card">
               <h3>Sales Funnel</h3>
               <div className="funnel-chart">
-                {['Lead', 'Contacted', 'Replied', 'Interested', 'Scheduled', 'Show', 'Qualified', 'Client'].map((stage, idx, arr) => {
+                {['Lead', 'Contacted', 'Replied', 'Interested', 'Meeting Booked', 'Qualified', 'Client'].map((stage, idx, arr) => {
                   const count = funnelStats.funnel?.[stage] || 0;
                   const maxCount = Math.max(...Object.values(funnelStats.funnel || {}), 1);
                   const width = Math.max(20, (count / maxCount) * 100);
@@ -819,8 +819,8 @@ const ContactsPage = () => {
     { id: 'Unknown', name: 'Unknown' }
   ];
   const countryStrategyOptions = (filterOptions?.country_strategies || []).map(c => ({ id: c, name: c }));
-  const campaignFilterOptions = (filterOptions?.campaigns || []).map(c => ({ id: c, name: c }));
-  const listFilterOptions = (filterOptions?.outreach_lists || []).map(l => ({ id: l, name: l }));
+  const campaignFilterOptions = [{ id: '__none__', name: 'No Campaign' }, ...(filterOptions?.campaigns || []).map(c => ({ id: c, name: c }))];
+  const listFilterOptions = [{ id: '__none__', name: 'No List' }, ...(filterOptions?.outreach_lists || []).map(l => ({ id: l, name: l }))];
 
   const fetchContacts = useCallback(async () => {
     setLoading(true);

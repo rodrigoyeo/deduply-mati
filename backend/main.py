@@ -583,22 +583,42 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
     # Filter by campaign using junction table (supports multi-select)
     if campaigns:
         camp_list = [c.strip() for c in campaigns.split(',') if c.strip()]
-        joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
-        if len(camp_list) == 1:
-            where.append("camp.name = ?"); params.append(camp_list[0])
+        if '__none__' in camp_list:
+            camp_list = [c for c in camp_list if c != '__none__']
+            if camp_list:
+                joins.append("LEFT JOIN contact_campaigns cc ON c.id = cc.contact_id LEFT JOIN campaigns camp ON cc.campaign_id = camp.id")
+                placeholders = ','.join(['?'] * len(camp_list))
+                where.append(f"(cc.campaign_id IS NULL OR camp.name IN ({placeholders}))"); params.extend(camp_list)
+            else:
+                joins.append("LEFT JOIN contact_campaigns cc ON c.id = cc.contact_id")
+                where.append("cc.campaign_id IS NULL")
         else:
-            placeholders = ','.join(['?'] * len(camp_list))
-            where.append(f"camp.name IN ({placeholders})"); params.extend(camp_list)
+            joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
+            if len(camp_list) == 1:
+                where.append("camp.name = ?"); params.append(camp_list[0])
+            else:
+                placeholders = ','.join(['?'] * len(camp_list))
+                where.append(f"camp.name IN ({placeholders})"); params.extend(camp_list)
 
     # Filter by outreach list using junction table (supports multi-select)
     if outreach_lists:
         list_list = [l.strip() for l in outreach_lists.split(',') if l.strip()]
-        joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
-        if len(list_list) == 1:
-            where.append("ol.name = ?"); params.append(list_list[0])
+        if '__none__' in list_list:
+            list_list = [l for l in list_list if l != '__none__']
+            if list_list:
+                joins.append("LEFT JOIN contact_lists cl ON c.id = cl.contact_id LEFT JOIN outreach_lists ol ON cl.list_id = ol.id")
+                placeholders = ','.join(['?'] * len(list_list))
+                where.append(f"(cl.list_id IS NULL OR ol.name IN ({placeholders}))"); params.extend(list_list)
+            else:
+                joins.append("LEFT JOIN contact_lists cl ON c.id = cl.contact_id")
+                where.append("cl.list_id IS NULL")
         else:
-            placeholders = ','.join(['?'] * len(list_list))
-            where.append(f"ol.name IN ({placeholders})"); params.extend(list_list)
+            joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
+            if len(list_list) == 1:
+                where.append("ol.name = ?"); params.append(list_list[0])
+            else:
+                placeholders = ','.join(['?'] * len(list_list))
+                where.append(f"ol.name IN ({placeholders})"); params.extend(list_list)
 
     where_sql = " AND ".join(where)
     joins_sql = " ".join(joins)
@@ -822,23 +842,49 @@ def bulk_update(req: BulkUpdateRequest):
         campaign_filter = f.get('campaign') or f.get('campaigns')
         if campaign_filter:
             camp_list = [c.strip() for c in campaign_filter.split(',') if c.strip()] if isinstance(campaign_filter, str) else campaign_filter
-            joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
-            if len(camp_list) == 1:
-                where.append("camp.name=?"); params.append(camp_list[0])
+            if '__none__' in camp_list:
+                # Filter for contacts with no campaign assigned
+                camp_list = [c for c in camp_list if c != '__none__']
+                if camp_list:
+                    # Has both __none__ and specific campaigns
+                    joins.append("LEFT JOIN contact_campaigns cc ON c.id = cc.contact_id LEFT JOIN campaigns camp ON cc.campaign_id = camp.id")
+                    ph = ','.join(['?'] * len(camp_list))
+                    where.append(f"(cc.campaign_id IS NULL OR camp.name IN ({ph}))"); params.extend(camp_list)
+                else:
+                    # Only __none__ selected
+                    joins.append("LEFT JOIN contact_campaigns cc ON c.id = cc.contact_id")
+                    where.append("cc.campaign_id IS NULL")
             else:
-                ph = ','.join(['?'] * len(camp_list))
-                where.append(f"camp.name IN ({ph})"); params.extend(camp_list)
+                joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
+                if len(camp_list) == 1:
+                    where.append("camp.name=?"); params.append(camp_list[0])
+                else:
+                    ph = ','.join(['?'] * len(camp_list))
+                    where.append(f"camp.name IN ({ph})"); params.extend(camp_list)
 
         # Support both singular and plural filter keys for outreach lists (multi-select)
         list_filter = f.get('outreach_list') or f.get('outreach_lists')
         if list_filter:
             list_list = [l.strip() for l in list_filter.split(',') if l.strip()] if isinstance(list_filter, str) else list_filter
-            joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
-            if len(list_list) == 1:
-                where.append("ol.name=?"); params.append(list_list[0])
+            if '__none__' in list_list:
+                # Filter for contacts with no list assigned
+                list_list = [l for l in list_list if l != '__none__']
+                if list_list:
+                    # Has both __none__ and specific lists
+                    joins.append("LEFT JOIN contact_lists cl ON c.id = cl.contact_id LEFT JOIN outreach_lists ol ON cl.list_id = ol.id")
+                    ph = ','.join(['?'] * len(list_list))
+                    where.append(f"(cl.list_id IS NULL OR ol.name IN ({ph}))"); params.extend(list_list)
+                else:
+                    # Only __none__ selected
+                    joins.append("LEFT JOIN contact_lists cl ON c.id = cl.contact_id")
+                    where.append("cl.list_id IS NULL")
             else:
-                ph = ','.join(['?'] * len(list_list))
-                where.append(f"ol.name IN ({ph})"); params.extend(list_list)
+                joins.append("JOIN contact_lists cl ON c.id = cl.contact_id JOIN outreach_lists ol ON cl.list_id = ol.id")
+                if len(list_list) == 1:
+                    where.append("ol.name=?"); params.append(list_list[0])
+                else:
+                    ph = ','.join(['?'] * len(list_list))
+                    where.append(f"ol.name IN ({ph})"); params.extend(list_list)
 
         # Handle multi-select country_strategy filter
         if f.get('country_strategy'):
@@ -1650,7 +1696,7 @@ def get_active_import_jobs():
 @app.get("/api/filters")
 def get_filters():
     conn = get_db()
-    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Interested', 'Scheduled', 'Show', 'No-Show', 'Qualified', 'Client', 'Not Interested', 'Bounced', 'Unsubscribed'],
+    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Interested', 'Meeting Booked', 'No-Show', 'Qualified', 'Client', 'Bounced'],
             'countries': [r[0] for r in conn.execute("SELECT DISTINCT company_country FROM contacts WHERE company_country IS NOT NULL AND company_country != '' ORDER BY company_country")],
             'country_strategies': ['Mexico', 'United States', 'Germany', 'Spain'],
             'seniorities': [r[0] for r in conn.execute("SELECT DISTINCT seniority FROM contacts WHERE seniority IS NOT NULL AND seniority != '' ORDER BY seniority")],
@@ -2120,15 +2166,11 @@ async def reachinbox_webhook(request: Request):
                 if normalized_event == 'sent':
                     conn.execute("UPDATE contacts SET times_contacted=times_contacted+1, last_contacted_at=?, status=CASE WHEN status='Lead' THEN 'Contacted' ELSE status END WHERE id=?", (datetime.now().isoformat(), contact[0]))
                 elif normalized_event == 'replied':
-                    conn.execute("UPDATE contacts SET status='Engaged' WHERE id=? AND status IN ('Lead','Contacted')", (contact[0],))
+                    conn.execute("UPDATE contacts SET status='Replied', updated_at=? WHERE id=? AND status IN ('Lead','Contacted')", (datetime.now().isoformat(), contact[0]))
                 elif normalized_event == 'bounced':
                     conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact[0],))
-                elif normalized_event == 'unsubscribed':
-                    conn.execute("UPDATE contacts SET status='Unsubscribed' WHERE id=?", (contact[0],))
                 elif normalized_event == 'lead_interested':
                     conn.execute("UPDATE contacts SET status='Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
-                elif normalized_event == 'lead_not_interested':
-                    conn.execute("UPDATE contacts SET status='Not Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
         conn.commit()
         conn.close()
         return {"status": "ok", "message": "Processed", "event": normalized_event, "campaign_matched": campaign_id is not None, "contact_matched": email is not None}
