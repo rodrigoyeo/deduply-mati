@@ -1696,7 +1696,7 @@ def get_active_import_jobs():
 @app.get("/api/filters")
 def get_filters():
     conn = get_db()
-    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Interested', 'Meeting Booked', 'No-Show', 'Qualified', 'Client', 'Bounced'],
+    opts = {'statuses': ['Lead', 'Contacted', 'Replied', 'Interested', 'Meeting Booked', 'No-Show', 'Qualified', 'Client', 'Not Interested', 'Bounced'],
             'countries': [r[0] for r in conn.execute("SELECT DISTINCT company_country FROM contacts WHERE company_country IS NOT NULL AND company_country != '' ORDER BY company_country")],
             'country_strategies': ['Mexico', 'United States', 'Germany', 'Spain'],
             'seniorities': [r[0] for r in conn.execute("SELECT DISTINCT seniority FROM contacts WHERE seniority IS NOT NULL AND seniority != '' ORDER BY seniority")],
@@ -2171,6 +2171,8 @@ async def reachinbox_webhook(request: Request):
                     conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact[0],))
                 elif normalized_event == 'lead_interested':
                     conn.execute("UPDATE contacts SET status='Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                elif normalized_event == 'lead_not_interested':
+                    conn.execute("UPDATE contacts SET status='Not Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
         conn.commit()
         conn.close()
         return {"status": "ok", "message": "Processed", "event": normalized_event, "campaign_matched": campaign_id is not None, "contact_matched": email is not None}
