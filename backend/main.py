@@ -2094,7 +2094,7 @@ async def reachinbox_webhook(request: Request):
         elif 'fail' in el or 'error' in el: normalized_event = 'failed'
         elif el == 'lead_interested': normalized_event = 'lead_interested'
         elif el == 'lead_not_interested': normalized_event = 'lead_not_interested'
-        conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, 1)""",
+        conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, TRUE)""",
             ('reachinbox', normalized_event, email, campaign_name, template_id, json.dumps(payload)))
         campaign_id = None
         if campaign_name:
@@ -2162,7 +2162,7 @@ async def bulkemailchecker_webhook(request: Request):
             if email_status == 'Invalid': conn.execute("UPDATE contacts SET status='Bounced' WHERE id=? AND status NOT IN ('Client', 'Opportunity')", (existing[0],))
             stats['processed'] += 1
         else: stats['not_found'] += 1
-    conn.execute("INSERT INTO webhook_events (source, event_type, email, payload, processed) VALUES (?, ?, ?, ?, 1)", ('bulkemailchecker', 'validation', None, json.dumps(payload)))
+    conn.execute("INSERT INTO webhook_events (source, event_type, email, payload, processed) VALUES (?, ?, ?, ?, TRUE)", ('bulkemailchecker', 'validation', None, json.dumps(payload)))
     conn.commit(); conn.close()
     return {"status": "ok", "message": f"Processed {stats['processed']} emails", "stats": stats}
 
@@ -2170,7 +2170,7 @@ async def bulkemailchecker_webhook(request: Request):
 async def generic_webhook(source: str, request: Request):
     try: payload = await request.json()
     except: payload = {}
-    conn = get_db(); conn.execute("INSERT INTO webhook_events (source, event_type, payload, processed) VALUES (?, ?, ?, 1)", (source, 'generic', json.dumps(payload))); conn.commit(); conn.close()
+    conn = get_db(); conn.execute("INSERT INTO webhook_events (source, event_type, payload, processed) VALUES (?, ?, ?, TRUE)", (source, 'generic', json.dumps(payload))); conn.commit(); conn.close()
     return {"status": "received"}
 
 @app.get("/api/webhooks")
