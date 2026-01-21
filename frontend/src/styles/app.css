@@ -1018,6 +1018,25 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   display: block;
 }
 
+/* Saved indicator animation */
+.metric-cell.saved {
+  position: relative;
+}
+.metric-cell .saved-check {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--success);
+  animation: fadeInOut 1.5s ease forwards;
+}
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translateY(-50%) scale(0.5); }
+  20% { opacity: 1; transform: translateY(-50%) scale(1); }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 @media (max-width: 1200px) {
   .dashboard-grid { grid-template-columns: 1fr; }
   .campaign-metrics { gap: 12px; }

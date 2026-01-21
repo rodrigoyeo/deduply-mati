@@ -2322,27 +2322,61 @@ const CampaignsPage = () => {
   </div>);
 };
 
-// Inline Editable Cell Component - Click to edit, auto-save on blur/Enter
-const InlineEditCell = ({ value, field, templateId, campaignId, onSaved, isHighlight }) => {
-  const [editing, setEditing] = useState(false);
-  const [tempValue, setTempValue] = useState(value);
-  const [saving, setSaving] = useState(false);
-  const inputRef = useRef(null);
+// Campaign Template Breakdown Component - Optimistic inline editing with debounced refresh
+const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }) => {
+  // Local state for optimistic updates - no page refresh needed
+  const [localData, setLocalData] = useState(() => {
+    const initial = {};
+    breakdown.forEach(step => {
+      step.variants.forEach(v => {
+        initial[v.id] = {
+          sent: v.sent || 0,
+          opened: v.opened || 0,
+          replied: v.replied || 0,
+          opportunities: v.opportunities || 0,
+          meetings: v.meetings || 0
+        };
+      });
+    });
+    return initial;
+  });
+  const [savingCells, setSavingCells] = useState({});
+  const [savedCells, setSavedCells] = useState({});
+  const refreshTimeoutRef = useRef(null);
 
+  // Debounced refresh - only refresh after 3 seconds of no edits
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    refreshTimeoutRef.current = setTimeout(() => {
+      if (onUpdate) onUpdate();
+    }, 3000);
+  }, [onUpdate]);
+
+  // Cleanup timeout on unmount
   useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editing]);
+    return () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+    };
+  }, []);
 
-  const save = async () => {
-    const newValue = parseInt(tempValue) || 0;
-    if (newValue === value) {
-      setEditing(false);
-      return;
-    }
-    setSaving(true);
+  // Calculate local totals
+  const getStepTotals = (stepVariants) => {
+    return stepVariants.reduce((acc, v) => {
+      const local = localData[v.id] || {};
+      return {
+        sent: acc.sent + (local.sent || 0),
+        opened: acc.opened + (local.opened || 0),
+        replied: acc.replied + (local.replied || 0),
+        opportunities: acc.opportunities + (local.opportunities || 0),
+        meetings: acc.meetings + (local.meetings || 0)
+      };
+    }, { sent: 0, opened: 0, replied: 0, opportunities: 0, meetings: 0 });
+  };
+
+  const saveCell = async (templateId, field, newValue) => {
+    const cellKey = `${templateId}-${field}`;
+    setSavingCells(prev => ({ ...prev, [cellKey]: true }));
+
     try {
       const res = await fetch(`${API}/campaigns/${campaignId}/templates/${templateId}/metrics`, {
         method: 'PUT',
@@ -2350,113 +2384,168 @@ const InlineEditCell = ({ value, field, templateId, campaignId, onSaved, isHighl
         body: JSON.stringify({ [field]: newValue })
       });
       if (!res.ok) throw new Error('Failed to save');
-      if (onSaved) onSaved();
+
+      // Show saved indicator briefly
+      setSavedCells(prev => ({ ...prev, [cellKey]: true }));
+      setTimeout(() => setSavedCells(prev => ({ ...prev, [cellKey]: false })), 1500);
+
+      // Schedule debounced refresh for totals
+      scheduleRefresh();
     } catch (err) {
-      setTempValue(value);
+      // Revert on error
+      addToast?.('Failed to save', 'error');
     } finally {
-      setSaving(false);
-      setEditing(false);
+      setSavingCells(prev => ({ ...prev, [cellKey]: false }));
     }
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      save();
-    } else if (e.key === 'Escape') {
+  const handleCellChange = (templateId, field, newValue) => {
+    // Optimistic update - instant UI feedback
+    const fieldMap = { times_sent: 'sent', times_opened: 'opened', times_replied: 'replied', opportunities: 'opportunities', meetings: 'meetings' };
+    const localField = fieldMap[field] || field;
+
+    setLocalData(prev => ({
+      ...prev,
+      [templateId]: { ...prev[templateId], [localField]: newValue }
+    }));
+
+    // Save in background
+    saveCell(templateId, field, newValue);
+  };
+
+  // Inline editable cell - now with optimistic updates
+  const EditableCell = ({ templateId, field, isHighlight }) => {
+    const fieldMap = { times_sent: 'sent', times_opened: 'opened', times_replied: 'replied', opportunities: 'opportunities', meetings: 'meetings' };
+    const localField = fieldMap[field] || field;
+    const value = localData[templateId]?.[localField] || 0;
+    const cellKey = `${templateId}-${field}`;
+    const isSaving = savingCells[cellKey];
+    const isSaved = savedCells[cellKey];
+
+    const [editing, setEditing] = useState(false);
+    const [tempValue, setTempValue] = useState(value);
+    const inputRef = useRef(null);
+
+    useEffect(() => {
+      if (editing && inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.select();
+      }
+    }, [editing]);
+
+    useEffect(() => {
       setTempValue(value);
-      setEditing(false);
-    } else if (e.key === 'Tab') {
-      save();
-    }
-  };
+    }, [value]);
 
-  if (editing) {
+    const commitEdit = () => {
+      const newValue = parseInt(tempValue) || 0;
+      setEditing(false);
+      if (newValue !== value) {
+        handleCellChange(templateId, field, newValue);
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitEdit();
+      } else if (e.key === 'Escape') {
+        setTempValue(value);
+        setEditing(false);
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        commitEdit();
+        // Find and focus next editable cell
+        const allInputs = document.querySelectorAll('.metric-cell.editable');
+        const currentIndex = Array.from(allInputs).findIndex(el => el.contains(inputRef.current?.parentElement));
+        const nextInput = allInputs[currentIndex + (e.shiftKey ? -1 : 1)];
+        if (nextInput) nextInput.click();
+      }
+    };
+
+    if (editing) {
+      return (
+        <td className={`metric-cell ${isHighlight ? 'highlight' : ''}`}>
+          <input
+            ref={inputRef}
+            type="number"
+            className="inline-edit-input"
+            value={tempValue}
+            onChange={e => setTempValue(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={handleKeyDown}
+            min="0"
+          />
+        </td>
+      );
+    }
+
     return (
-      <td className={`metric-cell ${isHighlight ? 'highlight' : ''}`}>
-        <input
-          ref={inputRef}
-          type="number"
-          className="inline-edit-input"
-          value={tempValue}
-          onChange={e => setTempValue(e.target.value)}
-          onBlur={save}
-          onKeyDown={handleKeyDown}
-          min="0"
-          disabled={saving}
-        />
+      <td
+        className={`metric-cell editable ${isHighlight ? 'highlight' : ''} ${isSaving ? 'saving' : ''} ${isSaved ? 'saved' : ''}`}
+        onClick={() => { setTempValue(value); setEditing(true); }}
+        title="Click to edit"
+      >
+        {isSaving ? <Loader2 className="spin" size={14} /> : value}
+        {isSaved && <Check size={12} className="saved-check" />}
       </td>
     );
-  }
-
-  return (
-    <td
-      className={`metric-cell editable ${isHighlight ? 'highlight' : ''} ${saving ? 'saving' : ''}`}
-      onClick={() => { setTempValue(value); setEditing(true); }}
-      title="Click to edit"
-    >
-      {saving ? <Loader2 className="spin" size={14} /> : (value || 0)}
-    </td>
-  );
-};
-
-// Campaign Template Breakdown Component - Inline editable metrics
-const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }) => {
-  const handleSaved = () => {
-    if (onUpdate) onUpdate();
   };
 
   return (
     <div className="template-breakdown">
       <div className="breakdown-header">
         <h4>Template Performance Breakdown</h4>
-        <span className="breakdown-hint">Click any number to edit - auto-saves when you click away or press Enter</span>
+        <span className="breakdown-hint">Click any number to edit instantly - changes save automatically</span>
       </div>
-      {breakdown.map((step, idx) => (
-        <div key={idx} className="breakdown-step">
-          <div className="breakdown-step-header">
-            <div>
-              <h5>{step.step_type}</h5>
-              <span className="step-variant-count">{step.variants.length} variant{step.variants.length !== 1 ? 's' : ''}</span>
+      {breakdown.map((step, idx) => {
+        const totals = getStepTotals(step.variants);
+        return (
+          <div key={idx} className="breakdown-step">
+            <div className="breakdown-step-header">
+              <div>
+                <h5>{step.step_type}</h5>
+                <span className="step-variant-count">{step.variants.length} variant{step.variants.length !== 1 ? 's' : ''}</span>
+              </div>
+              <div className="step-totals">
+                <span className="step-total">Sent: {totals.sent.toLocaleString()}</span>
+                <span className="step-total">Opened: {totals.opened.toLocaleString()}</span>
+                <span className="step-total">Replied: {totals.replied.toLocaleString()}</span>
+                <span className="step-total highlight">Opps: {totals.opportunities}</span>
+                <span className="step-total highlight">Meetings: {totals.meetings}</span>
+              </div>
             </div>
-            <div className="step-totals">
-              <span className="step-total">Sent: {step.step_metrics.sent}</span>
-              <span className="step-total">Opened: {step.step_metrics.opened}</span>
-              <span className="step-total">Replied: {step.step_metrics.replied}</span>
-              <span className="step-total highlight">Opps: {step.step_metrics.opportunities || 0}</span>
-              <span className="step-total highlight">Meetings: {step.step_metrics.meetings || 0}</span>
-            </div>
-          </div>
-          <div className="breakdown-variants">
-            <table className="variants-table">
-              <thead>
-                <tr>
-                  <th>Template</th>
-                  <th>Variant</th>
-                  <th>Sent</th>
-                  <th>Opened</th>
-                  <th>Replied</th>
-                  <th>Opps</th>
-                  <th>Meetings</th>
-                </tr>
-              </thead>
-              <tbody>
-                {step.variants.map(variant => (
-                  <tr key={variant.id}>
-                    <td><strong>{variant.name}</strong></td>
-                    <td><span className={`variant-badge variant-${variant.variant}`}>{variant.variant}</span></td>
-                    <InlineEditCell value={variant.sent || 0} field="times_sent" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} />
-                    <InlineEditCell value={variant.opened || 0} field="times_opened" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} />
-                    <InlineEditCell value={variant.replied || 0} field="times_replied" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} />
-                    <InlineEditCell value={variant.opportunities || 0} field="opportunities" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} isHighlight />
-                    <InlineEditCell value={variant.meetings || 0} field="meetings" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} isHighlight />
+            <div className="breakdown-variants">
+              <table className="variants-table">
+                <thead>
+                  <tr>
+                    <th>Template</th>
+                    <th>Variant</th>
+                    <th>Sent</th>
+                    <th>Opened</th>
+                    <th>Replied</th>
+                    <th>Opps</th>
+                    <th>Meetings</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {step.variants.map(variant => (
+                    <tr key={variant.id}>
+                      <td><strong>{variant.name}</strong></td>
+                      <td><span className={`variant-badge variant-${variant.variant}`}>{variant.variant}</span></td>
+                      <EditableCell templateId={variant.id} field="times_sent" />
+                      <EditableCell templateId={variant.id} field="times_opened" />
+                      <EditableCell templateId={variant.id} field="times_replied" />
+                      <EditableCell templateId={variant.id} field="opportunities" isHighlight />
+                      <EditableCell templateId={variant.id} field="meetings" isHighlight />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };
