@@ -2322,53 +2322,95 @@ const CampaignsPage = () => {
   </div>);
 };
 
-// Campaign Template Breakdown Component - Editable metrics
-const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }) => {
-  const [editingId, setEditingId] = useState(null);
-  const [editData, setEditData] = useState({});
+// Inline Editable Cell Component - Click to edit, auto-save on blur/Enter
+const InlineEditCell = ({ value, field, templateId, campaignId, onSaved, isHighlight }) => {
+  const [editing, setEditing] = useState(false);
+  const [tempValue, setTempValue] = useState(value);
   const [saving, setSaving] = useState(false);
+  const inputRef = useRef(null);
 
-  const startEdit = (variant) => {
-    setEditingId(variant.id);
-    setEditData({
-      times_sent: variant.sent || 0,
-      times_opened: variant.opened || 0,
-      times_replied: variant.replied || 0,
-      opportunities: variant.opportunities || 0,
-      meetings: variant.meetings || 0
-    });
-  };
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
 
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditData({});
-  };
-
-  const saveEdit = async (templateId) => {
+  const save = async () => {
+    const newValue = parseInt(tempValue) || 0;
+    if (newValue === value) {
+      setEditing(false);
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch(`${API}/campaigns/${campaignId}/templates/${templateId}/metrics`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editData)
+        body: JSON.stringify({ [field]: newValue })
       });
       if (!res.ok) throw new Error('Failed to save');
-      addToast('Metrics updated successfully', 'success');
-      setEditingId(null);
-      setEditData({});
-      if (onUpdate) onUpdate();
+      if (onSaved) onSaved();
     } catch (err) {
-      addToast('Failed to update metrics', 'error');
+      setTempValue(value);
     } finally {
       setSaving(false);
+      setEditing(false);
     }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      save();
+    } else if (e.key === 'Escape') {
+      setTempValue(value);
+      setEditing(false);
+    } else if (e.key === 'Tab') {
+      save();
+    }
+  };
+
+  if (editing) {
+    return (
+      <td className={`metric-cell ${isHighlight ? 'highlight' : ''}`}>
+        <input
+          ref={inputRef}
+          type="number"
+          className="inline-edit-input"
+          value={tempValue}
+          onChange={e => setTempValue(e.target.value)}
+          onBlur={save}
+          onKeyDown={handleKeyDown}
+          min="0"
+          disabled={saving}
+        />
+      </td>
+    );
+  }
+
+  return (
+    <td
+      className={`metric-cell editable ${isHighlight ? 'highlight' : ''} ${saving ? 'saving' : ''}`}
+      onClick={() => { setTempValue(value); setEditing(true); }}
+      title="Click to edit"
+    >
+      {saving ? <Loader2 className="spin" size={14} /> : (value || 0)}
+    </td>
+  );
+};
+
+// Campaign Template Breakdown Component - Inline editable metrics
+const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }) => {
+  const handleSaved = () => {
+    if (onUpdate) onUpdate();
   };
 
   return (
     <div className="template-breakdown">
       <div className="breakdown-header">
         <h4>Template Performance Breakdown</h4>
-        <span className="breakdown-hint">Click on a row to edit metrics</span>
+        <span className="breakdown-hint">Click any number to edit - auto-saves when you click away or press Enter</span>
       </div>
       {breakdown.map((step, idx) => (
         <div key={idx} className="breakdown-step">
@@ -2396,38 +2438,18 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
                   <th>Replied</th>
                   <th>Opps</th>
                   <th>Meetings</th>
-                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {step.variants.map(variant => (
-                  <tr key={variant.id} className={editingId === variant.id ? 'editing-row' : ''}>
+                  <tr key={variant.id}>
                     <td><strong>{variant.name}</strong></td>
                     <td><span className={`variant-badge variant-${variant.variant}`}>{variant.variant}</span></td>
-                    {editingId === variant.id ? (
-                      <>
-                        <td><input type="number" className="cell-input-sm" value={editData.times_sent} onChange={e => setEditData({...editData, times_sent: parseInt(e.target.value) || 0})} min="0" /></td>
-                        <td><input type="number" className="cell-input-sm" value={editData.times_opened} onChange={e => setEditData({...editData, times_opened: parseInt(e.target.value) || 0})} min="0" /></td>
-                        <td><input type="number" className="cell-input-sm" value={editData.times_replied} onChange={e => setEditData({...editData, times_replied: parseInt(e.target.value) || 0})} min="0" /></td>
-                        <td><input type="number" className="cell-input-sm highlight" value={editData.opportunities} onChange={e => setEditData({...editData, opportunities: parseInt(e.target.value) || 0})} min="0" /></td>
-                        <td><input type="number" className="cell-input-sm highlight" value={editData.meetings} onChange={e => setEditData({...editData, meetings: parseInt(e.target.value) || 0})} min="0" /></td>
-                        <td className="action-cell">
-                          <button className="btn-icon-small success" onClick={() => saveEdit(variant.id)} disabled={saving} title="Save"><Check size={14} /></button>
-                          <button className="btn-icon-small" onClick={cancelEdit} disabled={saving} title="Cancel"><X size={14} /></button>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td>{variant.sent || 0}</td>
-                        <td>{variant.opened || 0}</td>
-                        <td>{variant.replied || 0}</td>
-                        <td className="metric-cell highlight">{variant.opportunities || 0}</td>
-                        <td className="metric-cell highlight">{variant.meetings || 0}</td>
-                        <td className="action-cell">
-                          <button className="btn-icon-small" onClick={() => startEdit(variant)} title="Edit Metrics"><Edit2 size={14} /></button>
-                        </td>
-                      </>
-                    )}
+                    <InlineEditCell value={variant.sent || 0} field="times_sent" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} />
+                    <InlineEditCell value={variant.opened || 0} field="times_opened" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} />
+                    <InlineEditCell value={variant.replied || 0} field="times_replied" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} />
+                    <InlineEditCell value={variant.opportunities || 0} field="opportunities" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} isHighlight />
+                    <InlineEditCell value={variant.meetings || 0} field="meetings" templateId={variant.id} campaignId={campaignId} onSaved={handleSaved} isHighlight />
                   </tr>
                 ))}
               </tbody>
