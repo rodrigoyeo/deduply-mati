@@ -2322,9 +2322,9 @@ const CampaignsPage = () => {
   </div>);
 };
 
-// Campaign Template Breakdown Component - Optimistic inline editing with debounced refresh
+// Campaign Template Breakdown - Clay-style spreadsheet editing (no refresh, instant navigation)
 const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }) => {
-  // Local state for optimistic updates - no page refresh needed
+  // Local state - completely independent, no external refresh
   const [localData, setLocalData] = useState(() => {
     const initial = {};
     breakdown.forEach(step => {
@@ -2340,24 +2340,32 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
     });
     return initial;
   });
-  const [savingCells, setSavingCells] = useState({});
-  const [savedCells, setSavedCells] = useState({});
-  const refreshTimeoutRef = useRef(null);
 
-  // Debounced refresh - only refresh after 3 seconds of no edits
-  const scheduleRefresh = useCallback(() => {
-    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
-    refreshTimeoutRef.current = setTimeout(() => {
-      if (onUpdate) onUpdate();
-    }, 3000);
-  }, [onUpdate]);
+  // Track which cell is being edited
+  const [activeCell, setActiveCell] = useState(null); // { templateId, field }
+  const [editValue, setEditValue] = useState('');
+  const inputRef = useRef(null);
 
-  // Cleanup timeout on unmount
+  // Build flat list of all cells for navigation
+  const allCells = useMemo(() => {
+    const cells = [];
+    breakdown.forEach(step => {
+      step.variants.forEach(v => {
+        ['times_sent', 'times_opened', 'times_replied', 'opportunities', 'meetings'].forEach(field => {
+          cells.push({ templateId: v.id, field });
+        });
+      });
+    });
+    return cells;
+  }, [breakdown]);
+
+  // Focus input when cell becomes active
   useEffect(() => {
-    return () => {
-      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
-    };
-  }, []);
+    if (activeCell && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [activeCell]);
 
   // Calculate local totals
   const getStepTotals = (stepVariants) => {
@@ -2373,130 +2381,94 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
     }, { sent: 0, opened: 0, replied: 0, opportunities: 0, meetings: 0 });
   };
 
-  const saveCell = async (templateId, field, newValue) => {
-    const cellKey = `${templateId}-${field}`;
-    setSavingCells(prev => ({ ...prev, [cellKey]: true }));
+  const fieldToLocal = { times_sent: 'sent', times_opened: 'opened', times_replied: 'replied', opportunities: 'opportunities', meetings: 'meetings' };
 
-    try {
-      const res = await fetch(`${API}/campaigns/${campaignId}/templates/${templateId}/metrics`, {
+  const getValue = (templateId, field) => {
+    const localField = fieldToLocal[field] || field;
+    return localData[templateId]?.[localField] || 0;
+  };
+
+  const startEdit = (templateId, field) => {
+    const value = getValue(templateId, field);
+    setActiveCell({ templateId, field });
+    setEditValue(String(value));
+  };
+
+  const commitAndMove = (direction = null) => {
+    if (!activeCell) return;
+
+    const newValue = parseInt(editValue) || 0;
+    const oldValue = getValue(activeCell.templateId, activeCell.field);
+
+    // Update local state immediately
+    if (newValue !== oldValue) {
+      const localField = fieldToLocal[activeCell.field] || activeCell.field;
+      setLocalData(prev => ({
+        ...prev,
+        [activeCell.templateId]: { ...prev[activeCell.templateId], [localField]: newValue }
+      }));
+
+      // Fire-and-forget save (no waiting, no callback)
+      fetch(`${API}/campaigns/${campaignId}/templates/${activeCell.templateId}/metrics`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: newValue })
-      });
-      if (!res.ok) throw new Error('Failed to save');
+        body: JSON.stringify({ [activeCell.field]: newValue })
+      }).catch(() => {}); // Silently ignore errors for speed
+    }
 
-      // Show saved indicator briefly
-      setSavedCells(prev => ({ ...prev, [cellKey]: true }));
-      setTimeout(() => setSavedCells(prev => ({ ...prev, [cellKey]: false })), 1500);
+    // Navigate to next/prev cell
+    if (direction) {
+      const currentIdx = allCells.findIndex(c => c.templateId === activeCell.templateId && c.field === activeCell.field);
+      const nextIdx = direction === 'next' ? currentIdx + 1 : currentIdx - 1;
+      if (nextIdx >= 0 && nextIdx < allCells.length) {
+        const next = allCells[nextIdx];
+        setActiveCell(next);
+        setEditValue(String(getValue(next.templateId, next.field)));
+        return; // Don't close, move to next
+      }
+    }
 
-      // Schedule debounced refresh for totals
-      scheduleRefresh();
-    } catch (err) {
-      // Revert on error
-      addToast?.('Failed to save', 'error');
-    } finally {
-      setSavingCells(prev => ({ ...prev, [cellKey]: false }));
+    setActiveCell(null);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      commitAndMove(e.shiftKey ? 'prev' : 'next');
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      commitAndMove('next');
+    } else if (e.key === 'Escape') {
+      setActiveCell(null);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      // Move down 5 cells (one row)
+      const currentIdx = allCells.findIndex(c => c.templateId === activeCell.templateId && c.field === activeCell.field);
+      const nextIdx = currentIdx + 5;
+      if (nextIdx < allCells.length) {
+        commitAndMove();
+        const next = allCells[nextIdx];
+        startEdit(next.templateId, next.field);
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const currentIdx = allCells.findIndex(c => c.templateId === activeCell.templateId && c.field === activeCell.field);
+      const nextIdx = currentIdx - 5;
+      if (nextIdx >= 0) {
+        commitAndMove();
+        const next = allCells[nextIdx];
+        startEdit(next.templateId, next.field);
+      }
     }
   };
 
-  const handleCellChange = (templateId, field, newValue) => {
-    // Optimistic update - instant UI feedback
-    const fieldMap = { times_sent: 'sent', times_opened: 'opened', times_replied: 'replied', opportunities: 'opportunities', meetings: 'meetings' };
-    const localField = fieldMap[field] || field;
-
-    setLocalData(prev => ({
-      ...prev,
-      [templateId]: { ...prev[templateId], [localField]: newValue }
-    }));
-
-    // Save in background
-    saveCell(templateId, field, newValue);
-  };
-
-  // Inline editable cell - now with optimistic updates
-  const EditableCell = ({ templateId, field, isHighlight }) => {
-    const fieldMap = { times_sent: 'sent', times_opened: 'opened', times_replied: 'replied', opportunities: 'opportunities', meetings: 'meetings' };
-    const localField = fieldMap[field] || field;
-    const value = localData[templateId]?.[localField] || 0;
-    const cellKey = `${templateId}-${field}`;
-    const isSaving = savingCells[cellKey];
-    const isSaved = savedCells[cellKey];
-
-    const [editing, setEditing] = useState(false);
-    const [tempValue, setTempValue] = useState(value);
-    const inputRef = useRef(null);
-
-    useEffect(() => {
-      if (editing && inputRef.current) {
-        inputRef.current.focus();
-        inputRef.current.select();
-      }
-    }, [editing]);
-
-    useEffect(() => {
-      setTempValue(value);
-    }, [value]);
-
-    const commitEdit = () => {
-      const newValue = parseInt(tempValue) || 0;
-      setEditing(false);
-      if (newValue !== value) {
-        handleCellChange(templateId, field, newValue);
-      }
-    };
-
-    const handleKeyDown = (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commitEdit();
-      } else if (e.key === 'Escape') {
-        setTempValue(value);
-        setEditing(false);
-      } else if (e.key === 'Tab') {
-        e.preventDefault();
-        commitEdit();
-        // Find and focus next editable cell
-        const allInputs = document.querySelectorAll('.metric-cell.editable');
-        const currentIndex = Array.from(allInputs).findIndex(el => el.contains(inputRef.current?.parentElement));
-        const nextInput = allInputs[currentIndex + (e.shiftKey ? -1 : 1)];
-        if (nextInput) nextInput.click();
-      }
-    };
-
-    if (editing) {
-      return (
-        <td className={`metric-cell ${isHighlight ? 'highlight' : ''}`}>
-          <input
-            ref={inputRef}
-            type="number"
-            className="inline-edit-input"
-            value={tempValue}
-            onChange={e => setTempValue(e.target.value)}
-            onBlur={commitEdit}
-            onKeyDown={handleKeyDown}
-            min="0"
-          />
-        </td>
-      );
-    }
-
-    return (
-      <td
-        className={`metric-cell editable ${isHighlight ? 'highlight' : ''} ${isSaving ? 'saving' : ''} ${isSaved ? 'saved' : ''}`}
-        onClick={() => { setTempValue(value); setEditing(true); }}
-        title="Click to edit"
-      >
-        {isSaving ? <Loader2 className="spin" size={14} /> : value}
-        {isSaved && <Check size={12} className="saved-check" />}
-      </td>
-    );
-  };
+  const isActive = (templateId, field) => activeCell?.templateId === templateId && activeCell?.field === field;
 
   return (
     <div className="template-breakdown">
       <div className="breakdown-header">
         <h4>Template Performance Breakdown</h4>
-        <span className="breakdown-hint">Click any number to edit instantly - changes save automatically</span>
+        <span className="breakdown-hint">Click to edit | Tab/Enter = next | Shift+Tab = prev | Arrow keys navigate</span>
       </div>
       {breakdown.map((step, idx) => {
         const totals = getStepTotals(step.variants);
@@ -2516,7 +2488,7 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
               </div>
             </div>
             <div className="breakdown-variants">
-              <table className="variants-table">
+              <table className="variants-table spreadsheet">
                 <thead>
                   <tr>
                     <th>Template</th>
@@ -2533,11 +2505,32 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
                     <tr key={variant.id}>
                       <td><strong>{variant.name}</strong></td>
                       <td><span className={`variant-badge variant-${variant.variant}`}>{variant.variant}</span></td>
-                      <EditableCell templateId={variant.id} field="times_sent" />
-                      <EditableCell templateId={variant.id} field="times_opened" />
-                      <EditableCell templateId={variant.id} field="times_replied" />
-                      <EditableCell templateId={variant.id} field="opportunities" isHighlight />
-                      <EditableCell templateId={variant.id} field="meetings" isHighlight />
+                      {['times_sent', 'times_opened', 'times_replied', 'opportunities', 'meetings'].map(field => {
+                        const isHighlight = field === 'opportunities' || field === 'meetings';
+                        const active = isActive(variant.id, field);
+                        return (
+                          <td
+                            key={field}
+                            className={`metric-cell editable ${isHighlight ? 'highlight' : ''} ${active ? 'active' : ''}`}
+                            onClick={() => startEdit(variant.id, field)}
+                          >
+                            {active ? (
+                              <input
+                                ref={inputRef}
+                                type="number"
+                                className="spreadsheet-input"
+                                value={editValue}
+                                onChange={e => setEditValue(e.target.value)}
+                                onBlur={() => commitAndMove()}
+                                onKeyDown={handleKeyDown}
+                                min="0"
+                              />
+                            ) : (
+                              getValue(variant.id, field)
+                            )}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>
