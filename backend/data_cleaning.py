@@ -10,23 +10,28 @@ from typing import Optional, Dict, List, Tuple
 NAME_PARTICLES = {'van', 'von', 'de', 'del', 'della', 'di', 'da', 'le', 'la', 'du', 'des', 'el', 'al'}
 
 # Common company suffixes to remove or standardize
+# IMPORTANT: Patterns must require a delimiter (space, comma, &) before the suffix
+# to avoid matching suffixes that are part of words (e.g., "México" should NOT match "Co")
 COMPANY_SUFFIXES = [
-    r'\s*,?\s*Inc\.?$',
-    r'\s*,?\s*LLC\.?$',
-    r'\s*,?\s*L\.?L\.?C\.?$',
-    r'\s*,?\s*Corp\.?$',
-    r'\s*,?\s*Corporation$',
-    r'\s*,?\s*Co\.?$',
-    r'\s*,?\s*Company$',
-    r'\s*,?\s*Ltd\.?$',
-    r'\s*,?\s*Limited$',
-    r'\s*,?\s*LP\.?$',
-    r'\s*,?\s*L\.?P\.?$',
-    r'\s*,?\s*LLP\.?$',
-    r'\s*,?\s*P\.?C\.?$',
-    r'\s*,?\s*PLLC\.?$',
-    r'\s*,?\s*NA\.?$',
-    r'\s*,?\s*N\.?A\.?$',
+    r'[\s,]+Inc\.?$',           # " Inc" or ", Inc" but not "Zinc"
+    r'[\s,]+LLC\.?$',           # " LLC" or ", LLC"
+    r'[\s,]+L\.?L\.?C\.?$',     # " L.L.C." variations
+    r'[\s,]+Corp\.?$',          # " Corp" but not "Scorpio"
+    r'[\s,]+Corporation$',      # " Corporation"
+    r'(?:[\s,]|&)Co\.?$',       # " Co", ", Co", or "&Co." but not "México"
+    r'[\s,]+Company$',          # " Company"
+    r'[\s,]+Ltd\.?$',           # " Ltd" but not "Ltd" in middle of word
+    r'[\s,]+Limited$',          # " Limited"
+    r'[\s,]+LP\.?$',            # " LP"
+    r'[\s,]+L\.?P\.?$',         # " L.P."
+    r'[\s,]+LLP\.?$',           # " LLP"
+    r'[\s,]+P\.?C\.?$',         # " P.C."
+    r'[\s,]+PLLC\.?$',          # " PLLC"
+    r'[\s,]+S\.?A\.?$',         # " S.A." (Spanish/Latin American companies)
+    r'[\s,]+S\.?A\.?\s*de\s*C\.?V\.?$',  # " S.A. de C.V." (Mexican companies)
+    r'[\s,]+S\.?\s*de\s*R\.?L\.?$',      # " S. de R.L." (Mexican companies)
+    # Removed NA pattern - too aggressive, matches words ending in "na" like Avanna, Daytona
+    # If needed, use: r'[\s,]+N\.?A\.?$' for explicit "N.A." with required delimiter
 ]
 
 # Special name cases (McDonald, O'Brien, etc.)
