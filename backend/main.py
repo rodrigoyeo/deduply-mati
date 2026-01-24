@@ -2143,6 +2143,17 @@ async def reachinbox_webhook(request: Request):
         elif 'meeting' in el or 'scheduled' in el or 'booked' in el or 'calendar' in el: normalized_event = 'meeting_booked'
         conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, TRUE)""",
             ('reachinbox', normalized_event, email, campaign_name, template_id, json.dumps(payload)))
+
+        # If template_id not provided but we have email + campaign, look up from previous sent events
+        if not template_id and email and campaign_name and normalized_event in ('lead_interested', 'meeting_booked', 'replied', 'opened', 'clicked'):
+            last_sent = conn.execute("""
+                SELECT template_id FROM webhook_events
+                WHERE email=? AND campaign_name=? AND event_type='sent' AND template_id IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1
+            """, (email, campaign_name)).fetchone()
+            if last_sent and last_sent[0]:
+                template_id = last_sent[0]
+
         campaign_id = None
         if campaign_name:
             camp = conn.execute("SELECT id FROM campaigns WHERE LOWER(name) = LOWER(?) OR name LIKE ?", (campaign_name, f"%{campaign_name}%")).fetchone()
@@ -2158,36 +2169,56 @@ async def reachinbox_webhook(request: Request):
                     # Meeting counts as both opportunity AND meeting (interested → booked)
                     conn.execute("UPDATE campaigns SET meetings_booked=meetings_booked+1, opportunities=opportunities+1 WHERE id=?", (campaign_id,))
                 recalc_rates(campaign_id, conn)
+
+        # Update template metrics (create template_campaigns record if needed)
         if template_id and campaign_id:
+            # Ensure template_campaigns record exists
             tc = conn.execute("SELECT id FROM template_campaigns WHERE template_id=? AND campaign_id=?", (template_id, campaign_id)).fetchone()
-            if tc:
-                if normalized_event == 'sent': conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-                elif normalized_event == 'opened': conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-                elif normalized_event == 'replied': conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-                elif normalized_event == 'lead_interested': conn.execute("UPDATE template_campaigns SET opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-                elif normalized_event == 'meeting_booked':
-                    # Meeting counts as both opportunity AND meeting
-                    conn.execute("UPDATE template_campaigns SET meetings=meetings+1, opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-                recalc_template_rates(template_id, conn)
+            if not tc:
+                conn.execute("INSERT INTO template_campaigns (template_id, campaign_id) VALUES (?, ?)", (template_id, campaign_id))
+
+            if normalized_event == 'sent': conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+            elif normalized_event == 'opened': conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+            elif normalized_event == 'replied': conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+            elif normalized_event == 'lead_interested': conn.execute("UPDATE template_campaigns SET opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+            elif normalized_event == 'meeting_booked':
+                # Meeting counts as both opportunity AND meeting
+                conn.execute("UPDATE template_campaigns SET meetings=meetings+1, opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+            recalc_template_rates(template_id, conn)
         if email:
             contact = conn.execute("SELECT id, status FROM contacts WHERE LOWER(email)=?", (email.lower(),)).fetchone()
             if contact:
+                contact_id = contact[0]
+                # Ensure contact-campaign association exists
+                if campaign_id:
+                    existing_assoc = conn.execute("SELECT id FROM contact_campaigns WHERE contact_id=? AND campaign_id=?", (contact_id, campaign_id)).fetchone()
+                    if not existing_assoc:
+                        conn.execute("INSERT INTO contact_campaigns (contact_id, campaign_id) VALUES (?, ?)", (contact_id, campaign_id))
+
                 if normalized_event == 'sent':
-                    conn.execute("UPDATE contacts SET times_contacted=times_contacted+1, last_contacted_at=?, status=CASE WHEN status='Lead' THEN 'Contacted' ELSE status END WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                    conn.execute("UPDATE contacts SET times_contacted=times_contacted+1, last_contacted_at=?, status=CASE WHEN status='Lead' THEN 'Contacted' ELSE status END WHERE id=?", (datetime.now().isoformat(), contact_id))
                 elif normalized_event == 'replied':
-                    conn.execute("UPDATE contacts SET status='Replied', updated_at=? WHERE id=? AND status IN ('Lead','Contacted')", (datetime.now().isoformat(), contact[0]))
+                    conn.execute("UPDATE contacts SET status='Replied', updated_at=? WHERE id=? AND status IN ('Lead','Contacted')", (datetime.now().isoformat(), contact_id))
                 elif normalized_event == 'bounced':
-                    conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact[0],))
+                    conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact_id,))
                 elif normalized_event == 'lead_interested':
-                    conn.execute("UPDATE contacts SET status='Interested', opportunities=opportunities+1, updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                    conn.execute("UPDATE contacts SET status='Interested', opportunities=opportunities+1, updated_at=? WHERE id=?", (datetime.now().isoformat(), contact_id))
                 elif normalized_event == 'lead_not_interested':
-                    conn.execute("UPDATE contacts SET status='Not Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                    conn.execute("UPDATE contacts SET status='Not Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact_id))
                 elif normalized_event == 'meeting_booked':
                     # Meeting = opportunity + meeting booked, status goes to Scheduled
-                    conn.execute("UPDATE contacts SET status='Scheduled', opportunities=opportunities+1, meetings_booked=meetings_booked+1, updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                    conn.execute("UPDATE contacts SET status='Scheduled', opportunities=opportunities+1, meetings_booked=meetings_booked+1, updated_at=? WHERE id=?", (datetime.now().isoformat(), contact_id))
         conn.commit()
         conn.close()
-        return {"status": "ok", "message": "Processed", "event": normalized_event, "campaign_matched": campaign_id is not None, "contact_matched": email is not None}
+        return {
+            "status": "ok",
+            "message": "Processed",
+            "event": normalized_event,
+            "campaign_matched": campaign_id is not None,
+            "campaign_id": campaign_id,
+            "template_id": template_id,
+            "contact_matched": email is not None
+        }
     except Exception as e:
         import traceback
         return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
