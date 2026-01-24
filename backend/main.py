@@ -2138,8 +2138,9 @@ async def reachinbox_webhook(request: Request):
         elif 'bounce' in el: normalized_event = 'bounced'
         elif 'unsub' in el: normalized_event = 'unsubscribed'
         elif 'fail' in el or 'error' in el: normalized_event = 'failed'
-        elif el == 'lead_interested': normalized_event = 'lead_interested'
-        elif el == 'lead_not_interested': normalized_event = 'lead_not_interested'
+        elif el == 'lead_interested' or el == 'interested': normalized_event = 'lead_interested'
+        elif el == 'lead_not_interested' or el == 'not_interested': normalized_event = 'lead_not_interested'
+        elif 'meeting' in el or 'scheduled' in el or 'booked' in el or 'calendar' in el: normalized_event = 'meeting_booked'
         conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, TRUE)""",
             ('reachinbox', normalized_event, email, campaign_name, template_id, json.dumps(payload)))
         campaign_id = None
@@ -2152,6 +2153,10 @@ async def reachinbox_webhook(request: Request):
                 elif normalized_event == 'clicked': conn.execute("UPDATE campaigns SET emails_clicked=emails_clicked+1 WHERE id=?", (campaign_id,))
                 elif normalized_event == 'replied': conn.execute("UPDATE campaigns SET emails_replied=emails_replied+1 WHERE id=?", (campaign_id,))
                 elif normalized_event == 'bounced': conn.execute("UPDATE campaigns SET emails_bounced=emails_bounced+1 WHERE id=?", (campaign_id,))
+                elif normalized_event == 'lead_interested': conn.execute("UPDATE campaigns SET opportunities=opportunities+1 WHERE id=?", (campaign_id,))
+                elif normalized_event == 'meeting_booked':
+                    # Meeting counts as both opportunity AND meeting (interested → booked)
+                    conn.execute("UPDATE campaigns SET meetings_booked=meetings_booked+1, opportunities=opportunities+1 WHERE id=?", (campaign_id,))
                 recalc_rates(campaign_id, conn)
         if template_id and campaign_id:
             tc = conn.execute("SELECT id FROM template_campaigns WHERE template_id=? AND campaign_id=?", (template_id, campaign_id)).fetchone()
@@ -2159,6 +2164,10 @@ async def reachinbox_webhook(request: Request):
                 if normalized_event == 'sent': conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
                 elif normalized_event == 'opened': conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
                 elif normalized_event == 'replied': conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+                elif normalized_event == 'lead_interested': conn.execute("UPDATE template_campaigns SET opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+                elif normalized_event == 'meeting_booked':
+                    # Meeting counts as both opportunity AND meeting
+                    conn.execute("UPDATE template_campaigns SET meetings=meetings+1, opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
                 recalc_template_rates(template_id, conn)
         if email:
             contact = conn.execute("SELECT id, status FROM contacts WHERE LOWER(email)=?", (email.lower(),)).fetchone()
@@ -2170,9 +2179,12 @@ async def reachinbox_webhook(request: Request):
                 elif normalized_event == 'bounced':
                     conn.execute("UPDATE contacts SET email_status='Invalid', status='Bounced' WHERE id=?", (contact[0],))
                 elif normalized_event == 'lead_interested':
-                    conn.execute("UPDATE contacts SET status='Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                    conn.execute("UPDATE contacts SET status='Interested', opportunities=opportunities+1, updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
                 elif normalized_event == 'lead_not_interested':
                     conn.execute("UPDATE contacts SET status='Not Interested', updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
+                elif normalized_event == 'meeting_booked':
+                    # Meeting = opportunity + meeting booked, status goes to Scheduled
+                    conn.execute("UPDATE contacts SET status='Scheduled', opportunities=opportunities+1, meetings_booked=meetings_booked+1, updated_at=? WHERE id=?", (datetime.now().isoformat(), contact[0]))
         conn.commit()
         conn.close()
         return {"status": "ok", "message": "Processed", "event": normalized_event, "campaign_matched": campaign_id is not None, "contact_matched": email is not None}
