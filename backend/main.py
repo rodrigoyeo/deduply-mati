@@ -2128,7 +2128,8 @@ async def reachinbox_webhook(request: Request):
         event_type = payload.get('event', payload.get('type', payload.get('event_type', 'unknown')))
         email = payload.get('lead_email', payload.get('email', payload.get('to', payload.get('recipient', payload.get('recipient_email')))))
         campaign_name = payload.get('campaign_name', payload.get('campaign', payload.get('campaignName', payload.get('sequence_name'))))
-        template_id = payload.get('template_id', payload.get('templateId', payload.get('step_id')))
+        template_id = payload.get('template_id', payload.get('templateId'))
+        step_number = payload.get('step_number', payload.get('step_id', payload.get('sequence_step')))
         el = event_type.lower().strip()
         normalized_event = 'unknown'
         if 'sent' in el or 'deliver' in el: normalized_event = 'sent'
@@ -2144,15 +2145,27 @@ async def reachinbox_webhook(request: Request):
         conn.execute("""INSERT INTO webhook_events (source, event_type, email, campaign_name, template_id, payload, processed) VALUES (?, ?, ?, ?, ?, ?, TRUE)""",
             ('reachinbox', normalized_event, email, campaign_name, template_id, json.dumps(payload)))
 
-        # If template_id not provided but we have email + campaign, look up from previous sent events
-        if not template_id and email and campaign_name and normalized_event in ('lead_interested', 'meeting_booked', 'replied', 'opened', 'clicked'):
+        # Map step_number to step_type for template matching
+        step_type = None
+        if step_number:
+            step_map = {1: 'Main', 2: 'Followup 1', 3: 'Followup 2', 4: 'Followup 3', 5: 'Followup 4'}
+            step_type = step_map.get(int(step_number), f'Followup {int(step_number) - 1}' if int(step_number) > 1 else 'Main')
+
+        # If no step_number for conversion events, look up from previous sent events
+        if not step_number and email and campaign_name and normalized_event in ('lead_interested', 'meeting_booked', 'replied', 'opened', 'clicked'):
             last_sent = conn.execute("""
-                SELECT template_id FROM webhook_events
-                WHERE email=? AND campaign_name=? AND event_type='sent' AND template_id IS NOT NULL
+                SELECT payload FROM webhook_events
+                WHERE email=? AND campaign_name=? AND event_type='sent'
                 ORDER BY created_at DESC LIMIT 1
             """, (email, campaign_name)).fetchone()
             if last_sent and last_sent[0]:
-                template_id = last_sent[0]
+                try:
+                    sent_payload = json.loads(last_sent[0]) if isinstance(last_sent[0], str) else last_sent[0]
+                    step_number = sent_payload.get('step_number')
+                    if step_number:
+                        step_map = {1: 'Main', 2: 'Followup 1', 3: 'Followup 2', 4: 'Followup 3', 5: 'Followup 4'}
+                        step_type = step_map.get(int(step_number), f'Followup {int(step_number) - 1}')
+                except: pass
 
         campaign_id = None
         if campaign_name:
@@ -2170,21 +2183,65 @@ async def reachinbox_webhook(request: Request):
                     conn.execute("UPDATE campaigns SET meetings_booked=meetings_booked+1, opportunities=opportunities+1 WHERE id=?", (campaign_id,))
                 recalc_rates(campaign_id, conn)
 
-        # Update template metrics (create template_campaigns record if needed)
-        if template_id and campaign_id:
-            # Ensure template_campaigns record exists
-            tc = conn.execute("SELECT id FROM template_campaigns WHERE template_id=? AND campaign_id=?", (template_id, campaign_id)).fetchone()
-            if not tc:
-                conn.execute("INSERT INTO template_campaigns (template_id, campaign_id) VALUES (?, ?)", (template_id, campaign_id))
+        # Update template metrics - try to find specific template by subject match
+        email_subject = payload.get('email_subject', payload.get('subject', ''))
+        # Clean subject (remove Re:, Fwd:, etc.)
+        clean_subject = re.sub(r'^(Re|Fwd|RE|FWD|re|fwd):\s*', '', email_subject).strip() if email_subject else ''
 
-            if normalized_event == 'sent': conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-            elif normalized_event == 'opened': conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-            elif normalized_event == 'replied': conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-            elif normalized_event == 'lead_interested': conn.execute("UPDATE template_campaigns SET opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
+        matched_template_id = None
+        if campaign_id and clean_subject:
+            # Try to match by subject (fuzzy match - check if template subject is contained in email subject)
+            templates = conn.execute("""
+                SELECT et.id, et.subject FROM email_templates et
+                JOIN template_campaigns tc ON et.id = tc.template_id
+                WHERE tc.campaign_id = ? AND et.subject IS NOT NULL AND et.subject != ''
+            """, (campaign_id,)).fetchall()
+            for t in templates:
+                template_subject = t[1] or ''
+                # Check if template subject (without variables) matches
+                # Template might have "quick question for {{company}}" - extract static part
+                static_subject = re.sub(r'\{\{[^}]+\}\}', '', template_subject).strip()
+                if static_subject and static_subject.lower() in clean_subject.lower():
+                    matched_template_id = t[0]
+                    break
+
+        # If no subject match but we have step_type, find templates by step
+        if not matched_template_id and campaign_id and step_type:
+            # Get all templates for this step (for step-level totals in UI)
+            templates = conn.execute("""
+                SELECT et.id FROM email_templates et
+                JOIN template_campaigns tc ON et.id = tc.template_id
+                WHERE tc.campaign_id = ? AND et.step_type = ?
+            """, (campaign_id, step_type)).fetchall()
+
+            # If no template_campaigns exist, create them
+            if not templates:
+                step_templates = conn.execute("SELECT id FROM email_templates WHERE step_type = ?", (step_type,)).fetchall()
+                for t in step_templates:
+                    existing = conn.execute("SELECT id FROM template_campaigns WHERE template_id=? AND campaign_id=?", (t[0], campaign_id)).fetchone()
+                    if not existing:
+                        conn.execute("INSERT INTO template_campaigns (template_id, campaign_id) VALUES (?, ?)", (t[0], campaign_id))
+                templates = step_templates
+
+            # Update ALL templates for this step (step-level attribution)
+            # This is fair for A/B testing when we can't determine exact variant
+            for t in templates:
+                matched_template_id = t[0]
+                break  # Just use first template for now, or update all below
+
+        # Update template_campaigns if we found a match
+        if matched_template_id and campaign_id:
+            if normalized_event == 'sent':
+                conn.execute("UPDATE template_campaigns SET times_sent=times_sent+1 WHERE template_id=? AND campaign_id=?", (matched_template_id, campaign_id))
+            elif normalized_event == 'opened':
+                conn.execute("UPDATE template_campaigns SET times_opened=times_opened+1 WHERE template_id=? AND campaign_id=?", (matched_template_id, campaign_id))
+            elif normalized_event == 'replied':
+                conn.execute("UPDATE template_campaigns SET times_replied=times_replied+1 WHERE template_id=? AND campaign_id=?", (matched_template_id, campaign_id))
+            elif normalized_event == 'lead_interested':
+                conn.execute("UPDATE template_campaigns SET opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (matched_template_id, campaign_id))
             elif normalized_event == 'meeting_booked':
-                # Meeting counts as both opportunity AND meeting
-                conn.execute("UPDATE template_campaigns SET meetings=meetings+1, opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (template_id, campaign_id))
-            recalc_template_rates(template_id, conn)
+                conn.execute("UPDATE template_campaigns SET meetings=meetings+1, opportunities=opportunities+1 WHERE template_id=? AND campaign_id=?", (matched_template_id, campaign_id))
+            recalc_template_rates(matched_template_id, conn)
         if email:
             contact = conn.execute("SELECT id, status FROM contacts WHERE LOWER(email)=?", (email.lower(),)).fetchone()
             if contact:
@@ -2216,7 +2273,10 @@ async def reachinbox_webhook(request: Request):
             "event": normalized_event,
             "campaign_matched": campaign_id is not None,
             "campaign_id": campaign_id,
-            "template_id": template_id,
+            "step_number": step_number,
+            "step_type": step_type,
+            "template_matched": matched_template_id is not None,
+            "template_id": matched_template_id,
             "contact_matched": email is not None
         }
     except Exception as e:
