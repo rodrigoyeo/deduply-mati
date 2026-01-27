@@ -2646,7 +2646,8 @@ const TemplatesPage = () => {
     { id: 'A', name: 'Variant A' },
     { id: 'B', name: 'Variant B' },
     { id: 'C', name: 'Variant C' },
-    { id: 'D', name: 'Variant D' }
+    { id: 'D', name: 'Variant D' },
+    { id: 'E', name: 'Variant E' }
   ];
   const countryOptions = [
     { id: 'Mexico', name: 'Mexico' },
@@ -2747,8 +2748,9 @@ const TemplatesPage = () => {
     if (filterSteps.length > 0 && !filterSteps.includes(t.step_type)) return false;
     if (filterVariants.length > 0 && !filterVariants.includes(t.variant)) return false;
     if (filterCampaigns.length > 0) {
-      const tCamps = t.campaign_ids || [];
-      if (!filterCampaigns.some(c => tCamps.includes(c))) return false;
+      const tCamps = (t.campaign_ids || []).map(Number);
+      const filterCampsNum = filterCampaigns.map(Number);
+      if (!filterCampsNum.some(c => tCamps.includes(c))) return false;
     }
     if (filterCountries.length > 0 && !filterCountries.includes(t.country)) return false;
     return true;
