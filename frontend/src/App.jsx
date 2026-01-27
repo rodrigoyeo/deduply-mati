@@ -3405,7 +3405,7 @@ const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }
         <div className="form-group">
           <label>Variant</label>
           <div className="variant-selector">
-            {['A', 'B', 'C', 'D'].map(v => (
+            {['A', 'B', 'C', 'D', 'E'].map(v => (
               <button key={v} type="button" className={`variant-btn ${data.variant === v ? 'active' : ''}`} onClick={() => setData({ ...data, variant: v })}>{v}</button>
             ))}
           </div>

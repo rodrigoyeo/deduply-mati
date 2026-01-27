@@ -485,6 +485,7 @@ body {
 .variant-B { background: var(--coral-light); color: var(--coral); }
 .variant-C { background: var(--success-light); color: #00a896; }
 .variant-D { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
+.variant-E { background: rgba(245, 158, 11, 0.12); color: #d97706; }
 
 /* Pagination */
 .pagination { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; background: var(--bg-2); border-top: 1px solid var(--border); font-size: 13px; color: var(--text-2); }
@@ -513,9 +514,9 @@ body {
 .template-form .form-group { margin-bottom: 0; }
 
 /* Variant Selector */
-.variant-selector { display: flex; gap: 6px; }
-.variant-btn { width: 40px; height: 40px; border: 2px solid var(--border); border-radius: var(--radius-md); background: var(--bg-3); color: var(--text-2); font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
-.variant-btn:hover { border-color: var(--coral); color: var(--coral); }
+.variant-selector { display: flex; gap: 4px; }
+.variant-btn { width: 36px; height: 36px; border: 2px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
+.variant-btn:hover { border-color: var(--coral); color: var(--coral); background: var(--coral-light); }
 .variant-btn.active { background: var(--coral); border-color: var(--coral); color: white; }
 
 /* Variable Chips */
