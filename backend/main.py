@@ -1975,35 +1975,14 @@ def get_templates(campaign_id: Optional[int] = None, search: Optional[str] = Non
     conn = get_db(); where, params = ["1=1"], []
     if search: where.append("(name LIKE ? OR subject LIKE ?)"); params.extend([f"%{search}%"]*2)
     rows = conn.execute(f"SELECT * FROM email_templates WHERE {' AND '.join(where)} ORDER BY created_at DESC", params).fetchall()
-    templates = [dict(r) for r in rows]
-    if not templates:
-        conn.close(); return {"data": []}
-    # Fetch all campaign data in ONE query instead of N queries
-    template_ids = [t['id'] for t in templates]
-    ph = '%s' if USE_POSTGRES else '?'
-    placeholders = ','.join([ph] * len(template_ids))
-    camps_rows = conn.execute(f"""
-        SELECT tc.template_id, c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings
-        FROM template_campaigns tc
-        JOIN campaigns c ON tc.campaign_id=c.id
-        WHERE tc.template_id IN ({placeholders})
-    """, template_ids).fetchall()
-    # Group campaigns by template_id
-    camps_by_template = {}
-    for c in camps_rows:
-        tid = c['template_id']
-        if tid not in camps_by_template: camps_by_template[tid] = []
-        camps_by_template[tid].append(dict(c))
-    # Build result with aggregated data
     result = []
-    for t in templates:
-        camps = camps_by_template.get(t['id'], [])
-        t['campaigns'] = camps
+    for r in rows:
+        t = dict(r)
+        camps = conn.execute("SELECT c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings FROM template_campaigns tc JOIN campaigns c ON tc.campaign_id=c.id WHERE tc.template_id=?", (t['id'],)).fetchall()
+        t['campaigns'] = [dict(c) for c in camps]
         t['campaign_ids'] = [c['id'] for c in camps]
         t['campaign_names'] = ', '.join(c['name'] for c in camps)
-        ts = t['times_sent'] + sum(c['times_sent'] or 0 for c in camps)
-        to = t['times_opened'] + sum(c['times_opened'] or 0 for c in camps)
-        tr = t['times_replied'] + sum(c['times_replied'] or 0 for c in camps)
+        ts = t['times_sent'] + sum(c['times_sent'] or 0 for c in camps); to = t['times_opened'] + sum(c['times_opened'] or 0 for c in camps); tr = t['times_replied'] + sum(c['times_replied'] or 0 for c in camps)
         opps = sum(c['opportunities'] or 0 for c in camps); meets = sum(c['meetings'] or 0 for c in camps)
         t['total_sent'] = ts; t['total_opened'] = to; t['total_replied'] = tr
         t['opportunities'] = opps; t['meetings'] = meets
@@ -2023,32 +2002,16 @@ def get_template(template_id: int):
 def get_templates_grouped_by_step():
     conn = get_db()
     rows = conn.execute("SELECT * FROM email_templates ORDER BY step_type, variant").fetchall()
-    templates = [dict(r) for r in rows]
-    if not templates:
-        conn.close(); return {"data": []}
-    # Fetch all campaign data in ONE query instead of N queries
-    template_ids = [t['id'] for t in templates]
-    ph = '%s' if USE_POSTGRES else '?'
-    placeholders = ','.join([ph] * len(template_ids))
-    camps_rows = conn.execute(f"""
-        SELECT tc.template_id, c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings
-        FROM template_campaigns tc
-        JOIN campaigns c ON tc.campaign_id=c.id
-        WHERE tc.template_id IN ({placeholders})
-    """, template_ids).fetchall()
-    # Group campaigns by template_id
-    camps_by_template = {}
-    for c in camps_rows:
-        tid = c['template_id']
-        if tid not in camps_by_template: camps_by_template[tid] = []
-        camps_by_template[tid].append(dict(c))
-    # Build grouped result
     grouped = {}
     step_order = ['Main', 'Step 1', 'Step 2', 'Step 3', 'Follow-up']
-    for t in templates:
+    for r in rows:
+        t = dict(r)
         step = t['step_type']
-        camps = camps_by_template.get(t['id'], [])
-        t['campaigns'] = camps
+        camps = conn.execute("""SELECT c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings
+                                FROM template_campaigns tc
+                                JOIN campaigns c ON tc.campaign_id=c.id
+                                WHERE tc.template_id=?""", (t['id'],)).fetchall()
+        t['campaigns'] = [dict(c) for c in camps]
         t['campaign_ids'] = [c['id'] for c in camps]
         t['campaign_names'] = ', '.join(c['name'] for c in camps)
         ts = t['times_sent'] + sum(c['times_sent'] or 0 for c in camps)
