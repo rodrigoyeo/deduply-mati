@@ -1980,7 +1980,8 @@ def get_templates(campaign_id: Optional[int] = None, search: Optional[str] = Non
         conn.close(); return {"data": []}
     # Fetch all campaign data in ONE query instead of N queries
     template_ids = [t['id'] for t in templates]
-    placeholders = ','.join(['?'] * len(template_ids))
+    ph = '%s' if USE_POSTGRES else '?'
+    placeholders = ','.join([ph] * len(template_ids))
     camps_rows = conn.execute(f"""
         SELECT tc.template_id, c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings
         FROM template_campaigns tc
@@ -2027,7 +2028,8 @@ def get_templates_grouped_by_step():
         conn.close(); return {"data": []}
     # Fetch all campaign data in ONE query instead of N queries
     template_ids = [t['id'] for t in templates]
-    placeholders = ','.join(['?'] * len(template_ids))
+    ph = '%s' if USE_POSTGRES else '?'
+    placeholders = ','.join([ph] * len(template_ids))
     camps_rows = conn.execute(f"""
         SELECT tc.template_id, c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings
         FROM template_campaigns tc
