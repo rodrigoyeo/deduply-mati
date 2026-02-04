@@ -3786,10 +3786,29 @@ const AddUserForm = ({ onSubmit, onCancel }) => {
 };
 
 // Main App
+const validPages = ['dashboard', 'contacts', 'duplicates', 'enrichment', 'campaigns', 'templates', 'settings'];
+const getPageFromHash = () => {
+  const hash = window.location.hash.slice(1);
+  return validPages.includes(hash) ? hash : 'contacts';
+};
+
 function App() {
   const [user, setUser] = useState(null);
-  const [page, setPage] = useState('contacts');
+  const [page, setPageState] = useState(getPageFromHash);
   const [loading, setLoading] = useState(true);
+
+  // Sync page state with URL hash
+  const setPage = useCallback((newPage) => {
+    setPageState(newPage);
+    window.location.hash = newPage;
+  }, []);
+
+  // Handle browser back/forward buttons
+  useEffect(() => {
+    const handleHashChange = () => setPageState(getPageFromHash());
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   useEffect(() => { const check = async () => { if (api.token) { try { const u = await api.get('/auth/me'); setUser(u); } catch { api.setToken(null); } } setLoading(false); }; check(); }, []);
 
