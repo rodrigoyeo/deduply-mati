@@ -2050,8 +2050,18 @@ def update_template(template_id: int, template: TemplateUpdate):
         data['updated_at'] = datetime.now().isoformat()
         conn.execute(f"UPDATE email_templates SET {','.join([f'{k}=?' for k in data.keys()])} WHERE id=?", list(data.values())+[template_id])
     if template.campaign_ids is not None:
-        conn.execute("DELETE FROM template_campaigns WHERE template_id=?", (template_id,))
-        for cid in template.campaign_ids: conn.execute("INSERT INTO template_campaigns (template_id, campaign_id) VALUES (?, ?)", (template_id, cid))
+        # Get existing campaign associations (preserve metrics!)
+        existing = conn.execute("SELECT campaign_id FROM template_campaigns WHERE template_id=?", (template_id,)).fetchall()
+        existing_ids = set(r[0] for r in existing)
+        new_ids = set(template.campaign_ids)
+        # Only delete campaigns that are being removed
+        to_remove = existing_ids - new_ids
+        for cid in to_remove:
+            conn.execute("DELETE FROM template_campaigns WHERE template_id=? AND campaign_id=?", (template_id, cid))
+        # Only add campaigns that are new (INSERT OR IGNORE preserves existing)
+        to_add = new_ids - existing_ids
+        for cid in to_add:
+            conn.execute("INSERT OR IGNORE INTO template_campaigns (template_id, campaign_id) VALUES (?, ?)", (template_id, cid))
     conn.commit(); conn.close(); recalc_template_rates(template_id); return {"message": "Updated"}
 
 @app.delete("/api/templates/{template_id}")
