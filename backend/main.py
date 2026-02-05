@@ -1978,7 +1978,7 @@ def get_templates(campaign_id: Optional[int] = None, search: Optional[str] = Non
     result = []
     for r in rows:
         t = dict(r)
-        camps = conn.execute("SELECT c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings FROM template_campaigns tc JOIN campaigns c ON tc.campaign_id=c.id WHERE tc.template_id=?", (t['id'],)).fetchall()
+        camps = conn.execute("SELECT c.id, c.name, c.country, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings FROM template_campaigns tc JOIN campaigns c ON tc.campaign_id=c.id WHERE tc.template_id=?", (t['id'],)).fetchall()
         t['campaigns'] = [dict(c) for c in camps]
         t['campaign_ids'] = [c['id'] for c in camps]
         t['campaign_names'] = ', '.join(c['name'] for c in camps)
@@ -2007,7 +2007,7 @@ def get_templates_grouped_by_step():
     for r in rows:
         t = dict(r)
         step = t['step_type']
-        camps = conn.execute("""SELECT c.id, c.name, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings
+        camps = conn.execute("""SELECT c.id, c.name, c.country, tc.times_sent, tc.times_opened, tc.times_replied, tc.opportunities, tc.meetings
                                 FROM template_campaigns tc
                                 JOIN campaigns c ON tc.campaign_id=c.id
                                 WHERE tc.template_id=?""", (t['id'],)).fetchall()

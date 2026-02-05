@@ -2752,7 +2752,10 @@ const TemplatesPage = () => {
       const filterCampsNum = filterCampaigns.map(Number);
       if (!filterCampsNum.some(c => tCamps.includes(c))) return false;
     }
-    if (filterCountries.length > 0 && !filterCountries.includes(t.country)) return false;
+    if (filterCountries.length > 0) {
+      const tCountries = (t.campaigns || []).map(c => c.country).filter(Boolean);
+      if (!filterCountries.some(c => tCountries.includes(c))) return false;
+    }
     return true;
   });
 
