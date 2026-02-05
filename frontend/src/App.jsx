@@ -2322,6 +2322,44 @@ const CampaignsPage = () => {
   </div>);
 };
 
+// Template Preview Tooltip
+const TemplatePreviewTooltip = ({ template, children }) => {
+  const [show, setShow] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const timeoutRef = useRef(null);
+
+  const handleMouseEnter = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPosition({ x: rect.right + 10, y: rect.top });
+    timeoutRef.current = setTimeout(() => setShow(true), 300);
+  };
+
+  const handleMouseLeave = () => {
+    clearTimeout(timeoutRef.current);
+    setShow(false);
+  };
+
+  // Strip HTML tags for plain text preview
+  const stripHtml = (html) => {
+    if (!html) return '';
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  };
+
+  return (
+    <span className="template-preview-wrapper" onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+      {children}
+      {show && (template.subject || template.body) && (
+        <div className="template-preview-tooltip" style={{ left: position.x, top: position.y }}>
+          <div className="preview-subject"><strong>Subject:</strong> {template.subject || '(no subject)'}</div>
+          <div className="preview-body">{stripHtml(template.body) || '(no content)'}</div>
+        </div>
+      )}
+    </span>
+  );
+};
+
 // Campaign Template Breakdown - Clay-style spreadsheet editing (no refresh, instant navigation)
 const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }) => {
   // Local state - completely independent, no external refresh
@@ -2503,7 +2541,7 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
                 <tbody>
                   {step.variants.map(variant => (
                     <tr key={variant.id}>
-                      <td><strong>{variant.name}</strong></td>
+                      <td><TemplatePreviewTooltip template={variant}><strong className="template-name-hover">{variant.name}</strong></TemplatePreviewTooltip></td>
                       <td><span className={`variant-badge variant-${variant.variant}`}>{variant.variant}</span></td>
                       {['times_sent', 'times_opened', 'times_replied', 'opportunities', 'meetings'].map(field => {
                         const isHighlight = field === 'opportunities' || field === 'meetings';
