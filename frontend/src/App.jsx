@@ -3020,7 +3020,21 @@ const TemplatesPage = () => {
             {groupedData ? (
               ['Main', 'Followup 1', 'Followup 2', 'Followup 3'].map(stepType => {
                 const stepData = groupedData.find(s => s.step_type === stepType);
-                const templates = stepData?.variants || [];
+                // Apply same filters to grouped view
+                const templates = (stepData?.variants || []).filter(t => {
+                  if (filterSteps.length > 0 && !filterSteps.includes(t.step_type)) return false;
+                  if (filterVariants.length > 0 && !filterVariants.includes(t.variant)) return false;
+                  if (filterCampaigns.length > 0) {
+                    const tCamps = (t.campaign_ids || []).map(Number);
+                    const filterCampsNum = filterCampaigns.map(Number);
+                    if (!filterCampsNum.some(c => tCamps.includes(c))) return false;
+                  }
+                  if (filterCountries.length > 0) {
+                    const tCountries = (t.campaigns || []).map(c => c.country).filter(Boolean);
+                    if (!filterCountries.some(c => tCountries.includes(c))) return false;
+                  }
+                  return true;
+                });
                 const isExpanded = expandedSteps.includes(stepType);
                 return (
                   <div key={stepType} className="template-step-group">
