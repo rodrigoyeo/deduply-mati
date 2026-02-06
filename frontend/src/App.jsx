@@ -3020,8 +3020,13 @@ const TemplatesPage = () => {
             {groupedData ? (
               ['Main', 'Followup 1', 'Followup 2', 'Followup 3'].map(stepType => {
                 const stepData = groupedData.find(s => s.step_type === stepType);
-                // Apply same filters to grouped view
+                // Apply same filters to grouped view (including search)
                 const templates = (stepData?.variants || []).filter(t => {
+                  // Search filter
+                  if (search) {
+                    const s = search.toLowerCase();
+                    if (!t.name?.toLowerCase().includes(s) && !t.subject?.toLowerCase().includes(s)) return false;
+                  }
                   if (filterSteps.length > 0 && !filterSteps.includes(t.step_type)) return false;
                   if (filterVariants.length > 0 && !filterVariants.includes(t.variant)) return false;
                   if (filterCampaigns.length > 0) {
