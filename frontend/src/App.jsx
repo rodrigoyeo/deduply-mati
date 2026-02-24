@@ -1097,6 +1097,16 @@ const ContactsPage = () => {
               {filterOptions.industries?.map(i => <option key={i} value={i}>{i}</option>)}
             </select>
           </div>
+          <div className="filter-group-v2">
+            <label>Keywords</label>
+            <input
+              type="text"
+              value={filters.keywords || ''}
+              onChange={e => setFilters({ ...filters, keywords: e.target.value })}
+              placeholder="roof,roofing,solar..."
+              className="filter-keywords-input"
+            />
+          </div>
         </div>
         {activeFiltersCount > 0 && (
           <div className="active-filters-bar">
@@ -1148,6 +1158,12 @@ const ContactsPage = () => {
                 <span className="filter-chip">
                   <span className="filter-chip-type">Industry:</span> {filters.industry}
                   <X size={14} onClick={() => setFilters({ ...filters, industry: '' })} />
+                </span>
+              )}
+              {filters.keywords && (
+                <span className="filter-chip">
+                  <span className="filter-chip-type">Keywords:</span> {filters.keywords}
+                  <X size={14} onClick={() => setFilters({ ...filters, keywords: '' })} />
                 </span>
               )}
             </div>

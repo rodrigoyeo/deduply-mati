@@ -540,7 +540,8 @@ def delete_user(user_id: int):
 def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = None, status: Optional[str] = None,
                 campaigns: Optional[str] = None, outreach_lists: Optional[str] = None, country: Optional[str] = None,
                 country_strategy: Optional[str] = None, seniority: Optional[str] = None, industry: Optional[str] = None,
-                email_status: Optional[str] = None, show_duplicates: bool = False, sort_by: str = "id", sort_order: str = "desc"):
+                email_status: Optional[str] = None, keywords: Optional[str] = None,
+                show_duplicates: bool = False, sort_by: str = "id", sort_order: str = "desc"):
     conn = get_db()
     where = ["1=1"] if show_duplicates else ["c.is_duplicate=0"]
     params = []
@@ -579,6 +580,13 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
         elif len(es_list) > 1:
             placeholders = ','.join(['?'] * len(es_list))
             where.append(f"c.email_status IN ({placeholders})"); params.extend(es_list)
+
+    if keywords:
+        kw_list = [k.strip() for k in keywords.split(',') if k.strip()]
+        if kw_list:
+            kw_conditions = ' OR '.join(['c.keywords LIKE ?' for _ in kw_list])
+            where.append(f"({kw_conditions})")
+            params.extend([f"%{kw}%" for kw in kw_list])
 
     # Filter by campaign using junction table (supports multi-select)
     if campaigns:
@@ -651,7 +659,7 @@ def get_contacts(page: int = 1, page_size: int = 50, search: Optional[str] = Non
 def export_contacts(columns: Optional[str] = None, search: Optional[str] = None, status: Optional[str] = None,
                    campaigns: Optional[str] = None, outreach_lists: Optional[str] = None, country: Optional[str] = None,
                    country_strategy: Optional[str] = None, seniority: Optional[str] = None, industry: Optional[str] = None,
-                   email_status: Optional[str] = None, valid_emails_only: bool = False):
+                   email_status: Optional[str] = None, keywords: Optional[str] = None, valid_emails_only: bool = False):
     conn = get_db()
     where = ["c.is_duplicate=0"]
     params = []
@@ -668,6 +676,12 @@ def export_contacts(columns: Optional[str] = None, search: Optional[str] = None,
     # Email verification filters
     if email_status: where.append("c.email_status=?"); params.append(email_status)
     if valid_emails_only: where.append("c.email_status='Valid'")
+    if keywords:
+        kw_list = [k.strip() for k in keywords.split(',') if k.strip()]
+        if kw_list:
+            kw_conditions = ' OR '.join(['c.keywords LIKE ?' for _ in kw_list])
+            where.append(f"({kw_conditions})")
+            params.extend([f"%{kw}%" for kw in kw_list])
     if campaigns:
         joins.append("JOIN contact_campaigns cc ON c.id = cc.contact_id JOIN campaigns camp ON cc.campaign_id = camp.id")
         where.append("camp.name=?"); params.append(campaigns)
