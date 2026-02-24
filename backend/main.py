@@ -26,8 +26,9 @@ import tempfile
 import uuid
 import traceback
 from data_cleaning import (
-    clean_name, clean_company_name, extract_domain_name,
-    preview_name_cleaning, preview_company_cleaning, analyze_data_quality
+    clean_name, clean_company_name, clean_title, extract_domain_name,
+    preview_name_cleaning, preview_company_cleaning, preview_title_cleaning,
+    analyze_data_quality
 )
 
 app = FastAPI(title="Deduply API", version="5.2")
@@ -2359,7 +2360,7 @@ class CleaningApplyRequest(BaseModel):
 def get_cleaning_stats():
     """Get data quality statistics for the contacts database."""
     conn = get_db()
-    rows = conn.execute("SELECT id, first_name, last_name, company, domain FROM contacts WHERE is_duplicate=0").fetchall()
+    rows = conn.execute("SELECT id, first_name, last_name, title, company, domain FROM contacts WHERE is_duplicate=0").fetchall()
     conn.close()
     contacts = [dict(r) for r in rows]
     stats = analyze_data_quality(contacts)
@@ -2507,6 +2508,74 @@ def apply_all_company_cleaning(limit: int = 10000):
     conn.commit()
     conn.close()
     return {"updated": updated, "message": f"Cleaned {updated} company names"}
+
+@app.get("/api/cleaning/titles/preview")
+def preview_title_changes(limit: int = 500):
+    """Preview title cleaning changes without applying them."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT id, title FROM contacts
+        WHERE is_duplicate=0
+        AND title IS NOT NULL AND title != ''
+    """).fetchall()
+    conn.close()
+
+    contacts = [dict(r) for r in rows]
+    all_changes = preview_title_cleaning(contacts)
+    return {"changes": all_changes[:limit], "total": len(all_changes)}
+
+@app.post("/api/cleaning/titles/apply")
+def apply_title_cleaning(req: CleaningApplyRequest):
+    """Apply title cleaning to selected contacts."""
+    if not req.contact_ids:
+        raise HTTPException(400, "No contacts selected")
+
+    conn = get_db()
+    updated = 0
+    now = datetime.now().isoformat()
+
+    for cid in req.contact_ids:
+        row = conn.execute("SELECT title FROM contacts WHERE id=?", (cid,)).fetchone()
+        if row and row['title']:
+            cleaned = clean_title(row['title'])
+            if cleaned and cleaned != row['title']:
+                conn.execute(
+                    "UPDATE contacts SET title=?, updated_at=? WHERE id=?",
+                    (cleaned, now, cid)
+                )
+                updated += 1
+
+    conn.commit()
+    conn.close()
+    return {"updated": updated, "message": f"Cleaned {updated} titles"}
+
+@app.post("/api/cleaning/titles/apply-all")
+def apply_all_title_cleaning(limit: int = 10000):
+    """Apply title cleaning to all contacts that need it."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT id, title FROM contacts
+        WHERE is_duplicate=0
+        AND title IS NOT NULL AND title != ''
+    """).fetchall()
+
+    updated = 0
+    now = datetime.now().isoformat()
+
+    for row in rows:
+        cleaned = clean_title(row['title'])
+        if cleaned and cleaned != row['title']:
+            conn.execute(
+                "UPDATE contacts SET title=?, updated_at=? WHERE id=?",
+                (cleaned, now, row['id'])
+            )
+            updated += 1
+            if updated >= limit:
+                break
+
+    conn.commit()
+    conn.close()
+    return {"updated": updated, "message": f"Cleaned {updated} titles"}
 
 # ==================== END DATA CLEANING ====================
 

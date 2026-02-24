@@ -9,6 +9,14 @@ from typing import Optional, Dict, List, Tuple
 # Common name prefixes that should stay lowercase
 NAME_PARTICLES = {'van', 'von', 'de', 'del', 'della', 'di', 'da', 'le', 'la', 'du', 'des', 'el', 'al'}
 
+# Title-specific: acronyms to keep uppercase
+TITLE_ACRONYMS = {'CEO', 'CFO', 'CTO', 'COO', 'CIO', 'CMO', 'CSO', 'CPO', 'VP', 'SVP', 'EVP',
+                   'HR', 'IT', 'AI', 'ML', 'SRL', 'SA', 'HVAC', 'BDR', 'SDR', 'PM', 'QA', 'UX', 'UI'}
+
+# Title-specific: Spanish/English connectors to keep lowercase (except at start)
+TITLE_CONNECTORS = {'de', 'del', 'y', 'e', 'en', 'la', 'el', 'los', 'las', 'al', 'a', 'para',
+                     'of', 'and', 'the', 'in', 'for', 'at', 'to'}
+
 # Common company suffixes to remove or standardize
 # IMPORTANT: Patterns must require a delimiter (space, comma, &) before the suffix
 # to avoid matching suffixes that are part of words (e.g., "México" should NOT match "Co")
@@ -283,6 +291,89 @@ def preview_company_cleaning(contacts: List[Dict]) -> List[Dict]:
     return changes
 
 
+def clean_title(title: Optional[str]) -> Optional[str]:
+    """
+    Clean and properly capitalize a job title.
+
+    - Strips leading/trailing whitespace
+    - Collapses multiple spaces
+    - Converts to Title Case with smart rules
+    - Keeps acronyms uppercase (CEO, VP, HVAC, etc.)
+    - Keeps connectors lowercase (de, del, y, of, and, etc.)
+
+    Returns:
+        Cleaned title or None if input was None/empty
+    """
+    if not title or not title.strip():
+        return None
+
+    # Strip and collapse whitespace
+    title = re.sub(r'\s+', ' ', title.strip())
+
+    # Split into words and process each
+    words = title.split()
+    cleaned_words = []
+
+    for i, word in enumerate(words):
+        word_upper = word.upper()
+
+        # Check if it's an acronym (keep uppercase)
+        if word_upper in TITLE_ACRONYMS:
+            cleaned_words.append(word_upper)
+            continue
+
+        # Check if it's a connector (keep lowercase, except first word)
+        if i > 0 and word.lower() in TITLE_CONNECTORS:
+            cleaned_words.append(word.lower())
+            continue
+
+        # Handle words with slashes (e.g., "Director/Gerente")
+        if '/' in word:
+            parts = word.split('/')
+            cleaned_parts = [p.capitalize() if p.upper() not in TITLE_ACRONYMS else p.upper() for p in parts]
+            cleaned_words.append('/'.join(cleaned_parts))
+            continue
+
+        # Handle hyphenated words (e.g., "Vice-Presidente")
+        if '-' in word:
+            parts = word.split('-')
+            cleaned_parts = [p.capitalize() if p.upper() not in TITLE_ACRONYMS else p.upper() for p in parts]
+            cleaned_words.append('-'.join(cleaned_parts))
+            continue
+
+        # Default: capitalize first letter, lowercase rest
+        cleaned_words.append(word.capitalize())
+
+    return ' '.join(cleaned_words)
+
+
+def preview_title_cleaning(contacts: List[Dict]) -> List[Dict]:
+    """
+    Preview title cleaning changes without applying them.
+
+    Returns list of contacts that would be changed with before/after values.
+    """
+    changes = []
+
+    for contact in contacts:
+        title = contact.get('title')
+        if not title or not title.strip():
+            continue
+
+        cleaned = clean_title(title)
+
+        if cleaned and cleaned != title:
+            changes.append({
+                'id': contact.get('id'),
+                'title': {
+                    'before': title,
+                    'after': cleaned,
+                }
+            })
+
+    return changes
+
+
 # Analysis functions for reporting
 def analyze_data_quality(contacts: List[Dict]) -> Dict:
     """
@@ -304,11 +395,15 @@ def analyze_data_quality(contacts: List[Dict]) -> Dict:
             'has_suffix': 0,
             'domain_mismatch': 0,
             'needs_cleaning': 0
+        },
+        'titles': {
+            'needs_cleaning': 0
         }
     }
 
     names_needing_cleaning = 0
     companies_needing_cleaning = 0
+    titles_needing_cleaning = 0
 
     for contact in contacts:
         first = contact.get('first_name', '') or ''
@@ -350,8 +445,16 @@ def analyze_data_quality(contacts: List[Dict]) -> Dict:
             if domain_name and domain_name.lower() not in company.lower().replace(' ', ''):
                 stats['companies']['domain_mismatch'] += 1
 
+        # Title analysis
+        title = contact.get('title', '') or ''
+        if title.strip():
+            cleaned_title = clean_title(title)
+            if cleaned_title and cleaned_title != title:
+                titles_needing_cleaning += 1
+
     # Use actual counts of what would be cleaned
     stats['names']['needs_cleaning'] = names_needing_cleaning
     stats['companies']['needs_cleaning'] = companies_needing_cleaning
+    stats['titles']['needs_cleaning'] = titles_needing_cleaning
 
     return stats

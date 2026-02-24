@@ -1486,12 +1486,15 @@ const EnrichmentPage = () => {
   const [activeTab, setActiveTab] = useState('names');
   const [nameChanges, setNameChanges] = useState([]);
   const [companyChanges, setCompanyChanges] = useState([]);
+  const [titleChanges, setTitleChanges] = useState([]);
   const [nameTotalCount, setNameTotalCount] = useState(0);
   const [companyTotalCount, setCompanyTotalCount] = useState(0);
+  const [titleTotalCount, setTitleTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
   const [selectedNames, setSelectedNames] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
+  const [selectedTitles, setSelectedTitles] = useState([]);
   // Email verification state
   const [verifyStatus, setVerifyStatus] = useState(null);
   const [verifyJob, setVerifyJob] = useState(null);
@@ -1520,6 +1523,16 @@ const EnrichmentPage = () => {
       const r = await api.get('/cleaning/companies/preview?limit=500');
       setCompanyChanges(r.changes || []);
       setCompanyTotalCount(r.total || 0);
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const fetchTitlePreview = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/cleaning/titles/preview?limit=500');
+      setTitleChanges(r.changes || []);
+      setTitleTotalCount(r.total || 0);
     } catch (e) { addToast(e.message, 'error'); }
     setLoading(false);
   };
@@ -1563,6 +1576,7 @@ const EnrichmentPage = () => {
   useEffect(() => {
     if (activeTab === 'names') fetchNamePreview();
     else if (activeTab === 'companies') fetchCompanyPreview();
+    else if (activeTab === 'titles') fetchTitlePreview();
     else if (activeTab === 'verify') fetchVerifyStatus();
   }, [activeTab]);
 
@@ -1584,14 +1598,15 @@ const EnrichmentPage = () => {
   }, [verifyJob?.id, verifyJob?.status]);
 
   const handleApplySelected = async (type) => {
-    const ids = type === 'names' ? selectedNames : selectedCompanies;
+    const ids = type === 'names' ? selectedNames : type === 'titles' ? selectedTitles : selectedCompanies;
     if (ids.length === 0) { addToast('Select items to apply', 'error'); return; }
     setApplying(true);
     try {
-      const endpoint = type === 'names' ? '/cleaning/names/apply' : '/cleaning/companies/apply';
+      const endpoint = type === 'names' ? '/cleaning/names/apply' : type === 'titles' ? '/cleaning/titles/apply' : '/cleaning/companies/apply';
       const r = await api.post(endpoint, { contact_ids: ids, field: type });
       addToast(r.message, 'success');
       if (type === 'names') { setSelectedNames([]); fetchNamePreview(); }
+      else if (type === 'titles') { setSelectedTitles([]); fetchTitlePreview(); }
       else { setSelectedCompanies([]); fetchCompanyPreview(); }
       fetchStats();
     } catch (e) { addToast(e.message, 'error'); }
@@ -1599,14 +1614,16 @@ const EnrichmentPage = () => {
   };
 
   const handleApplyAll = async (type) => {
-    const count = type === 'names' ? nameTotalCount : companyTotalCount;
+    const count = type === 'names' ? nameTotalCount : type === 'titles' ? titleTotalCount : companyTotalCount;
     if (!window.confirm(`Apply cleaning to ALL ${count.toLocaleString()} ${type}?\n\nThis will process all items in the database, not just the visible ones.\n\nThis action cannot be undone.`)) return;
     setApplying(true);
     try {
-      const endpoint = type === 'names' ? '/cleaning/names/apply-all' : '/cleaning/companies/apply-all';
+      const endpoint = type === 'names' ? '/cleaning/names/apply-all' : type === 'titles' ? '/cleaning/titles/apply-all' : '/cleaning/companies/apply-all';
       const r = await api.post(endpoint);
       addToast(r.message, 'success');
-      if (type === 'names') fetchNamePreview(); else fetchCompanyPreview();
+      if (type === 'names') fetchNamePreview();
+      else if (type === 'titles') fetchTitlePreview();
+      else fetchCompanyPreview();
       fetchStats();
     } catch (e) { addToast(e.message, 'error'); }
     setApplying(false);
@@ -1615,6 +1632,8 @@ const EnrichmentPage = () => {
   const toggleSelectAll = (type) => {
     if (type === 'names') {
       setSelectedNames(selectedNames.length === nameChanges.length ? [] : nameChanges.map(c => c.id));
+    } else if (type === 'titles') {
+      setSelectedTitles(selectedTitles.length === titleChanges.length ? [] : titleChanges.map(c => c.id));
     } else {
       setSelectedCompanies(selectedCompanies.length === companyChanges.length ? [] : companyChanges.map(c => c.id));
     }
@@ -1650,11 +1669,11 @@ const EnrichmentPage = () => {
             <span className="dup-stat-label">Companies to Clean</span>
           </div>
         </div>
-        <div className="dup-stat-card">
-          <div className="dup-stat-icon"><AlertTriangle size={24} /></div>
+        <div className="dup-stat-card accent">
+          <div className="dup-stat-icon"><Briefcase size={24} /></div>
           <div className="dup-stat-info">
-            <span className="dup-stat-value">{stats?.companies?.has_parentheses?.toLocaleString() || 0}</span>
-            <span className="dup-stat-label">With Parentheses</span>
+            <span className="dup-stat-value">{stats?.titles?.needs_cleaning?.toLocaleString() || 0}</span>
+            <span className="dup-stat-label">Titles to Clean</span>
           </div>
         </div>
         <div className="dup-stat-card accent">
@@ -1676,6 +1695,10 @@ const EnrichmentPage = () => {
           <Building2 size={18} /> Company Cleaning
           {companyTotalCount > 0 && <span className="tab-badge">{companyTotalCount}</span>}
         </button>
+        <button className={`tab-btn ${activeTab === 'titles' ? 'active' : ''}`} onClick={() => setActiveTab('titles')}>
+          <Briefcase size={18} /> Title Cleaning
+          {titleTotalCount > 0 && <span className="tab-badge">{titleTotalCount}</span>}
+        </button>
         <button className={`tab-btn ${activeTab === 'verify' ? 'active' : ''}`} onClick={() => setActiveTab('verify')}>
           <Mail size={18} /> Email Verification
           {verifyStatus?.unverified_count > 0 && <span className="tab-badge">{verifyStatus.unverified_count.toLocaleString()}</span>}
@@ -1683,17 +1706,18 @@ const EnrichmentPage = () => {
       </div>
 
       {/* Action Bar */}
-      {((activeTab === 'names' && nameChanges.length > 0) || (activeTab === 'companies' && companyChanges.length > 0)) && (
+      {((activeTab === 'names' && nameChanges.length > 0) || (activeTab === 'companies' && companyChanges.length > 0) || (activeTab === 'titles' && titleChanges.length > 0)) && (
         <div className="duplicates-action-bar">
           <div className="action-bar-info">
             <input
               type="checkbox"
-              checked={activeTab === 'names' ? selectedNames.length === nameChanges.length : selectedCompanies.length === companyChanges.length}
+              checked={activeTab === 'names' ? selectedNames.length === nameChanges.length : activeTab === 'titles' ? selectedTitles.length === titleChanges.length : selectedCompanies.length === companyChanges.length}
               onChange={() => toggleSelectAll(activeTab)}
             />
             <span>
-              {activeTab === 'names' ? selectedNames.length : selectedCompanies.length} of {activeTab === 'names' ? nameChanges.length : companyChanges.length} selected
+              {activeTab === 'names' ? selectedNames.length : activeTab === 'titles' ? selectedTitles.length : selectedCompanies.length} of {activeTab === 'names' ? nameChanges.length : activeTab === 'titles' ? titleChanges.length : companyChanges.length} selected
               {activeTab === 'names' && nameTotalCount > nameChanges.length && <span style={{opacity: 0.7}}> (showing {nameChanges.length} of {nameTotalCount} total)</span>}
+              {activeTab === 'titles' && titleTotalCount > titleChanges.length && <span style={{opacity: 0.7}}> (showing {titleChanges.length} of {titleTotalCount} total)</span>}
               {activeTab === 'companies' && companyTotalCount > companyChanges.length && <span style={{opacity: 0.7}}> (showing {companyChanges.length} of {companyTotalCount} total)</span>}
             </span>
           </div>
@@ -1701,7 +1725,7 @@ const EnrichmentPage = () => {
             <button
               className="btn btn-secondary"
               onClick={() => handleApplySelected(activeTab)}
-              disabled={applying || (activeTab === 'names' ? selectedNames.length === 0 : selectedCompanies.length === 0)}
+              disabled={applying || (activeTab === 'names' ? selectedNames.length === 0 : activeTab === 'titles' ? selectedTitles.length === 0 : selectedCompanies.length === 0)}
             >
               {applying ? <Loader2 className="spin" size={16} /> : <Check size={16} />}
               Apply Selected
@@ -1712,7 +1736,7 @@ const EnrichmentPage = () => {
               disabled={applying}
             >
               {applying ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
-              Apply All ({activeTab === 'names' ? nameTotalCount.toLocaleString() : companyTotalCount.toLocaleString()})
+              Apply All ({activeTab === 'names' ? nameTotalCount.toLocaleString() : activeTab === 'titles' ? titleTotalCount.toLocaleString() : companyTotalCount.toLocaleString()})
             </button>
           </div>
         </div>
@@ -1815,6 +1839,51 @@ const EnrichmentPage = () => {
                     <td><ArrowRightLeft size={14} /></td>
                     <td><span className="after">{change.company.after}</span></td>
                     <td><span className="reason-badge">{change.company.reason}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : activeTab === 'titles' ? (
+        titleChanges.length === 0 ? (
+          <div className="empty-state">
+            <CheckCircle size={48} />
+            <h3>All titles look good!</h3>
+            <p>No title cleaning needed at this time.</p>
+          </div>
+        ) : (
+          <div className="enrichment-table-container">
+            <table className="enrichment-table">
+              <thead>
+                <tr>
+                  <th style={{width: '40px'}}></th>
+                  <th>Before</th>
+                  <th style={{width: '40px'}}></th>
+                  <th>After</th>
+                </tr>
+              </thead>
+              <tbody>
+                {titleChanges.map(change => (
+                  <tr key={change.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedTitles.includes(change.id)}
+                        onChange={() => setSelectedTitles(prev =>
+                          prev.includes(change.id) ? prev.filter(id => id !== change.id) : [...prev, change.id]
+                        )}
+                      />
+                    </td>
+                    <td>
+                      <div className="change-cell">
+                        <span className="before">{change.title.before}</span>
+                        <ArrowRightLeft size={14} />
+                        <span className="after">{change.title.after}</span>
+                      </div>
+                    </td>
+                    <td></td>
+                    <td></td>
                   </tr>
                 ))}
               </tbody>
