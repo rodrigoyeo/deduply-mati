@@ -4678,6 +4678,25 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   min-width: 180px;
 }
 
+.bulk-new-list-input {
+  min-width: 160px;
+  padding: 6px 10px;
+  border: 1px solid var(--coral);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  background: white;
+  color: var(--text-primary);
+}
+
+.bulk-new-list-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 108, 93, 0.2);
+}
+
+.bulk-new-list-input::placeholder {
+  color: var(--text-muted);
+}
+
 .bulk-action-select {
   min-width: 120px;
 }

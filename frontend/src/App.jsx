@@ -724,6 +724,7 @@ const ContactsPage = () => {
   const [bulkField, setBulkField] = useState('');
   const [bulkAction, setBulkAction] = useState('set');
   const [bulkValue, setBulkValue] = useState('');
+  const [bulkNewList, setBulkNewList] = useState('');
   const [bulkLoading, setBulkLoading] = useState(false);
   const { data: filterOptions } = useData('/filters');
   const columnsRef = useRef(null);
@@ -852,10 +853,11 @@ const ContactsPage = () => {
     if (bulkField !== 'delete' && !bulkValue && bulkAction !== 'remove') return;
     setBulkLoading(true);
     try {
+      const effectiveBulkValue = bulkValue === '__new__' ? bulkNewList.trim() : bulkValue;
       const payload = {
         field: bulkField === 'delete' ? 'id' : bulkField,
         action: bulkField === 'delete' ? 'delete' : bulkAction,
-        value: bulkValue
+        value: effectiveBulkValue
       };
       // If selectAll is true, send filters instead of IDs
       if (selectAll) {
@@ -869,7 +871,7 @@ const ContactsPage = () => {
       const result = await api.post('/contacts/bulk', payload);
       addToast(`Updated ${result.updated.toLocaleString()} contacts`, 'success');
       setSelected(new Set()); setSelectAll(false); setSelectLimit('');
-      setBulkField(''); setBulkAction('set'); setBulkValue('');
+      setBulkField(''); setBulkAction('set'); setBulkValue(''); setBulkNewList('');
       fetchContacts();
     } catch (e) { addToast(e.message, 'error'); }
     setBulkLoading(false);
@@ -1203,7 +1205,7 @@ const ContactsPage = () => {
       )}
       <div className="bulk-actions">
         <div className="bulk-group">
-          <select value={bulkField} onChange={e => { setBulkField(e.target.value); setBulkValue(''); setBulkAction('set'); }} className="bulk-field-select">
+          <select value={bulkField} onChange={e => { setBulkField(e.target.value); setBulkValue(''); setBulkAction('set'); setBulkNewList(''); }} className="bulk-field-select">
             <option value="">Select field to edit...</option>
             {bulkEditableFields.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
           </select>
@@ -1215,20 +1217,33 @@ const ContactsPage = () => {
             </select>
           )}
           {selectedBulkField && selectedBulkField.type !== 'action' && (
-            <select value={bulkValue} onChange={e => setBulkValue(e.target.value)} className="bulk-value-select">
-              <option value="">Select value...</option>
-              {selectedBulkField.options.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
+            <>
+              <select value={bulkValue} onChange={e => { setBulkValue(e.target.value); if (e.target.value !== '__new__') setBulkNewList(''); }} className="bulk-value-select">
+                <option value="">Select value...</option>
+                {selectedBulkField.options.map(o => <option key={o} value={o}>{o}</option>)}
+                {selectedBulkField.id === 'outreach_lists' && <option value="__new__">+ Create new list...</option>}
+              </select>
+              {bulkValue === '__new__' && (
+                <input
+                  type="text"
+                  value={bulkNewList}
+                  onChange={e => setBulkNewList(e.target.value)}
+                  placeholder="New list name..."
+                  className="bulk-new-list-input"
+                  autoFocus
+                />
+              )}
+            </>
           )}
           {selectedBulkField && selectedBulkField.type === 'action' && (
             <span className="bulk-warning"><AlertTriangle size={16} /> This will permanently delete {selectedCount.toLocaleString()} contacts</span>
           )}
-          <button className="btn btn-primary" onClick={executeBulkAction} disabled={!bulkField || bulkLoading || (bulkField !== 'delete' && !bulkValue)}>
+          <button className="btn btn-primary" onClick={executeBulkAction} disabled={!bulkField || bulkLoading || (bulkField !== 'delete' && (!bulkValue || (bulkValue === '__new__' && !bulkNewList.trim())))}>
             {bulkLoading ? <Loader2 className="spin" size={16} /> : 'Apply'}
           </button>
         </div>
       </div>
-      <button className="btn btn-text" onClick={() => { setSelected(new Set()); setSelectAll(false); setBulkField(''); setSelectLimit(''); }}><X size={14} /> Clear</button>
+      <button className="btn btn-text" onClick={() => { setSelected(new Set()); setSelectAll(false); setBulkField(''); setSelectLimit(''); setBulkNewList(''); }}><X size={14} /> Clear</button>
     </div>)}
 
     <div className="table-wrapper"><table className="data-table"><thead><tr><th className="col-checkbox"><input type="checkbox" checked={selectAll || (contacts.length > 0 && selected.size === contacts.length)} onChange={toggleSelectAll} /></th>{columns.map(col => (<th key={col.id} className="sortable" onClick={() => handleSort(col.id)}>{col.label}{sortBy === col.id && <ArrowUpDown size={12} />}</th>))}<th className="col-actions"></th></tr></thead>
