@@ -352,6 +352,7 @@ class BulkUpdateRequest(BaseModel):
     field: str
     value: Optional[str] = None
     action: Optional[str] = None
+    select_limit: Optional[int] = None
 
 class CampaignCreate(BaseModel):
     name: str
@@ -914,8 +915,17 @@ def bulk_update(req: BulkUpdateRequest):
         if f.get('country'): where.append("c.company_country=?"); params.append(f['country'])
         if f.get('seniority'): where.append("c.seniority=?"); params.append(f['seniority'])
         if f.get('industry'): where.append("c.industry=?"); params.append(f['industry'])
+        if f.get('keywords'):
+            kw_val = f['keywords']
+            kw_list = [k.strip() for k in kw_val.split(',') if k.strip()] if isinstance(kw_val, str) else kw_val
+            if kw_list:
+                kw_conditions = ' OR '.join(['c.keywords LIKE ?' for _ in kw_list])
+                where.append(f"({kw_conditions})")
+                params.extend([f"%{kw}%" for kw in kw_list])
 
         query = f"{query} {' '.join(joins)} WHERE {' AND '.join(where)}"
+        if req.select_limit and req.select_limit > 0:
+            query += f" LIMIT {int(req.select_limit)}"
         rows = conn.execute(query, params).fetchall()
         contact_ids = [row[0] for row in rows]
     else:

@@ -714,6 +714,7 @@ const ContactsPage = () => {
   const [sortOrder, setSortOrder] = useState('desc');
   const [selected, setSelected] = useState(new Set());
   const [selectAll, setSelectAll] = useState(false);
+  const [selectLimit, setSelectLimit] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [showColumns, setShowColumns] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -859,12 +860,15 @@ const ContactsPage = () => {
       // If selectAll is true, send filters instead of IDs
       if (selectAll) {
         payload.filters = { search, ...filters };
+        if (selectLimitNum > 0 && selectLimitNum < total) {
+          payload.select_limit = selectLimitNum;
+        }
       } else {
         payload.contact_ids = Array.from(selected);
       }
       const result = await api.post('/contacts/bulk', payload);
       addToast(`Updated ${result.updated.toLocaleString()} contacts`, 'success');
-      setSelected(new Set()); setSelectAll(false);
+      setSelected(new Set()); setSelectAll(false); setSelectLimit('');
       setBulkField(''); setBulkAction('set'); setBulkValue('');
       fetchContacts();
     } catch (e) { addToast(e.message, 'error'); }
@@ -949,7 +953,8 @@ const ContactsPage = () => {
 
   const handleSort = (col) => { if (sortBy === col) setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc'); else { setSortBy(col); setSortOrder('desc'); } };
 
-  const selectedCount = selectAll ? total : selected.size;
+  const selectLimitNum = selectLimit ? parseInt(selectLimit) : 0;
+  const selectedCount = selectAll ? (selectLimitNum > 0 && selectLimitNum < total ? selectLimitNum : total) : selected.size;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (<div className="page">
@@ -1176,7 +1181,26 @@ const ContactsPage = () => {
     )}
 
     {selectedCount > 0 && (<div className="bulk-bar">
-      <span className="bulk-count">{selectedCount.toLocaleString()} selected {selectAll && <span className="bulk-all-note">(all matching filters)</span>}</span>
+      <span className="bulk-count">
+        {selectedCount.toLocaleString()} selected
+        {selectAll && !selectLimitNum && <span className="bulk-all-note"> (all matching filters)</span>}
+        {selectAll && selectLimitNum > 0 && selectLimitNum < total && <span className="bulk-all-note"> of {total.toLocaleString()}</span>}
+      </span>
+      {selectAll && (
+        <div className="bulk-limit-input">
+          <span className="bulk-limit-label">Limit to</span>
+          <input
+            type="number"
+            value={selectLimit}
+            onChange={e => setSelectLimit(e.target.value)}
+            placeholder={total.toLocaleString()}
+            min="1"
+            max={total}
+            className="select-limit-input"
+          />
+          <span className="bulk-limit-label">contacts</span>
+        </div>
+      )}
       <div className="bulk-actions">
         <div className="bulk-group">
           <select value={bulkField} onChange={e => { setBulkField(e.target.value); setBulkValue(''); setBulkAction('set'); }} className="bulk-field-select">
@@ -1204,7 +1228,7 @@ const ContactsPage = () => {
           </button>
         </div>
       </div>
-      <button className="btn btn-text" onClick={() => { setSelected(new Set()); setSelectAll(false); setBulkField(''); }}><X size={14} /> Clear</button>
+      <button className="btn btn-text" onClick={() => { setSelected(new Set()); setSelectAll(false); setBulkField(''); setSelectLimit(''); }}><X size={14} /> Clear</button>
     </div>)}
 
     <div className="table-wrapper"><table className="data-table"><thead><tr><th className="col-checkbox"><input type="checkbox" checked={selectAll || (contacts.length > 0 && selected.size === contacts.length)} onChange={toggleSelectAll} /></th>{columns.map(col => (<th key={col.id} className="sortable" onClick={() => handleSort(col.id)}>{col.label}{sortBy === col.id && <ArrowUpDown size={12} />}</th>))}<th className="col-actions"></th></tr></thead>
