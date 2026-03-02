@@ -1,0 +1,180 @@
+"""
+ReachInbox router — /api/reachinbox/*
+"""
+from datetime import datetime
+from typing import Optional
+
+import httpx
+from fastapi import APIRouter, HTTPException, Depends
+
+from database import get_db
+from models import ReachInboxPushRequest
+from shared import get_current_user
+
+router = APIRouter()
+
+REACHINBOX_API_BASE = "https://api.reachinbox.ai/api/v1"
+REACHINBOX_WORKSPACE_KEYS = {
+    "US": "reachinbox_api_key_us",
+    "MX": "reachinbox_api_key_mx",
+}
+
+
+def _get_reachinbox_key(workspace: str, conn) -> Optional[str]:
+    """Fetch ReachInbox API key for a workspace from settings table."""
+    settings_key = REACHINBOX_WORKSPACE_KEYS.get(workspace.upper())
+    if not settings_key:
+        return None
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (settings_key,)).fetchone()
+    return row[0] if row and row[0] else None
+
+
+@router.post("/api/reachinbox/push")
+async def push_to_reachinbox(req: ReachInboxPushRequest, user: dict = Depends(get_current_user)):
+    """Push contacts into a ReachInbox campaign sequence (US or MX workspace)."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    workspace = req.workspace.upper()
+    if workspace not in ("US", "MX"):
+        raise HTTPException(400, "workspace must be US or MX")
+
+    conn = get_db()
+    api_key = _get_reachinbox_key(workspace, conn)
+    if not api_key:
+        conn.close()
+        raise HTTPException(400, f"ReachInbox API key for {workspace} not configured. "
+                                 f"Add reachinbox_api_key_{workspace.lower()} in Settings.")
+
+    allowed_statuses = req.email_status_filter or ["Valid"]
+    placeholders = ",".join(["?"] * len(req.contact_ids))
+    contacts = conn.execute(
+        f"SELECT id, first_name, last_name, email, company, website, person_linkedin_url, "
+        f"email_status, pipeline_stage FROM contacts WHERE id IN ({placeholders})",
+        req.contact_ids
+    ).fetchall()
+
+    stats = {"pushed": 0, "skipped_invalid_email": 0, "skipped_already_pushed": 0, "failed": 0}
+    now = datetime.now().isoformat()
+    batch = []
+
+    for c in contacts:
+        cid, fname, lname, email, company, website, linkedin, email_status, pipeline = \
+            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7] or "Unknown", c[8] or "new"
+
+        if email_status not in allowed_statuses:
+            conn.execute(
+                "INSERT INTO reachinbox_push_log (contact_id, campaign_id, reachinbox_campaign_id, workspace, status, error_message) "
+                "VALUES (?, ?, ?, ?, 'skipped', ?)",
+                (cid, req.deduply_campaign_id, req.reachinbox_campaign_id, workspace,
+                 f"email_status={email_status} not in {allowed_statuses}")
+            )
+            stats["skipped_invalid_email"] += 1
+            continue
+
+        already = conn.execute(
+            "SELECT id FROM reachinbox_push_log WHERE contact_id=? AND reachinbox_campaign_id=? AND status='pushed'",
+            (cid, req.reachinbox_campaign_id)
+        ).fetchone()
+        if already:
+            stats["skipped_already_pushed"] += 1
+            continue
+
+        batch.append({"_db_id": cid, "email": email, "firstName": fname or "",
+                      "lastName": lname or "", "companyName": company or "",
+                      "website": website or "", "linkedinUrl": linkedin or ""})
+
+    BATCH_SIZE = 50
+    for i in range(0, len(batch), BATCH_SIZE):
+        chunk = batch[i:i + BATCH_SIZE]
+        leads_payload = [{k: v for k, v in lead.items() if k != "_db_id"} for lead in chunk]
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{REACHINBOX_API_BASE}/leads",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"campaignId": req.reachinbox_campaign_id, "leads": leads_payload}
+                )
+            resp_ok = resp.status_code in (200, 201)
+            error_msg = None if resp_ok else (
+                resp.json().get("message", f"HTTP {resp.status_code}") if resp.content else f"HTTP {resp.status_code}"
+            )
+
+            for lead in chunk:
+                db_id = lead["_db_id"]
+                if resp_ok:
+                    conn.execute(
+                        "UPDATE contacts SET reachinbox_workspace=?, reachinbox_campaign_id=?, "
+                        "reachinbox_pushed_at=?, pipeline_stage='pushed', updated_at=? WHERE id=?",
+                        (workspace, req.reachinbox_campaign_id, now, now, db_id)
+                    )
+                    conn.execute(
+                        "INSERT INTO reachinbox_push_log (contact_id, campaign_id, reachinbox_campaign_id, workspace, status) "
+                        "VALUES (?, ?, ?, ?, 'pushed')",
+                        (db_id, req.deduply_campaign_id, req.reachinbox_campaign_id, workspace)
+                    )
+                    stats["pushed"] += 1
+                else:
+                    conn.execute(
+                        "INSERT INTO reachinbox_push_log (contact_id, campaign_id, reachinbox_campaign_id, workspace, status, error_message) "
+                        "VALUES (?, ?, ?, ?, 'failed', ?)",
+                        (db_id, req.deduply_campaign_id, req.reachinbox_campaign_id, workspace, error_msg)
+                    )
+                    stats["failed"] += 1
+        except Exception as e:
+            for lead in chunk:
+                conn.execute(
+                    "INSERT INTO reachinbox_push_log (contact_id, campaign_id, reachinbox_campaign_id, workspace, status, error_message) "
+                    "VALUES (?, ?, ?, ?, 'failed', ?)",
+                    (lead["_db_id"], req.deduply_campaign_id, req.reachinbox_campaign_id, workspace, str(e))
+                )
+            stats["failed"] += len(chunk)
+
+    conn.commit()
+    conn.close()
+    return {
+        "status": "ok",
+        "workspace": workspace,
+        "reachinbox_campaign_id": req.reachinbox_campaign_id,
+        "stats": stats
+    }
+
+
+@router.get("/api/reachinbox/push-log")
+def get_push_log(
+    contact_id: Optional[int] = None,
+    campaign_id: Optional[int] = None,
+    limit: int = 100,
+    user: dict = Depends(get_current_user)
+):
+    """Get ReachInbox push history."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    conn = get_db()
+    where, params = ["1=1"], []
+    if contact_id:
+        where.append("contact_id=?")
+        params.append(contact_id)
+    if campaign_id:
+        where.append("campaign_id=?")
+        params.append(campaign_id)
+    rows = conn.execute(
+        f"SELECT * FROM reachinbox_push_log WHERE {' AND '.join(where)} ORDER BY pushed_at DESC LIMIT ?",
+        params + [limit]
+    ).fetchall()
+    conn.close()
+    return {"data": [dict(r) for r in rows]}
+
+
+@router.get("/api/reachinbox/workspace-status")
+def get_workspace_status(user: dict = Depends(get_current_user)):
+    """Check which ReachInbox workspaces are configured."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    conn = get_db()
+    result = {}
+    for workspace, key_name in REACHINBOX_WORKSPACE_KEYS.items():
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key_name,)).fetchone()
+        result[workspace] = {"configured": bool(row and row[0]), "settings_key": key_name}
+    conn.close()
+    return result
