@@ -6366,3 +6366,262 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   align-items: center;
   gap: 4px;
 }
+
+/* ---------------------------------------------------------------------------
+   Lead Gen Page
+--------------------------------------------------------------------------- */
+
+.leadgen-search-layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .leadgen-search-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.leadgen-form-panel .card-body {
+  padding: 20px;
+}
+
+.leadgen-form-panel .card-body form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.leadgen-results-panel {
+  min-height: 200px;
+}
+
+.leadgen-job-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  color: var(--primary);
+  font-size: 14px;
+}
+
+.leadgen-job-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: #fff1f0;
+  border: 1px solid #ffa39e;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  color: #cf1322;
+  font-size: 14px;
+}
+
+.leadgen-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 24px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.leadgen-empty-state svg {
+  opacity: 0.3;
+}
+
+.leadgen-empty-state h3 {
+  font-size: 18px;
+  color: var(--text-2);
+  margin: 0;
+}
+
+.leadgen-empty-state p {
+  font-size: 14px;
+  max-width: 320px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+.checkbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.checkbox-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.credit-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.credit-preview svg {
+  color: #faad14;
+}
+
+.form-hint {
+  font-size: 13px;
+  color: var(--text-2);
+  margin: 0 0 4px;
+}
+
+.company-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.link-icon {
+  color: var(--primary);
+  opacity: 0.6;
+  display: inline-flex;
+}
+
+.link-icon:hover {
+  opacity: 1;
+}
+
+.link-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--primary);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.link-text:hover {
+  text-decoration: underline;
+}
+
+.icp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-light);
+  color: var(--primary);
+  border-radius: 20px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workspace-badge-us {
+  background: #e6f4ff;
+  color: #0958d9;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workspace-badge-mx {
+  background: #f6ffed;
+  color: #389e0d;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.credits-panel {
+  max-width: 480px;
+}
+
+.credits-info {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.credits-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.credits-number {
+  font-size: 42px;
+  font-weight: 700;
+  color: var(--primary);
+  line-height: 1;
+}
+
+.credits-label {
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.credits-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-1);
+}
+
+.credits-meta strong {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.text-success { color: #52c41a; }
+.text-danger  { color: #ff4d4f; }
+.text-muted   { color: var(--text-3); font-style: italic; }
+
+.status-badge.status-pending {
+  background: #fffbe6;
+  color: #ad8b00;
+}
+
+.font-mono { font-family: monospace; }
+.text-sm   { font-size: 13px; }
+
+.empty-state-cell {
+  text-align: center;
+  padding: 32px;
+  color: var(--text-3);
+  font-style: italic;
+}
