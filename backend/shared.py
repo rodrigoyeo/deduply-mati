@@ -67,6 +67,22 @@ def get_current_user(authorization: Optional[str] = Header(None)):
     return dict(user) if user else None
 
 
+def get_agent_user(authorization: Optional[str] = Header(None)):
+    """Required auth for Agent API — raises 401 if token missing or invalid."""
+    from fastapi import HTTPException
+    if not authorization:
+        raise HTTPException(401, "Agent API requires Authorization: Bearer <api_token>")
+    token = authorization.replace("Bearer ", "").strip()
+    conn = get_db()
+    user = conn.execute(
+        "SELECT * FROM users WHERE api_token=? AND is_active=1", (token,)
+    ).fetchone()
+    conn.close()
+    if not user:
+        raise HTTPException(401, "Invalid or inactive API token")
+    return dict(user)
+
+
 # ---------------------------------------------------------------------------
 # Junction-table helpers
 # ---------------------------------------------------------------------------
