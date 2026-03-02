@@ -25,6 +25,9 @@ background_tasks = {}
 # Global store for background import tasks: {job_id: True}
 import_tasks = {}
 
+# Global store for lead generation jobs: {job_id: {"status": ..., ...}}
+leadgen_jobs: dict = {}
+
 # Temp directory for import files
 IMPORT_TEMP_DIR = os.path.join(tempfile.gettempdir(), 'deduply_imports')
 os.makedirs(IMPORT_TEMP_DIR, exist_ok=True)

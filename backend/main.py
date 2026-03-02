@@ -23,6 +23,7 @@ from routers.webhooks import router as webhooks_router
 from routers.settings import router as settings_router
 from routers.verify import router as verify_router
 from routers.reachinbox import router as reachinbox_router
+from routers.leadgen import router as leadgen_router
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -49,6 +50,7 @@ app.include_router(webhooks_router)
 app.include_router(settings_router)
 app.include_router(verify_router)
 app.include_router(reachinbox_router)
+app.include_router(leadgen_router)
 
 # ---------------------------------------------------------------------------
 # Database initialisation (SQLite only; PostgreSQL uses schema.sql)
@@ -194,6 +196,55 @@ def init_db():
             status TEXT DEFAULT 'pushed',
             error_message TEXT,
             pushed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS lead_gen_jobs (
+            id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            parameters TEXT,
+            results_count INTEGER DEFAULT 0,
+            imported_count INTEGER DEFAULT 0,
+            credits_used REAL DEFAULT 0,
+            workspace TEXT DEFAULT 'US',
+            created_by INTEGER REFERENCES users(id),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            error TEXT)""")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS lead_gen_companies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT REFERENCES lead_gen_jobs(id),
+            linkedin_url TEXT,
+            linkedin_id INTEGER,
+            name TEXT,
+            about TEXT,
+            industry TEXT,
+            type TEXT,
+            size TEXT,
+            employees_on_linkedin INTEGER,
+            followers INTEGER,
+            founded_year INTEGER,
+            domain TEXT,
+            hq_country TEXT,
+            hq_city TEXT,
+            hq_continent TEXT,
+            raw_data TEXT,
+            imported INTEGER DEFAULT 0,
+            workspace TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+    except Exception:
+        pass
+
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lead_gen_companies_job ON lead_gen_companies(job_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lead_gen_companies_domain ON lead_gen_companies(domain)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lead_gen_jobs_status ON lead_gen_jobs(status)")
     except Exception:
         pass
 

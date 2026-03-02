@@ -192,7 +192,7 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
   const { data: stats } = useData('/stats');
   const { importJob, clearImportJob } = useImportJob();
   const { addToast } = useToast();
-  const nav = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'duplicates', label: 'Duplicates', icon: Layers }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'templates', label: 'Templates', icon: FileText }, { id: 'settings', label: 'Settings', icon: Settings }];
+  const nav = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'duplicates', label: 'Duplicates', icon: Layers }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'leadgen', label: 'Lead Gen', icon: Target }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'templates', label: 'Templates', icon: FileText }, { id: 'settings', label: 'Settings', icon: Settings }];
 
   // Show toast when import completes
   useEffect(() => {
@@ -4102,8 +4102,595 @@ const AddUserForm = ({ onSubmit, onCancel }) => {
   return (<form onSubmit={e => { e.preventDefault(); onSubmit(data); }}><div className="form-group"><label>Email *</label><input type="email" value={data.email} onChange={e => setData({ ...data, email: e.target.value })} required /></div><div className="form-group"><label>Password *</label><input type="password" value={data.password} onChange={e => setData({ ...data, password: e.target.value })} required /></div><div className="form-group"><label>Name</label><input type="text" value={data.name} onChange={e => setData({ ...data, name: e.target.value })} /></div><div className="form-group"><label>Role</label><select value={data.role} onChange={e => setData({ ...data, role: e.target.value })}><option value="member">Member</option><option value="admin">Admin</option></select></div><div className="modal-actions"><button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button><button type="submit" className="btn btn-primary">Add User</button></div></form>);
 };
 
+// ---------------------------------------------------------------------------
+// Lead Gen Page — BlitzAPI Enrichment Engine
+// ---------------------------------------------------------------------------
+const LEAD_GEN_INDUSTRIES = [
+  'Software Development', 'IT Services', 'Financial Services', 'Healthcare',
+  'Manufacturing', 'Retail', 'Real Estate', 'Education', 'Marketing', 'Consulting',
+];
+const LEAD_GEN_COUNTRIES = [
+  { code: 'US', label: 'United States' }, { code: 'MX', label: 'Mexico' },
+  { code: 'CA', label: 'Canada' }, { code: 'GB', label: 'United Kingdom' },
+  { code: 'DE', label: 'Germany' }, { code: 'ES', label: 'Spain' },
+  { code: 'FR', label: 'France' }, { code: 'AU', label: 'Australia' },
+  { code: 'BR', label: 'Brazil' }, { code: 'IN', label: 'India' },
+];
+const LEAD_GEN_EMP_RANGES = ['1-10', '11-50', '51-200', '201-500', '500+'];
+const LEAD_GEN_JOB_LEVELS = ['C-Level', 'VP', 'Director', 'Manager'];
+
+const WorkspaceBadge = ({ workspace }) => {
+  const ws = (workspace || 'US').toUpperCase();
+  return (
+    <span className={`workspace-badge workspace-badge-${ws.toLowerCase()}`}>
+      {ws === 'MX' ? 'MX' : 'US'}
+    </span>
+  );
+};
+
+const LeadGenPage = () => {
+  const { addToast } = useToast();
+  const [activeTab, setActiveTab] = useState('search');
+
+  // --- Company Search state ---
+  const [searchKeywords, setSearchKeywords] = useState('');
+  const [searchIndustries, setSearchIndustries] = useState([]);
+  const [searchCountry, setSearchCountry] = useState('');
+  const [searchEmpRanges, setSearchEmpRanges] = useState([]);
+  const [searchFoundedAfter, setSearchFoundedAfter] = useState('');
+  const [searchMaxResults, setSearchMaxResults] = useState(25);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [activeSearchJob, setActiveSearchJob] = useState(null);
+  const [jobCompanies, setJobCompanies] = useState([]);
+  const [selectedCompanies, setSelectedCompanies] = useState([]);
+  const [importLoading, setImportLoading] = useState(false);
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+
+  // --- Waterfall state ---
+  const [waterfallUrl, setWaterfallUrl] = useState('');
+  const [waterfallLevels, setWaterfallLevels] = useState(['C-Level', 'VP']);
+  const [waterfallMax, setWaterfallMax] = useState(3);
+  const [waterfallLoading, setWaterfallLoading] = useState(false);
+  const [waterfallResults, setWaterfallResults] = useState([]);
+
+  // --- Credits state ---
+  const [credits, setCredits] = useState(null);
+  const [creditsLoading, setCreditsLoading] = useState(false);
+
+  // Poll active job
+  useEffect(() => {
+    if (!activeSearchJob?.job_id || activeSearchJob?.status === 'completed' || activeSearchJob?.status === 'failed') return;
+    const interval = setInterval(async () => {
+      try {
+        const data = await api.get(`/leadgen/jobs/${activeSearchJob.job_id}`);
+        const job = data.job;
+        setActiveSearchJob(prev => ({ ...prev, status: job.status, results_count: job.results_count, error: job.error }));
+        if (job.status === 'completed') {
+          setJobCompanies(data.companies || []);
+          setSelectedCompanies([]);
+          addToast(`Found ${job.results_count} companies`, 'success');
+        } else if (job.status === 'failed') {
+          addToast(`Search failed: ${job.error || 'Unknown error'}`, 'error');
+        }
+      } catch (e) { console.error('Poll error:', e); }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [activeSearchJob?.job_id, activeSearchJob?.status]);
+
+  const fetchJobs = async () => {
+    setJobsLoading(true);
+    try {
+      const data = await api.get('/leadgen/jobs');
+      setJobs(data.data || []);
+    } catch (e) { addToast(e.message, 'error'); }
+    setJobsLoading(false);
+  };
+
+  const fetchCredits = async () => {
+    setCreditsLoading(true);
+    try {
+      const data = await api.get('/leadgen/credits');
+      setCredits(data);
+    } catch (e) { addToast(e.message, 'error'); }
+    setCreditsLoading(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'credits') {
+      fetchCredits();
+      fetchJobs();
+    }
+  }, [activeTab]);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    setSearchLoading(true);
+    setJobCompanies([]);
+    setSelectedCompanies([]);
+    try {
+      const body = { max_results: searchMaxResults };
+      if (searchKeywords.trim()) {
+        body.keywords = { include: searchKeywords.split(',').map(k => k.trim()).filter(Boolean), exclude: [] };
+      }
+      if (searchIndustries.length > 0) {
+        body.industry = { include: searchIndustries };
+      }
+      if (searchCountry) {
+        body.hq = { country_code: [searchCountry], continent: [], city: [] };
+      }
+      if (searchEmpRanges.length > 0) {
+        body.employee_range = searchEmpRanges;
+      }
+      if (searchFoundedAfter) {
+        body.founded_year = { min: parseInt(searchFoundedAfter, 10), max: null };
+      }
+      const result = await api.post('/leadgen/companies/search', body);
+      setActiveSearchJob({ job_id: result.job_id, status: 'running', results_count: 0 });
+      addToast('Search started...', 'info');
+    } catch (e) { addToast(e.message, 'error'); }
+    setSearchLoading(false);
+  };
+
+  const toggleCompany = (id) => {
+    setSelectedCompanies(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  };
+
+  const toggleAllCompanies = () => {
+    if (selectedCompanies.length === jobCompanies.length) setSelectedCompanies([]);
+    else setSelectedCompanies(jobCompanies.map(c => c.id));
+  };
+
+  const handleImport = async () => {
+    if (selectedCompanies.length === 0) { addToast('Select at least one company', 'error'); return; }
+    setImportLoading(true);
+    try {
+      const result = await api.post('/leadgen/companies/import', { company_ids: selectedCompanies });
+      addToast(`Import started (job ${result.job_id.slice(0, 8)}...)`, 'success');
+    } catch (e) { addToast(e.message, 'error'); }
+    setImportLoading(false);
+  };
+
+  const toggleWaterfallLevel = (level) => {
+    setWaterfallLevels(prev => prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]);
+  };
+
+  const handleWaterfall = async (e) => {
+    e.preventDefault();
+    if (!waterfallUrl.trim()) { addToast('Enter a LinkedIn URL', 'error'); return; }
+    setWaterfallLoading(true);
+    setWaterfallResults([]);
+    try {
+      const result = await api.post('/leadgen/waterfall-direct', {
+        company_linkedin_url: waterfallUrl.trim(),
+        job_levels: waterfallLevels,
+        max_per_company: waterfallMax,
+      });
+      setWaterfallResults(result.results || []);
+      addToast(`Found ${result.total} decision makers, ${result.imported} imported`, 'success');
+    } catch (e) { addToast(e.message, 'error'); }
+    setWaterfallLoading(false);
+  };
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div className="page-title">
+          <Target size={24} />
+          <div>
+            <h1>Lead Generation</h1>
+            <p className="page-subtitle">BlitzAPI enrichment engine — find and import decision makers</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="dash-tabs" style={{ marginBottom: 24 }}>
+        <button className={`dash-tab ${activeTab === 'search' ? 'active' : ''}`} onClick={() => setActiveTab('search')}>
+          <Search size={16} /> Company Search
+        </button>
+        <button className={`dash-tab ${activeTab === 'waterfall' ? 'active' : ''}`} onClick={() => setActiveTab('waterfall')}>
+          <Zap size={16} /> ICP Waterfall
+        </button>
+        <button className={`dash-tab ${activeTab === 'credits' ? 'active' : ''}`} onClick={() => setActiveTab('credits')}>
+          <TrendingUp size={16} /> Credits &amp; Jobs
+        </button>
+      </div>
+
+      {/* ---- Sub-tab 1: Company Search ---- */}
+      {activeTab === 'search' && (
+        <div className="leadgen-search-layout">
+          <div className="leadgen-form-panel">
+            <div className="card">
+              <div className="card-header"><h3>Search Companies</h3></div>
+              <div className="card-body">
+                <form onSubmit={handleSearch}>
+                  <div className="form-group">
+                    <label>Keywords (comma-separated)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. SaaS, software, cloud"
+                      value={searchKeywords}
+                      onChange={e => setSearchKeywords(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Industries</label>
+                    <div className="checkbox-grid">
+                      {LEAD_GEN_INDUSTRIES.map(ind => (
+                        <label key={ind} className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={searchIndustries.includes(ind)}
+                            onChange={() => setSearchIndustries(prev =>
+                              prev.includes(ind) ? prev.filter(i => i !== ind) : [...prev, ind]
+                            )}
+                          />
+                          {ind}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Country (HQ)</label>
+                    <select value={searchCountry} onChange={e => setSearchCountry(e.target.value)}>
+                      <option value="">Any Country</option>
+                      {LEAD_GEN_COUNTRIES.map(c => (
+                        <option key={c.code} value={c.code}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Employee Range</label>
+                    <div className="checkbox-row">
+                      {LEAD_GEN_EMP_RANGES.map(r => (
+                        <label key={r} className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={searchEmpRanges.includes(r)}
+                            onChange={() => setSearchEmpRanges(prev =>
+                              prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]
+                            )}
+                          />
+                          {r}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Founded After (year)</label>
+                      <input
+                        type="number"
+                        placeholder="e.g. 2015"
+                        value={searchFoundedAfter}
+                        onChange={e => setSearchFoundedAfter(e.target.value)}
+                        min="1900"
+                        max="2025"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Max Results</label>
+                      <select value={searchMaxResults} onChange={e => setSearchMaxResults(parseInt(e.target.value, 10))}>
+                        <option value={10}>10</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="credit-preview">
+                    <Zap size={14} /> Estimated cost: ~{searchMaxResults} credits
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" disabled={searchLoading}>
+                    {searchLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
+                    Search Companies
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          <div className="leadgen-results-panel">
+            {/* Job progress widget */}
+            {activeSearchJob && (activeSearchJob.status === 'running' || activeSearchJob.status === 'pending') && (
+              <div className="leadgen-job-progress">
+                <Loader2 className="spin" size={16} />
+                <span>Searching BlitzAPI... (job {activeSearchJob.job_id?.slice(0, 8)})</span>
+              </div>
+            )}
+            {activeSearchJob?.status === 'failed' && (
+              <div className="leadgen-job-error">
+                <AlertCircle size={16} /> Search failed: {activeSearchJob.error || 'Unknown error'}
+              </div>
+            )}
+
+            {jobCompanies.length > 0 && (
+              <div className="card">
+                <div className="card-header">
+                  <h3>{jobCompanies.length} Companies Found</h3>
+                  <div className="card-actions">
+                    <button className="btn btn-secondary btn-sm" onClick={toggleAllCompanies}>
+                      {selectedCompanies.length === jobCompanies.length ? 'Deselect All' : 'Select All'}
+                    </button>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      disabled={selectedCompanies.length === 0 || importLoading}
+                      onClick={handleImport}
+                    >
+                      {importLoading ? <Loader2 className="spin" size={14} /> : <UserPlus size={14} />}
+                      Import Selected ({selectedCompanies.length})
+                    </button>
+                  </div>
+                </div>
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th><input type="checkbox" checked={selectedCompanies.length === jobCompanies.length && jobCompanies.length > 0} onChange={toggleAllCompanies} /></th>
+                        <th>Company</th>
+                        <th>Industry</th>
+                        <th>Size</th>
+                        <th>Country</th>
+                        <th>Domain</th>
+                        <th>Workspace</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jobCompanies.map(c => (
+                        <tr key={c.id} className={selectedCompanies.includes(c.id) ? 'selected' : ''}>
+                          <td><input type="checkbox" checked={selectedCompanies.includes(c.id)} onChange={() => toggleCompany(c.id)} /></td>
+                          <td>
+                            <div className="company-name-cell">
+                              <strong>{c.name || '—'}</strong>
+                              {c.linkedin_url && (
+                                <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="link-icon" title="LinkedIn">
+                                  <ArrowRight size={12} />
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                          <td>{c.industry || '—'}</td>
+                          <td>{c.size || '—'}</td>
+                          <td>{c.hq_country || '—'}</td>
+                          <td>{c.domain || '—'}</td>
+                          <td><WorkspaceBadge workspace={c.workspace} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {!activeSearchJob && jobCompanies.length === 0 && (
+              <div className="leadgen-empty-state">
+                <Building2 size={48} />
+                <h3>Search for Companies</h3>
+                <p>Use the form to find companies matching your ICP. Results will appear here.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---- Sub-tab 2: ICP Waterfall ---- */}
+      {activeTab === 'waterfall' && (
+        <div className="leadgen-search-layout">
+          <div className="leadgen-form-panel">
+            <div className="card">
+              <div className="card-header"><h3>Waterfall ICP Search</h3></div>
+              <div className="card-body">
+                <p className="form-hint">Paste a company LinkedIn URL to find decision makers in priority order.</p>
+                <form onSubmit={handleWaterfall}>
+                  <div className="form-group">
+                    <label>Company LinkedIn URL *</label>
+                    <input
+                      type="url"
+                      placeholder="https://www.linkedin.com/company/acme"
+                      value={waterfallUrl}
+                      onChange={e => setWaterfallUrl(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Job Levels (priority order)</label>
+                    <div className="checkbox-col">
+                      {LEAD_GEN_JOB_LEVELS.map(level => (
+                        <label key={level} className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={waterfallLevels.includes(level)}
+                            onChange={() => toggleWaterfallLevel(level)}
+                          />
+                          {level}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Max Results</label>
+                    <select value={waterfallMax} onChange={e => setWaterfallMax(parseInt(e.target.value, 10))}>
+                      <option value={1}>1</option>
+                      <option value={3}>3</option>
+                      <option value={5}>5</option>
+                      <option value={10}>10</option>
+                    </select>
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" disabled={waterfallLoading}>
+                    {waterfallLoading ? <Loader2 className="spin" size={16} /> : <Zap size={16} />}
+                    Find Decision Makers
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+
+          <div className="leadgen-results-panel">
+            {waterfallLoading && (
+              <div className="leadgen-job-progress">
+                <Loader2 className="spin" size={16} />
+                <span>Running waterfall ICP search...</span>
+              </div>
+            )}
+
+            {waterfallResults.length > 0 && (
+              <div className="card">
+                <div className="card-header">
+                  <h3>{waterfallResults.length} Decision Makers Found</h3>
+                </div>
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>ICP</th>
+                        <th>Name</th>
+                        <th>Title</th>
+                        <th>Email</th>
+                        <th>LinkedIn</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {waterfallResults.map((p, i) => (
+                        <tr key={i}>
+                          <td><span className="icp-badge">#{p.icp_level || i + 1}</span></td>
+                          <td><strong>{p.full_name || '—'}</strong></td>
+                          <td>{p.job_title || '—'}</td>
+                          <td>{p.email || <span className="text-muted">Not found</span>}</td>
+                          <td>
+                            {p.linkedin_url ? (
+                              <a href={p.linkedin_url} target="_blank" rel="noopener noreferrer" className="link-text">
+                                <User size={12} /> Profile
+                              </a>
+                            ) : '—'}
+                          </td>
+                          <td>
+                            {p.imported ? (
+                              <span className="status-badge status-valid"><CheckCircle size={12} /> Imported</span>
+                            ) : p.email ? (
+                              <span className="status-badge status-duplicate">Duplicate</span>
+                            ) : (
+                              <span className="status-badge status-unknown">No Email</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {!waterfallLoading && waterfallResults.length === 0 && (
+              <div className="leadgen-empty-state">
+                <Zap size={48} />
+                <h3>ICP Waterfall Search</h3>
+                <p>Enter a company LinkedIn URL to find and import decision makers in cascading priority order.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---- Sub-tab 3: Credits & Jobs ---- */}
+      {activeTab === 'credits' && (
+        <div>
+          <div className="credits-panel">
+            <div className="card credits-card">
+              <div className="card-header">
+                <h3>BlitzAPI Credits</h3>
+                <button className="btn btn-secondary btn-sm" onClick={fetchCredits} disabled={creditsLoading}>
+                  {creditsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                  Refresh
+                </button>
+              </div>
+              <div className="card-body">
+                {creditsLoading && <div className="loading-text"><Loader2 className="spin" size={16} /> Loading...</div>}
+                {credits && !creditsLoading && (
+                  <div className="credits-info">
+                    <div className="credits-stat">
+                      <span className="credits-number">{(credits.remaining_credits || 0).toLocaleString()}</span>
+                      <span className="credits-label">Remaining Credits</span>
+                    </div>
+                    <div className="credits-meta">
+                      <div><strong>Status:</strong> {credits.valid ? <span className="text-success">Valid</span> : <span className="text-danger">Invalid</span>}</div>
+                      {credits.next_reset_at && <div><strong>Next Reset:</strong> {new Date(credits.next_reset_at).toLocaleDateString()}</div>}
+                      {credits.active_plans?.length > 0 && (
+                        <div><strong>Plan:</strong> {credits.active_plans[0].name} ({credits.active_plans[0].status})</div>
+                      )}
+                      {credits.allowed_apis?.length > 0 && (
+                        <div><strong>APIs:</strong> {credits.allowed_apis.join(', ')}</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!credits && !creditsLoading && (
+                  <p className="text-muted">Configure your BlitzAPI key in Settings to view credit balance.</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginTop: 24 }}>
+            <div className="card-header">
+              <h3>Recent Jobs</h3>
+              <button className="btn btn-secondary btn-sm" onClick={fetchJobs} disabled={jobsLoading}>
+                {jobsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+                Refresh
+              </button>
+            </div>
+            <div className="table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Job ID</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Results</th>
+                    <th>Imported</th>
+                    <th>Credits</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {jobs.length === 0 ? (
+                    <tr><td colSpan={7} className="empty-state-cell">No jobs yet</td></tr>
+                  ) : jobs.map(job => (
+                    <tr key={job.id}>
+                      <td className="font-mono text-sm">{job.id?.slice(0, 8)}...</td>
+                      <td>{job.job_type}</td>
+                      <td>
+                        <span className={`status-badge status-${job.status === 'completed' ? 'valid' : job.status === 'failed' ? 'invalid' : 'pending'}`}>
+                          {job.status}
+                        </span>
+                      </td>
+                      <td>{job.results_count || 0}</td>
+                      <td>{job.imported_count || 0}</td>
+                      <td>{job.credits_used || 0}</td>
+                      <td>{job.created_at ? new Date(job.created_at).toLocaleDateString() : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Main App
-const validPages = ['dashboard', 'contacts', 'duplicates', 'enrichment', 'campaigns', 'templates', 'settings'];
+const validPages = ['dashboard', 'contacts', 'duplicates', 'enrichment', 'leadgen', 'campaigns', 'templates', 'settings'];
 const getPageFromHash = () => {
   const hash = window.location.hash.slice(1);
   return validPages.includes(hash) ? hash : 'contacts';
@@ -4139,6 +4726,7 @@ function App() {
     {page === 'contacts' && <ContactsPage />}
     {page === 'duplicates' && <DuplicatesPage />}
     {page === 'enrichment' && <EnrichmentPage />}
+    {page === 'leadgen' && <LeadGenPage />}
     {page === 'campaigns' && <CampaignsPage />}
     {page === 'templates' && <TemplatesPage />}
     {page === 'settings' && <SettingsPage />}
