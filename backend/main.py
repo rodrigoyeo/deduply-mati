@@ -159,6 +159,40 @@ def init_db():
     try:
         conn.execute("ALTER TABLE contacts ADD COLUMN email_verified_at TIMESTAMP")
     except: pass
+
+    # Migration 004: Pipeline foundation columns
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN reachinbox_lead_id TEXT")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN reachinbox_workspace TEXT")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN reachinbox_pushed_at TIMESTAMP")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN reachinbox_campaign_id INTEGER")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN pipeline_stage TEXT DEFAULT 'new'")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE contacts ADD COLUMN enrichment_source TEXT")
+    except: pass
+    try:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN market TEXT DEFAULT 'US'")
+    except: pass
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS reachinbox_push_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            campaign_id INTEGER REFERENCES campaigns(id),
+            reachinbox_campaign_id INTEGER NOT NULL,
+            workspace TEXT NOT NULL,
+            status TEXT DEFAULT 'pushed',
+            error_message TEXT,
+            pushed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+    except: pass
     try:
         conn.execute("ALTER TABLE contacts ADD COLUMN email_verification_event TEXT")
     except: pass
@@ -359,12 +393,14 @@ class CampaignCreate(BaseModel):
     description: Optional[str] = None
     country: Optional[str] = None
     status: str = "Active"
+    market: str = "US"  # US or MX - determines ReachInbox workspace
 
 class CampaignUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     country: Optional[str] = None
     status: Optional[str] = None
+    market: Optional[str] = None  # US or MX
     emails_sent: Optional[int] = None
     emails_opened: Optional[int] = None
     emails_clicked: Optional[int] = None
@@ -529,12 +565,15 @@ def change_password(data: ChangePassword, user: dict = Depends(get_current_user)
     return {"message": "Password changed successfully"}
 
 @app.get("/api/users")
-def get_users():
+def get_users(user: dict = Depends(get_current_user)):
+    if not user: raise HTTPException(401, "Not authenticated")
     conn = get_db(); users = conn.execute("SELECT id, email, name, role, is_active, created_at FROM users ORDER BY created_at DESC").fetchall(); conn.close()
     return {"data": [dict(u) for u in users]}
 
 @app.delete("/api/users/{user_id}")
-def delete_user(user_id: int):
+def delete_user(user_id: int, user: dict = Depends(get_current_user)):
+    if not user: raise HTTPException(401, "Not authenticated")
+    if user.get("role") != "admin": raise HTTPException(403, "Admin only")
     conn = get_db(); conn.execute("UPDATE users SET is_active=0 WHERE id=?", (user_id,)); conn.commit(); conn.close()
     return {"message": "Deactivated"}
 
@@ -1975,7 +2014,7 @@ def get_campaign(campaign_id: int):
 @app.post("/api/campaigns")
 def create_campaign(campaign: CampaignCreate):
     conn = get_db()
-    try: conn.execute("INSERT INTO campaigns (name, description, country, status) VALUES (?, ?, ?, ?)", (campaign.name, campaign.description, campaign.country, campaign.status)); cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]; conn.commit(); return {"id": cid, "message": "Created"}
+    try: conn.execute("INSERT INTO campaigns (name, description, country, status, market) VALUES (?, ?, ?, ?, ?)", (campaign.name, campaign.description, campaign.country, campaign.status, campaign.market)); cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]; conn.commit(); return {"id": cid, "message": "Created"}
     except sqlite3.IntegrityError: raise HTTPException(400, "Name exists")
     finally: conn.close()
 
@@ -2315,8 +2354,8 @@ async def reachinbox_webhook(request: Request):
             "contact_matched": email is not None
         }
     except Exception as e:
-        import traceback
-        return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
+        # Note: traceback intentionally NOT returned to avoid leaking internals
+        return {"status": "error", "message": str(e)}
 
 @app.post("/webhook/bulkemailchecker")
 async def bulkemailchecker_webhook(request: Request):
@@ -2347,6 +2386,99 @@ async def bulkemailchecker_webhook(request: Request):
     conn.execute("INSERT INTO webhook_events (source, event_type, email, payload, processed) VALUES (?, ?, ?, ?, TRUE)", ('bulkemailchecker', 'validation', None, json.dumps(payload)))
     conn.commit(); conn.close()
     return {"status": "ok", "message": f"Processed {stats['processed']} emails", "stats": stats}
+
+# ====================================================================================
+# CLAY INGEST WEBHOOK — Accept contacts directly from Clay workflows
+# ====================================================================================
+
+@app.post("/webhook/clay")
+async def clay_ingest_webhook(request: Request):
+    """
+    Accept contacts from a Clay webhook. POST a JSON payload:
+    {
+        "contacts": [{"email": "...", "first_name": "...", "company": "...", ...}],
+        "outreach_list": "optional-list-name",
+        "campaign": "optional-campaign-name",
+        "country_strategy": "optional"
+    }
+    Contacts are inserted or merged by email.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON payload")
+
+    contacts_data = payload.get("contacts", [])
+    if not contacts_data:
+        return {"status": "ok", "message": "No contacts in payload", "imported": 0, "merged": 0}
+
+    outreach_list_name = payload.get("outreach_list")
+    campaign_name = payload.get("campaign")
+    country_strategy = payload.get("country_strategy")
+    conn = get_db()
+    imported, merged = 0, 0
+    now = datetime.now().isoformat()
+
+    for c in contacts_data:
+        email = (c.get("email") or "").strip().lower()
+        if not email:
+            continue
+
+        existing = conn.execute("SELECT id FROM contacts WHERE LOWER(email)=?", (email,)).fetchone()
+        fields = {
+            "first_name": c.get("first_name") or c.get("firstName"),
+            "last_name": c.get("last_name") or c.get("lastName"),
+            "email": email,
+            "title": c.get("title") or c.get("job_title"),
+            "company": c.get("company") or c.get("company_name"),
+            "person_linkedin_url": c.get("linkedin_url") or c.get("person_linkedin_url"),
+            "domain": c.get("company_domain") or c.get("domain"),
+            "website": c.get("website"),
+            "company_country": c.get("company_country") or c.get("country"),
+            "seniority": c.get("seniority"),
+            "industry": c.get("industry"),
+            "enrichment_source": c.get("enrichment_source", "clay"),
+            "country_strategy": country_strategy,
+            "source_file": "clay_webhook",
+            "updated_at": now,
+        }
+        fields = {k: v for k, v in fields.items() if v is not None}
+
+        if existing:
+            contact_id = existing[0]
+            # Only update fields that exist in incoming data and are non-empty
+            # Use simple assignment (new data wins for fields that were provided)
+            non_email = [k for k in fields if k not in ("email", "source_file", "updated_at")]
+            if non_email:
+                set_clauses = [f"{k}=?" for k in non_email]
+                set_clauses.append("updated_at=?")
+                values = [fields[k] for k in non_email] + [now, contact_id]
+                conn.execute(f"UPDATE contacts SET {','.join(set_clauses)} WHERE id=?", values)
+            merged += 1
+        else:
+            cols = ", ".join(fields.keys())
+            ph = ", ".join(["?"] * len(fields))
+            conn.execute(f"INSERT INTO contacts ({cols}) VALUES ({ph})", list(fields.values()))
+            contact_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            imported += 1
+
+        if outreach_list_name:
+            conn.execute("INSERT OR IGNORE INTO outreach_lists (name) VALUES (?)", (outreach_list_name,))
+            lst = conn.execute("SELECT id FROM outreach_lists WHERE name=?", (outreach_list_name,)).fetchone()
+            if lst:
+                conn.execute("INSERT OR IGNORE INTO contact_lists (contact_id, list_id) VALUES (?, ?)", (contact_id, lst[0]))
+
+        if campaign_name:
+            conn.execute("INSERT OR IGNORE INTO campaigns (name) VALUES (?)", (campaign_name,))
+            camp = conn.execute("SELECT id FROM campaigns WHERE name=?", (campaign_name,)).fetchone()
+            if camp:
+                conn.execute("INSERT OR IGNORE INTO contact_campaigns (contact_id, campaign_id) VALUES (?, ?)", (contact_id, camp[0]))
+
+    conn.commit()
+    conn.close()
+    update_counts()  # Called after close to avoid SQLite "database is locked" on same connection
+    return {"status": "ok", "imported": imported, "merged": merged, "total": imported + merged}
+
 
 @app.post("/webhook/{source}")
 async def generic_webhook(source: str, request: Request):
@@ -3186,6 +3318,172 @@ def get_active_verification_jobs():
 
 
 # ==================== END EMAIL VERIFICATION ====================
+
+# ====================================================================================
+# REACHINBOX OUTBOUND PUSH — Dual Workspace (US + MX)
+# ====================================================================================
+
+REACHINBOX_API_BASE = "https://api.reachinbox.ai/api/v1"
+REACHINBOX_WORKSPACE_KEYS = {
+    "US": "reachinbox_api_key_us",
+    "MX": "reachinbox_api_key_mx",
+}
+
+
+def _get_reachinbox_key(workspace: str, conn) -> Optional[str]:
+    """Fetch ReachInbox API key for a workspace from settings table."""
+    settings_key = REACHINBOX_WORKSPACE_KEYS.get(workspace.upper())
+    if not settings_key:
+        return None
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (settings_key,)).fetchone()
+    return row[0] if row and row[0] else None
+
+
+class ReachInboxPushRequest(BaseModel):
+    contact_ids: List[int]
+    reachinbox_campaign_id: int  # The numeric campaign ID inside ReachInbox
+    workspace: str = "US"        # "US" or "MX"
+    deduply_campaign_id: Optional[int] = None
+    email_status_filter: Optional[List[str]] = None  # e.g. ["Valid"] - skip others
+
+
+@app.post("/api/reachinbox/push")
+async def push_to_reachinbox(req: ReachInboxPushRequest, user: dict = Depends(get_current_user)):
+    """Push contacts into a ReachInbox campaign sequence (US or MX workspace)."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    workspace = req.workspace.upper()
+    if workspace not in ("US", "MX"):
+        raise HTTPException(400, "workspace must be US or MX")
+
+    conn = get_db()
+    api_key = _get_reachinbox_key(workspace, conn)
+    if not api_key:
+        conn.close()
+        raise HTTPException(400, f"ReachInbox API key for {workspace} not configured. "
+                                 f"Add reachinbox_api_key_{workspace.lower()} in Settings.")
+
+    allowed_statuses = req.email_status_filter or ["Valid"]
+    placeholders = ",".join(["?"] * len(req.contact_ids))
+    contacts = conn.execute(
+        f"SELECT id, first_name, last_name, email, company, website, person_linkedin_url, "
+        f"email_status, pipeline_stage FROM contacts WHERE id IN ({placeholders})",
+        req.contact_ids
+    ).fetchall()
+
+    stats = {"pushed": 0, "skipped_invalid_email": 0, "skipped_already_pushed": 0, "failed": 0}
+    now = datetime.now().isoformat()
+    batch = []
+
+    for c in contacts:
+        cid, fname, lname, email, company, website, linkedin, email_status, pipeline =             c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7] or "Unknown", c[8] or "new"
+
+        if email_status not in allowed_statuses:
+            conn.execute(
+                "INSERT INTO reachinbox_push_log (contact_id, campaign_id, reachinbox_campaign_id, workspace, status, error_message) "
+                "VALUES (?, ?, ?, ?, 'skipped', ?)",
+                (cid, req.deduply_campaign_id, req.reachinbox_campaign_id, workspace,
+                 f"email_status={email_status} not in {allowed_statuses}")
+            )
+            stats["skipped_invalid_email"] += 1
+            continue
+
+        already = conn.execute(
+            "SELECT id FROM reachinbox_push_log WHERE contact_id=? AND reachinbox_campaign_id=? AND status='pushed'",
+            (cid, req.reachinbox_campaign_id)
+        ).fetchone()
+        if already:
+            stats["skipped_already_pushed"] += 1
+            continue
+
+        batch.append({"_db_id": cid, "email": email, "firstName": fname or "",
+                      "lastName": lname or "", "companyName": company or "",
+                      "website": website or "", "linkedinUrl": linkedin or ""})
+
+    BATCH_SIZE = 50
+    for i in range(0, len(batch), BATCH_SIZE):
+        chunk = batch[i:i + BATCH_SIZE]
+        leads_payload = [{k: v for k, v in lead.items() if k != "_db_id"} for lead in chunk]
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{REACHINBOX_API_BASE}/leads",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"campaignId": req.reachinbox_campaign_id, "leads": leads_payload}
+                )
+            resp_ok = resp.status_code in (200, 201)
+            error_msg = None if resp_ok else (resp.json().get("message", f"HTTP {resp.status_code}") if resp.content else f"HTTP {resp.status_code}")
+
+            for lead in chunk:
+                db_id = lead["_db_id"]
+                if resp_ok:
+                    conn.execute(
+                        "UPDATE contacts SET reachinbox_workspace=?, reachinbox_campaign_id=?, "
+                        "reachinbox_pushed_at=?, pipeline_stage='pushed', updated_at=? WHERE id=?",
+                        (workspace, req.reachinbox_campaign_id, now, now, db_id)
+                    )
+                    conn.execute(
+                        "INSERT INTO reachinbox_push_log (contact_id, campaign_id, reachinbox_campaign_id, workspace, status) "
+                        "VALUES (?, ?, ?, ?, 'pushed')",
+                        (db_id, req.deduply_campaign_id, req.reachinbox_campaign_id, workspace)
+                    )
+                    stats["pushed"] += 1
+                else:
+                    conn.execute(
+                        "INSERT INTO reachinbox_push_log (contact_id, campaign_id, reachinbox_campaign_id, workspace, status, error_message) "
+                        "VALUES (?, ?, ?, ?, 'failed', ?)",
+                        (db_id, req.deduply_campaign_id, req.reachinbox_campaign_id, workspace, error_msg)
+                    )
+                    stats["failed"] += 1
+        except Exception as e:
+            for lead in chunk:
+                conn.execute(
+                    "INSERT INTO reachinbox_push_log (contact_id, campaign_id, reachinbox_campaign_id, workspace, status, error_message) "
+                    "VALUES (?, ?, ?, ?, 'failed', ?)",
+                    (lead["_db_id"], req.deduply_campaign_id, req.reachinbox_campaign_id, workspace, str(e))
+                )
+            stats["failed"] += len(chunk)
+
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "workspace": workspace,
+            "reachinbox_campaign_id": req.reachinbox_campaign_id, "stats": stats}
+
+
+@app.get("/api/reachinbox/push-log")
+def get_push_log(contact_id: Optional[int] = None, campaign_id: Optional[int] = None,
+                 limit: int = 100, user: dict = Depends(get_current_user)):
+    """Get ReachInbox push history."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    conn = get_db()
+    where, params = ["1=1"], []
+    if contact_id:
+        where.append("contact_id=?"); params.append(contact_id)
+    if campaign_id:
+        where.append("campaign_id=?"); params.append(campaign_id)
+    rows = conn.execute(
+        f"SELECT * FROM reachinbox_push_log WHERE {' AND '.join(where)} ORDER BY pushed_at DESC LIMIT ?",
+        params + [limit]
+    ).fetchall()
+    conn.close()
+    return {"data": [dict(r) for r in rows]}
+
+
+@app.get("/api/reachinbox/workspace-status")
+def get_workspace_status(user: dict = Depends(get_current_user)):
+    """Check which ReachInbox workspaces are configured."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    conn = get_db()
+    result = {}
+    for workspace, key_name in REACHINBOX_WORKSPACE_KEYS.items():
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key_name,)).fetchone()
+        result[workspace] = {"configured": bool(row and row[0]), "settings_key": key_name}
+    conn.close()
+    return result
+
 
 @app.get("/health")
 def health():
