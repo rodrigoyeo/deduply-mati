@@ -672,6 +672,21 @@ body {
 .api-config-section .help-text a:hover { text-decoration: underline; }
 .api-key-form { margin-top: 20px; }
 .api-key-status { margin-bottom: 16px; }
+
+/* ReachInbox API key cards */
+.ri-keys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+@media (max-width: 700px) { .ri-keys-grid { grid-template-columns: 1fr; } }
+.ri-key-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 20px; }
+.ri-key-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.ri-workspace-badge { background: var(--coral); color: white; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.5px; }
+.ri-key-label { font-size: 13px; color: var(--text-secondary); flex: 1; }
+
+/* ReachInbox bulk push controls */
+.ri-push-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ri-campaign-input { width: 180px; padding: 6px 10px; border: 1px solid var(--coral); border-radius: var(--radius-sm); font-size: 13px; background: white; color: var(--text-primary); }
+.ri-campaign-input:focus { outline: none; box-shadow: 0 0 0 2px rgba(255, 108, 93, 0.2); }
+.ri-workspace-select { padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; background: white; cursor: pointer; }
+.ri-push-hint { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .api-key-status span { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: var(--radius-md); font-size: 13px; font-weight: 600; }
 .status-loading { background: var(--bg-3); color: var(--text-2); }
 .status-configured { background: var(--success-light); color: var(--success); }
@@ -6334,4 +6349,20 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Workspace badge */
+.workspace-badge {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 13px;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: default;
+}
+
+.name-with-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }

@@ -726,6 +726,8 @@ const ContactsPage = () => {
   const [bulkValue, setBulkValue] = useState('');
   const [bulkNewList, setBulkNewList] = useState('');
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [riCampaignId, setRiCampaignId] = useState('');
+  const [riWorkspace, setRiWorkspace] = useState('US');
   const { data: filterOptions } = useData('/filters');
   const columnsRef = useRef(null);
   const [savedViews, setSavedViews] = useState(() => {
@@ -850,9 +852,37 @@ const ContactsPage = () => {
 
   const executeBulkAction = async () => {
     if (!bulkField) return;
-    if (bulkField !== 'delete' && !bulkValue && bulkAction !== 'remove') return;
     setBulkLoading(true);
     try {
+      // ReachInbox push — separate flow
+      if (bulkField === 'reachinbox_push') {
+        if (!riCampaignId) { addToast('Enter a ReachInbox Campaign ID', 'error'); setBulkLoading(false); return; }
+        let contact_ids;
+        if (selectAll) {
+          // Resolve IDs from filters + limit
+          const params = new URLSearchParams({ page: 1, page_size: selectLimitNum > 0 && selectLimitNum < total ? selectLimitNum : total, ...filters });
+          if (search) params.append('search', search);
+          const r = await api.get(`/contacts?${params}`);
+          contact_ids = r.data.map(c => c.id);
+        } else {
+          contact_ids = Array.from(selected);
+        }
+        const result = await api.post('/reachinbox/push', {
+          contact_ids,
+          reachinbox_campaign_id: parseInt(riCampaignId),
+          workspace: riWorkspace,
+          email_status_filter: ['Valid']
+        });
+        const s = result.stats;
+        addToast(`ReachInbox: ${s.pushed} pushed, ${s.skipped_invalid_email} skipped (email), ${s.skipped_already_pushed} already in campaign, ${s.failed} failed`, 'success');
+        setSelected(new Set()); setSelectAll(false); setSelectLimit('');
+        setBulkField(''); setRiCampaignId(''); setRiWorkspace('US');
+        fetchContacts();
+        setBulkLoading(false);
+        return;
+      }
+
+      if (bulkField !== 'delete' && !bulkValue && bulkAction !== 'remove') { setBulkLoading(false); return; }
       const effectiveBulkValue = bulkValue === '__new__' ? bulkNewList.trim() : bulkValue;
       const payload = {
         field: bulkField === 'delete' ? 'id' : bulkField,
@@ -943,7 +973,8 @@ const ContactsPage = () => {
     { id: 'outreach_lists', label: 'Outreach List', type: 'list', options: filterOptions?.outreach_lists || [] },
     { id: 'seniority', label: 'Seniority', type: 'select', options: filterOptions?.seniorities || [] },
     { id: 'industry', label: 'Industry', type: 'select', options: filterOptions?.industries || [] },
-    { id: 'delete', label: 'Delete Contacts', type: 'action' }
+    { id: 'delete', label: 'Delete Contacts', type: 'action' },
+    { id: 'reachinbox_push', label: 'Push to ReachInbox', type: 'reachinbox' }
   ];
 
   const selectedBulkField = bulkEditableFields.find(f => f.id === bulkField);
@@ -1114,6 +1145,14 @@ const ContactsPage = () => {
               className="filter-keywords-input"
             />
           </div>
+          <div className="filter-group-v2">
+            <label>Workspace</label>
+            <select value={filters.workspace || ''} onChange={e => setFilters({ ...filters, workspace: e.target.value })}>
+              <option value="">All Workspaces</option>
+              <option value="US">🇺🇸 US</option>
+              <option value="MX">🇲🇽 MX</option>
+            </select>
+          </div>
         </div>
         {activeFiltersCount > 0 && (
           <div className="active-filters-bar">
@@ -1173,6 +1212,12 @@ const ContactsPage = () => {
                   <X size={14} onClick={() => setFilters({ ...filters, keywords: '' })} />
                 </span>
               )}
+              {filters.workspace && (
+                <span className="filter-chip">
+                  <span className="filter-chip-type">Workspace:</span> {filters.workspace === 'MX' ? '🇲🇽 MX' : '🇺🇸 US'}
+                  <X size={14} onClick={() => setFilters({ ...filters, workspace: '' })} />
+                </span>
+              )}
             </div>
             <button className="btn btn-text btn-clear-filters" onClick={() => setFilters({})}>
               <X size={14} /> Clear All
@@ -1205,7 +1250,7 @@ const ContactsPage = () => {
       )}
       <div className="bulk-actions">
         <div className="bulk-group">
-          <select value={bulkField} onChange={e => { setBulkField(e.target.value); setBulkValue(''); setBulkAction('set'); setBulkNewList(''); }} className="bulk-field-select">
+          <select value={bulkField} onChange={e => { setBulkField(e.target.value); setBulkValue(''); setBulkAction('set'); setBulkNewList(''); setRiCampaignId(''); setRiWorkspace('US'); }} className="bulk-field-select">
             <option value="">Select field to edit...</option>
             {bulkEditableFields.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
           </select>
@@ -1238,12 +1283,33 @@ const ContactsPage = () => {
           {selectedBulkField && selectedBulkField.type === 'action' && (
             <span className="bulk-warning"><AlertTriangle size={16} /> This will permanently delete {selectedCount.toLocaleString()} contacts</span>
           )}
-          <button className="btn btn-primary" onClick={executeBulkAction} disabled={!bulkField || bulkLoading || (bulkField !== 'delete' && (!bulkValue || (bulkValue === '__new__' && !bulkNewList.trim())))}>
-            {bulkLoading ? <Loader2 className="spin" size={16} /> : 'Apply'}
+          {selectedBulkField && selectedBulkField.type === 'reachinbox' && (
+            <div className="ri-push-inputs">
+              <input
+                type="number"
+                value={riCampaignId}
+                onChange={e => setRiCampaignId(e.target.value)}
+                placeholder="ReachInbox Campaign ID"
+                className="ri-campaign-input"
+                min="1"
+              />
+              <select value={riWorkspace} onChange={e => setRiWorkspace(e.target.value)} className="ri-workspace-select">
+                <option value="US">US Workspace</option>
+                <option value="MX">MX Workspace</option>
+              </select>
+              <span className="ri-push-hint">Only contacts with Valid emails will be pushed</span>
+            </div>
+          )}
+          <button className="btn btn-primary" onClick={executeBulkAction} disabled={
+            !bulkField || bulkLoading ||
+            (bulkField === 'reachinbox_push' && !riCampaignId) ||
+            (bulkField !== 'delete' && bulkField !== 'reachinbox_push' && (!bulkValue || (bulkValue === '__new__' && !bulkNewList.trim())))
+          }>
+            {bulkLoading ? <Loader2 className="spin" size={16} /> : bulkField === 'reachinbox_push' ? <><Send size={14} /> Push</> : 'Apply'}
           </button>
         </div>
       </div>
-      <button className="btn btn-text" onClick={() => { setSelected(new Set()); setSelectAll(false); setBulkField(''); setSelectLimit(''); setBulkNewList(''); }}><X size={14} /> Clear</button>
+      <button className="btn btn-text" onClick={() => { setSelected(new Set()); setSelectAll(false); setBulkField(''); setSelectLimit(''); setBulkNewList(''); setRiCampaignId(''); setRiWorkspace('US'); }}><X size={14} /> Clear</button>
     </div>)}
 
     <div className="table-wrapper"><table className="data-table"><thead><tr><th className="col-checkbox"><input type="checkbox" checked={selectAll || (contacts.length > 0 && selected.size === contacts.length)} onChange={toggleSelectAll} /></th>{columns.map(col => (<th key={col.id} className="sortable" onClick={() => handleSort(col.id)}>{col.label}{sortBy === col.id && <ArrowUpDown size={12} />}</th>))}<th className="col-actions"></th></tr></thead>
@@ -1257,6 +1323,7 @@ const ContactsPage = () => {
           : col.type === 'strategy' ? <span className={`strategy-badge strategy-${contact[col.id]?.toLowerCase().replace(/ /g, '-') || 'none'}`} onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}</span>
           : col.id === 'email' ? <a href={`mailto:${contact[col.id]}`} className="email-link">{contact[col.id]}</a>
           : col.id === 'email_status' ? <span className={`email-status-badge ${(contact[col.id] || 'not-verified').toLowerCase().replace(/ /g, '-')}`}>{contact[col.id] || 'Not Verified'}</span>
+          : col.id === 'first_name' ? <span className="cell-editable name-with-workspace" onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}<span className="workspace-badge" title={`Workspace: ${contact.reachinbox_workspace || 'US'}`}>{contact.reachinbox_workspace === 'MX' ? '🇲🇽' : '🇺🇸'}</span></span>
           : (col.id === 'outreach_lists' || col.id === 'campaigns_assigned') ? (!contact[col.id] ? <span className="cell-empty" onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: '' })}>—</span> : <div className="tags-cell" onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] })}>{contact[col.id].split(',').slice(0, 2).map((t, i) => <span key={i} className="tag">{t.trim()}</span>)}{contact[col.id].split(',').length > 2 && <span className="tag tag-more">+{contact[col.id].split(',').length - 2}</span>}</div>)
           : <span className="cell-editable" onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}</span>}</td>))}
           <td className="col-actions"><button className="btn-icon-small danger" onClick={async () => { if (window.confirm('Delete?')) { await api.delete(`/contacts/${contact.id}`); fetchContacts(); addToast('Deleted', 'success'); } }}><Trash2 size={14} /></button></td></tr>))}</tbody></table></div>
@@ -2158,7 +2225,7 @@ const DuplicatesPage = () => {
                       {group.contacts.map((c, idx) => (
                         <div key={c.id} className={`duplicate-contact-card ${idx === 0 ? 'primary' : ''}`}>
                           {idx === 0 && <span className="primary-badge">Primary (Oldest)</span>}
-                          <div className="contact-name">{c.first_name} {c.last_name}</div>
+                          <div className="contact-name">{c.first_name} {c.last_name}<span className="workspace-badge" title={`Workspace: ${c.reachinbox_workspace || 'US'}`}>{c.reachinbox_workspace === 'MX' ? '🇲🇽' : '🇺🇸'}</span></div>
                           <div className="contact-detail"><strong>Company:</strong> {c.company || '—'}</div>
                           <div className="contact-detail"><strong>Title:</strong> {c.title || '—'}</div>
                           <div className="contact-detail"><strong>Lists:</strong> {c.outreach_lists || '—'}</div>
@@ -3665,6 +3732,10 @@ const SettingsPage = () => {
   const [savingApiKey, setSavingApiKey] = useState(false);
   const [loadingApiKey, setLoadingApiKey] = useState(true);
 
+  // ReachInbox API key state
+  const [riKeys, setRiKeys] = useState({ US: { configured: false, value: '' }, MX: { configured: false, value: '' } });
+  const [savingRiKey, setSavingRiKey] = useState({ US: false, MX: false });
+
   // Load API key status on mount
   useEffect(() => {
     const loadApiKeyStatus = async () => {
@@ -3676,8 +3747,30 @@ const SettingsPage = () => {
       }
       setLoadingApiKey(false);
     };
+    const loadRiStatus = async () => {
+      try {
+        const res = await api.get('/reachinbox/workspace-status');
+        setRiKeys(prev => ({
+          US: { ...prev.US, configured: res.US?.configured || false },
+          MX: { ...prev.MX, configured: res.MX?.configured || false }
+        }));
+      } catch (e) { console.error('Failed to load ReachInbox status:', e); }
+    };
     loadApiKeyStatus();
+    loadRiStatus();
   }, []);
+
+  const saveRiKey = async (workspace) => {
+    const val = riKeys[workspace].value.trim();
+    if (!val) { addToast('Please enter an API key', 'error'); return; }
+    setSavingRiKey(prev => ({ ...prev, [workspace]: true }));
+    try {
+      await api.put(`/settings/reachinbox_api_key_${workspace.toLowerCase()}`, { value: val });
+      addToast(`ReachInbox ${workspace} key saved!`, 'success');
+      setRiKeys(prev => ({ ...prev, [workspace]: { configured: true, value: '' } }));
+    } catch (e) { addToast(e.message || 'Failed to save', 'error'); }
+    setSavingRiKey(prev => ({ ...prev, [workspace]: false }));
+  };
 
   const saveApiKey = async () => {
     if (!apiKey.trim()) {
@@ -3821,6 +3914,46 @@ const SettingsPage = () => {
                 {savingApiKey ? <><Loader2 size={16} className="spin" /> Saving...</> : 'Save API Key'}
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* ReachInbox API Configuration */}
+        <div className="api-config-section" style={{marginTop: '32px'}}>
+          <div className="section-header">
+            <h2><Send size={20} /> ReachInbox API Keys</h2>
+          </div>
+          <p className="help-text">
+            Configure API keys for each ReachInbox workspace to enable pushing contacts directly from the contacts table.
+            Use the <strong>Push to ReachInbox</strong> bulk action to send contacts to a campaign sequence.
+          </p>
+          <div className="ri-keys-grid">
+            {['US', 'MX'].map(ws => (
+              <div key={ws} className="ri-key-card">
+                <div className="ri-key-header">
+                  <span className="ri-workspace-badge">{ws}</span>
+                  <span className="ri-key-label">{ws === 'US' ? 'United States Workspace' : 'Mexico Workspace'}</span>
+                  {riKeys[ws].configured
+                    ? <span className="status-configured"><Check size={13} /> Configured</span>
+                    : <span className="status-not-configured"><AlertCircle size={13} /> Not set</span>}
+                </div>
+                <div className="api-key-input-group">
+                  <input
+                    type="password"
+                    placeholder={riKeys[ws].configured ? 'Enter new key to replace existing' : `ReachInbox ${ws} API key`}
+                    value={riKeys[ws].value}
+                    onChange={e => setRiKeys(prev => ({ ...prev, [ws]: { ...prev[ws], value: e.target.value } }))}
+                    className="api-key-input"
+                  />
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => saveRiKey(ws)}
+                    disabled={savingRiKey[ws] || !riKeys[ws].value.trim()}
+                  >
+                    {savingRiKey[ws] ? <><Loader2 size={14} className="spin" /> Saving...</> : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 

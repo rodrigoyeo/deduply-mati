@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 
 from database import get_db, USE_POSTGRES
 from models import ContactCreate, ContactUpdate, BulkUpdateRequest, MergeRequest
+from workspace_routing import detect_workspace
 from shared import (
     get_contact_campaigns, get_contact_lists, get_contact_technologies,
     set_contact_campaigns, set_contact_lists,
@@ -37,7 +38,8 @@ def get_contacts(
     country_strategy: Optional[str] = None, seniority: Optional[str] = None,
     industry: Optional[str] = None, email_status: Optional[str] = None,
     keywords: Optional[str] = None, show_duplicates: bool = False,
-    sort_by: str = "id", sort_order: str = "desc"
+    sort_by: str = "id", sort_order: str = "desc",
+    workspace: Optional[str] = None
 ):
     conn = get_db()
     where = ["1=1"] if show_duplicates else ["c.is_duplicate=0"]
@@ -95,6 +97,13 @@ def get_contacts(
             kw_conditions = ' OR '.join(['c.keywords LIKE ?' for _ in kw_list])
             where.append(f"({kw_conditions})")
             params.extend([f"%{kw}%" for kw in kw_list])
+
+    if workspace:
+        if workspace.upper() == "MX":
+            where.append("c.reachinbox_workspace='MX'")
+        elif workspace.upper() == "US":
+            # US includes explicitly set US as well as NULL (legacy contacts)
+            where.append("(c.reachinbox_workspace='US' OR c.reachinbox_workspace IS NULL)")
 
     if campaigns:
         camp_list = [c.strip() for c in campaigns.split(',') if c.strip()]
@@ -311,6 +320,10 @@ def create_contact(contact: ContactCreate):
     campaigns_str = data.pop('campaigns_assigned', None)
     lists_str = data.pop('outreach_lists', None)
 
+    # Auto-detect workspace if not explicitly provided
+    if not data.get('reachinbox_workspace'):
+        data['reachinbox_workspace'] = detect_workspace(data)
+
     fields = list(data.keys())
     conn.execute(
         f"INSERT INTO contacts ({','.join(fields)}) VALUES ({','.join(['?'] * len(fields))})",
@@ -338,6 +351,17 @@ def update_contact(contact_id: int, contact: ContactUpdate):
 
     campaigns_str = data.pop('campaigns_assigned', None)
     lists_str = data.pop('outreach_lists', None)
+
+    # Re-detect workspace when location/domain signals change and workspace
+    # is not being explicitly set by the caller.
+    _workspace_signal_fields = {'company_country', 'domain', 'website', 'company_city', 'company_state'}
+    if _workspace_signal_fields & set(data.keys()) and 'reachinbox_workspace' not in data:
+        # Fetch the current full contact to build the merged picture
+        current = conn.execute("SELECT * FROM contacts WHERE id=?", (contact_id,)).fetchone()
+        if current:
+            merged = dict(current)
+            merged.update(data)
+            data['reachinbox_workspace'] = detect_workspace(merged)
 
     if data:
         data['updated_at'] = datetime.now().isoformat()
@@ -1143,6 +1167,10 @@ def run_import_job_sync(job_id: int):
                         stats['merged'] += 1
                 else:
                     if data:
+                        # Auto-detect workspace if not already set
+                        if not data.get('reachinbox_workspace'):
+                            data['reachinbox_workspace'] = detect_workspace(data)
+
                         fields = list(data.keys())
                         if USE_POSTGRES:
                             placeholders = ','.join(['%s'] * len(fields))
