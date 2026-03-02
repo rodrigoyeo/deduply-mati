@@ -24,6 +24,7 @@ from routers.settings import router as settings_router
 from routers.verify import router as verify_router
 from routers.reachinbox import router as reachinbox_router
 from routers.leadgen import router as leadgen_router
+from routers.agent import router as agent_router
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -51,6 +52,7 @@ app.include_router(settings_router)
 app.include_router(verify_router)
 app.include_router(reachinbox_router)
 app.include_router(leadgen_router)
+app.include_router(agent_router)
 
 # ---------------------------------------------------------------------------
 # Database initialisation (SQLite only; PostgreSQL uses schema.sql)
