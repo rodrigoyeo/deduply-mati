@@ -21,7 +21,8 @@ router = APIRouter()
 # ==================== CAMPAIGNS ====================
 
 @router.get("/api/campaigns")
-def get_campaigns(search: Optional[str] = None, status: Optional[str] = None):
+def get_campaigns(search: Optional[str] = None, status: Optional[str] = None,
+                  workspace: Optional[str] = None):
     conn = get_db()
     where, params = ["1=1"], []
     if search:
@@ -30,6 +31,11 @@ def get_campaigns(search: Optional[str] = None, status: Optional[str] = None):
     if status:
         where.append("status=?")
         params.append(status)
+    if workspace:
+        if workspace.upper() == "MX":
+            where.append("(market='MX' OR country='Mexico')")
+        elif workspace.upper() == "US":
+            where.append("(market='US' OR market IS NULL OR (country != 'Mexico' OR country IS NULL))")
     rows = conn.execute(
         f"SELECT * FROM campaigns WHERE {' AND '.join(where)} ORDER BY created_at DESC", params
     ).fetchall()

@@ -32,6 +32,26 @@ const useData = (endpoint) => {
   return { data, loading, refetch: fetch };
 };
 
+// Workspace-aware data hook — appends ?workspace=US/MX to endpoint
+const useWorkspaceData = (endpoint) => {
+  const { workspace } = useWorkspace();
+  const sep = endpoint.includes('?') ? '&' : '?';
+  return useData(`${endpoint}${sep}workspace=${workspace}`);
+};
+
+// Get current workspace from localStorage (for non-hook contexts)
+const getWorkspace = () => localStorage.getItem('deduply_workspace') || 'US';
+
+// Workspace-aware api.get helper
+const wapi = {
+  get: (endpoint) => {
+    const ws = getWorkspace();
+    const sep = endpoint.includes('?') ? '&' : '?';
+    return api.get(`${endpoint}${sep}workspace=${ws}`);
+  },
+  post: (endpoint, data) => api.post(endpoint, { ...data, workspace: getWorkspace() }),
+};
+
 const ToastContext = createContext();
 const ToastProvider = ({ children }) => {
   const [toasts, setToasts] = useState([]);
@@ -44,6 +64,28 @@ const useToast = () => useContext(ToastContext);
 
 // Import Job Context for global progress tracking
 const ImportJobContext = createContext();
+
+// ============================================================
+// WORKSPACE CONTEXT — US / MX toggle (persisted in localStorage)
+// ============================================================
+const WorkspaceContext = React.createContext({ workspace: 'US', setWorkspace: () => {} });
+const useWorkspace = () => React.useContext(WorkspaceContext);
+
+const WorkspaceProvider = ({ children }) => {
+  const [workspace, setWorkspaceState] = React.useState(() => {
+    return localStorage.getItem('deduply_workspace') || 'US';
+  });
+  const setWorkspace = (ws) => {
+    localStorage.setItem('deduply_workspace', ws);
+    setWorkspaceState(ws);
+  };
+  return (
+    <WorkspaceContext.Provider value={{ workspace, setWorkspace }}>
+      {children}
+    </WorkspaceContext.Provider>
+  );
+};
+
 const ImportJobProvider = ({ children }) => {
   const [importJob, setImportJob] = useState(null);
 
@@ -188,6 +230,48 @@ const MultiSelect = ({ options, value = [], onChange, placeholder = "Select...",
 };
 
 // Sidebar with Arkode Branding
+
+// Workspace Toggle — shown in sidebar
+const WorkspaceToggle = () => {
+  const { workspace, setWorkspace } = useWorkspace();
+  return (
+    <div style={{
+      margin: '8px 12px 4px',
+      display: 'flex',
+      background: 'var(--bg-secondary)',
+      borderRadius: 8,
+      padding: 3,
+      gap: 2,
+    }}>
+      {[{id:'US', flag:'🇺🇸', label:'United States'}, {id:'MX', flag:'🇲🇽', label:'Mexico'}].map(ws => (
+        <button
+          key={ws.id}
+          onClick={() => setWorkspace(ws.id)}
+          title={ws.label}
+          style={{
+            flex: 1,
+            padding: '5px 8px',
+            border: 'none',
+            borderRadius: 6,
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: workspace === ws.id ? 700 : 400,
+            background: workspace === ws.id ? 'var(--coral)' : 'transparent',
+            color: workspace === ws.id ? '#fff' : 'var(--text-secondary)',
+            transition: 'all 0.15s',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 4,
+          }}
+        >
+          {ws.flag} {ws.id}
+        </button>
+      ))}
+    </div>
+  );
+};
+
 const Sidebar = ({ page, setPage, user, onLogout }) => {
   const { data: stats } = useData('/stats');
   const { importJob, clearImportJob } = useImportJob();
@@ -215,6 +299,9 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
         </div>
       </div>
     </div>
+    {/* Workspace Toggle */}
+    <WorkspaceToggle />
+
     <nav className="sidebar-nav">{nav.map(item => (<button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}><item.icon size={20} /><span>{item.label}</span>{item.id === 'contacts' && stats && <span className="nav-badge">{stats.unique_contacts?.toLocaleString()}</span>}{item.id === 'duplicates' && stats?.duplicates > 0 && <span className="nav-badge danger">{stats.duplicates}</span>}{item.id === 'campaigns' && stats && <span className="nav-badge">{stats.total_campaigns}</span>}</button>))}</nav>
 
     {/* Import Progress Indicator */}
@@ -970,10 +1057,11 @@ const ContactsPage = () => {
   const campaignFilterOptions = [{ id: '__none__', name: 'No Campaign' }, ...(filterOptions?.campaigns || []).map(c => ({ id: c, name: c }))];
   const listFilterOptions = [{ id: '__none__', name: 'No List' }, ...(filterOptions?.outreach_lists || []).map(l => ({ id: l, name: l }))];
 
+  const { workspace } = useWorkspace();
   const fetchContacts = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page, page_size: pageSize, sort_by: sortBy, sort_order: sortOrder });
+      const params = new URLSearchParams({ page, page_size: pageSize, sort_by: sortBy, sort_order: sortOrder, workspace });
       if (search) params.append('search', search);
       // Handle both array and string filter values
       Object.entries(filters).forEach(([k, v]) => {
@@ -987,7 +1075,7 @@ const ContactsPage = () => {
       setContacts(r.data); setTotal(r.total);
     } catch (e) { addToast(e.message, 'error'); }
     setLoading(false);
-  }, [page, pageSize, search, filters, sortBy, sortOrder, addToast]);
+  }, [page, pageSize, search, filters, sortBy, sortOrder, addToast, workspace]);
 
   useEffect(() => { fetchContacts(); }, [fetchContacts]);
 
@@ -2474,16 +2562,19 @@ const CampaignsPage = () => {
     { id: 'Spain', name: 'Spain' }
   ];
 
+  const { workspace } = useWorkspace();
   const fetchCampaigns = async () => {
     setLoading(true);
     try {
-      const r = await api.get(`/campaigns${search ? `?search=${search}` : ''}`);
+      const qs = new URLSearchParams({ workspace });
+      if (search) qs.set('search', search);
+      const r = await api.get(`/campaigns?${qs}`);
       setCampaigns(r.data);
     } catch (e) { addToast(e.message, 'error'); }
     setLoading(false);
   };
 
-  useEffect(() => { fetchCampaigns(); }, [search]);
+  useEffect(() => { fetchCampaigns(); }, [search, workspace]);
 
   const fetchCampaignDetails = async (id) => {
     setLoadingDetails(true);
@@ -5404,7 +5495,7 @@ function App() {
   if (loading) return <div className="loading-screen"><Loader2 className="spin" size={32} /></div>;
   if (!user) return <ToastProvider><LoginPage onLogin={setUser} /></ToastProvider>;
 
-  return (<ToastProvider><ImportJobProvider><div className="app"><Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} /><main className="main-content">
+  return (<ToastProvider><WorkspaceProvider><ImportJobProvider><div className="app"><Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} /><main className="main-content">
     {page === 'inbox' && <InboxPage setPage={setPage} />}
     {page === 'pipeline' && <PipelinePage />}
     {page === 'contacts' && <ContactsPage />}
@@ -5417,7 +5508,7 @@ function App() {
     {page === 'duplicates' && <DuplicatesPage />}
     {page === 'enrichment' && <EnrichmentPage />}
     {page === 'leadgen' && <LeadGenPage />}
-  </main></div></ImportJobProvider></ToastProvider>);
+  </main></div></ImportJobProvider></WorkspaceProvider></ToastProvider>);
 }
 
 
@@ -5626,12 +5717,13 @@ const InboxPage = ({ setPage }) => {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { fetchJobs(); }, []);
+  useEffect(() => { fetchJobs(); }, [workspace]);
 
+  const { workspace } = useWorkspace();
   const fetchJobs = async () => {
     setLoading(true);
     try {
-      const data = await api.get('/leadgen/jobs');
+      const data = await api.get(`/leadgen/jobs?workspace=${workspace}`);
       setJobs((data.data || []).filter(j => j.status === 'awaiting_approval' || j.status === 'failed'));
     } catch (e) { addToast(e.message, 'error'); }
     setLoading(false);
@@ -5732,12 +5824,13 @@ const PipelinePage = () => {
   const [loading, setLoading] = useState(true);
   const [approveLoading, setApproveLoading] = useState(false);
 
-  useEffect(() => { fetchJobs(); }, []);
+  useEffect(() => { fetchJobs(); }, [workspace]);
 
+  const { workspace } = useWorkspace();
   const fetchJobs = async () => {
     setLoading(true);
     try {
-      const data = await api.get('/leadgen/jobs');
+      const data = await api.get(`/leadgen/jobs?workspace=${workspace}`);
       setJobs(data.data || []);
     } catch (e) { addToast(e.message, 'error'); }
     setLoading(false);
