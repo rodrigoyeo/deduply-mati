@@ -2783,6 +2783,7 @@ const CampaignsPage = () => {
     </Modal>
     <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Create New Campaign"><CampaignForm onSubmit={handleCreate} onCancel={() => setShowCreate(false)} /></Modal>
     <Modal isOpen={!!editingSettings} onClose={() => setEditingSettings(null)} title="Edit Campaign Settings">{editingSettings && <CampaignForm initial={editingSettings} onSubmit={handleUpdateSettings} onCancel={() => setEditingSettings(null)} />}</Modal>
+    </>}
   </div>);
 };
 
