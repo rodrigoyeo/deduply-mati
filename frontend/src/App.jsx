@@ -4631,6 +4631,14 @@ const LeadGenPage = () => {
   const [selectedCompanies, setSelectedCompanies] = useState([]);
   const [importLoading, setImportLoading] = useState(false);
 
+  // --- Two-stage pipeline: Stage 2 ---
+  const [findContactsJob, setFindContactsJob] = useState(null);
+  const [stagedContacts, setStagedContacts] = useState([]);
+  const [stagedTotal, setStagedTotal] = useState(0);
+  const [selectedStagedContacts, setSelectedStagedContacts] = useState([]);
+  const [approveLoading, setApproveLoading] = useState(false);
+  const [showContactsPreview, setShowContactsPreview] = useState(false);
+
   // --- Waterfall state ---
   const [waterfallUrl, setWaterfallUrl] = useState('');
   const [waterfallLevels, setWaterfallLevels] = useState(['C-Level', 'VP']);
@@ -4725,6 +4733,67 @@ const LeadGenPage = () => {
       addToast(`Import started (job ${result.job_id.slice(0, 8)}...) — check Credits & Jobs for progress`, 'success');
     } catch (e) { addToast(e.message, 'error'); }
     setImportLoading(false);
+  };
+
+  // Stage 2: Find contacts for selected companies (staging table)
+  const handleFindContacts = async () => {
+    if (selectedCompanies.length === 0) { addToast('Select at least one company first', 'error'); return; }
+    setImportLoading(true);
+    setStagedContacts([]);
+    setShowContactsPreview(false);
+    try {
+      const result = await api.post('/leadgen/companies/find-contacts', {
+        company_ids: selectedCompanies,
+        job_levels: ['C-Level', 'VP', 'Director', 'Manager'],
+        max_per_company: 5,
+      });
+      setFindContactsJob({ job_id: result.job_id, status: 'running', company_count: result.company_count });
+      addToast(`Finding contacts for ${result.company_count} companies...`, 'info');
+      // Poll until done
+      const poll = setInterval(async () => {
+        try {
+          const jobs = await api.get('/leadgen/jobs');
+          const job = (jobs.data || []).find(j => j.id === result.job_id);
+          if (job && (job.status === 'awaiting_approval' || job.status === 'completed' || job.status === 'failed')) {
+            clearInterval(poll);
+            if (job.status === 'failed') {
+              addToast('Contact search failed: ' + (job.error || 'Unknown'), 'error');
+            } else {
+              // Load preview
+              const preview = await api.get('/leadgen/contacts/preview?job_id=' + result.job_id);
+              setStagedContacts(preview.contacts || []);
+              setStagedTotal(preview.total || 0);
+              setSelectedStagedContacts((preview.contacts || []).map(c => c.id));
+              setShowContactsPreview(true);
+              addToast(`${preview.total} contacts ready for review`, 'success');
+            }
+            setFindContactsJob(prev => ({ ...prev, status: job.status }));
+          }
+        } catch (e) { clearInterval(poll); }
+      }, 3000);
+    } catch (e) { addToast(e.message, 'error'); }
+    setImportLoading(false);
+  };
+
+  // Stage 3: Approve selected staged contacts → move to main contacts table
+  const handleApproveContacts = async () => {
+    if (selectedStagedContacts.length === 0) { addToast('Select contacts to approve', 'error'); return; }
+    setApproveLoading(true);
+    try {
+      const result = await api.post('/leadgen/contacts/approve', { contact_ids: selectedStagedContacts });
+      addToast(`✅ ${result.imported} contacts imported! ${result.skipped_duplicates} duplicates skipped.`, 'success');
+      setStagedContacts(prev => prev.filter(c => !selectedStagedContacts.includes(c.id)));
+      setSelectedStagedContacts([]);
+      if (stagedContacts.length - selectedStagedContacts.length === 0) setShowContactsPreview(false);
+    } catch (e) { addToast(e.message, 'error'); }
+    setApproveLoading(false);
+  };
+
+  const toggleStagedContact = (id) => setSelectedStagedContacts(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  const toggleAllStaged = () => {
+    const pending = stagedContacts.filter(c => c.status === 'pending').map(c => c.id);
+    if (selectedStagedContacts.length === pending.length) setSelectedStagedContacts([]);
+    else setSelectedStagedContacts(pending);
   };
 
   const toggleWaterfallLevel = (level) => setWaterfallLevels(prev => prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]);
@@ -4926,10 +4995,10 @@ const LeadGenPage = () => {
 
             {selectedCompanies.length > 0 && (
               <div className="leadgen-bulk-bar">
-                <span>{selectedCompanies.length} selected</span>
-                <button className="btn btn-primary btn-sm" disabled={importLoading} onClick={handleImport}>
-                  {importLoading ? <Loader2 className="spin" size={14} /> : <UserPlus size={14} />}
-                  Import Selected ({selectedCompanies.length}) → Contacts
+                <span>{selectedCompanies.length} {selectedCompanies.length === 1 ? 'company' : 'companies'} selected</span>
+                <button className="btn btn-primary btn-sm" disabled={importLoading} onClick={handleFindContacts}>
+                  {importLoading ? <Loader2 className="spin" size={14} /> : <Users size={14} />}
+                  {importLoading ? 'Finding contacts...' : `Find Contacts (${selectedCompanies.length})`}
                 </button>
                 <button className="btn btn-secondary btn-sm" onClick={() => setSelectedCompanies([])}>Clear</button>
               </div>
@@ -4998,6 +5067,77 @@ const LeadGenPage = () => {
                 <p className="empty-hint">BlitzAPI charges credits per search — not live.</p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ---- Contacts Preview Panel (Stage 2 result) ---- */}
+      {showContactsPreview && activeTab === 'search' && (
+        <div className="card" style={{marginTop: 24}}>
+          <div className="card-header" style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <Users size={18} style={{color:'var(--coral)'}} />
+              <h3 style={{margin:0}}>Contacts Preview — Review Before Importing</h3>
+              <span className="badge badge-info">{stagedContacts.filter(c=>c.status==='pending').length} pending</span>
+            </div>
+            <div style={{display:'flex', gap:8}}>
+              <button className="btn btn-secondary btn-sm" onClick={toggleAllStaged}>
+                {selectedStagedContacts.length === stagedContacts.filter(c=>c.status==='pending').length ? 'Deselect All' : 'Select All'}
+              </button>
+              <button className="btn btn-primary btn-sm" disabled={approveLoading || selectedStagedContacts.length === 0} onClick={handleApproveContacts}>
+                {approveLoading ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+                Approve &amp; Import ({selectedStagedContacts.length})
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowContactsPreview(false)}>
+                <X size={14} /> Dismiss
+              </button>
+            </div>
+          </div>
+          <div style={{padding:'0 16px 8px', fontSize:12, color:'var(--text-secondary)'}}>
+            Review these contacts before they enter your main contacts table. Uncheck anyone you want to skip.
+          </div>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th style={{width:36}}><input type="checkbox" checked={selectedStagedContacts.length === stagedContacts.filter(c=>c.status==='pending').length && stagedContacts.length > 0} onChange={toggleAllStaged} /></th>
+                  <th>Name</th>
+                  <th>Title</th>
+                  <th>Email</th>
+                  <th>Company</th>
+                  <th>Workspace</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stagedContacts.map(c => (
+                  <tr key={c.id} style={{opacity: c.status !== 'pending' ? 0.5 : 1}}>
+                    <td>
+                      {c.status === 'pending' && (
+                        <input type="checkbox" checked={selectedStagedContacts.includes(c.id)} onChange={() => toggleStagedContact(c.id)} />
+                      )}
+                    </td>
+                    <td><strong>{c.first_name} {c.last_name}</strong></td>
+                    <td style={{color:'var(--text-secondary)', fontSize:12}}>{c.title || '—'}</td>
+                    <td style={{fontSize:12}}>{c.email || <span style={{color:'var(--text-muted)'}}>No email</span>}</td>
+                    <td style={{fontSize:12}}>
+                      {c.company_name}
+                      {c.company_domain && <span style={{color:'var(--text-muted)'}}> ({c.company_domain})</span>}
+                    </td>
+                    <td>
+                      <span className={`workspace-badge workspace-${(c.workspace||'US').toLowerCase()}`}>
+                        {c.workspace === 'MX' ? '🇲🇽' : '🇺🇸'} {c.workspace || 'US'}
+                      </span>
+                    </td>
+                    <td>
+                      {c.status === 'approved' && <span style={{color:'var(--green)',fontSize:12}}>✅ Imported</span>}
+                      {c.status === 'rejected' && <span style={{color:'var(--text-muted)',fontSize:12}}>Skipped</span>}
+                      {c.status === 'pending' && <span style={{color:'var(--text-secondary)',fontSize:12}}>Pending</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

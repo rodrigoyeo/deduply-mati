@@ -748,3 +748,328 @@ async def get_credits(user: dict = Depends(get_current_user)):
         "allowed_apis": data.get("allowed_apis", []),
         "active_plans": data.get("active_plans", []),
     }
+
+
+# ---------------------------------------------------------------------------
+# Two-Stage Pipeline — Stage 2: Find Contacts (staging table)
+# ---------------------------------------------------------------------------
+
+class FindContactsRequest(BaseModel):
+    company_ids: List[int]
+    job_levels: Optional[List[str]] = ["C-Level", "VP", "Director", "Manager"]
+    max_per_company: int = 5
+
+
+class ApproveContactsRequest(BaseModel):
+    contact_ids: Optional[List[int]] = None   # None = approve all pending for job
+    job_id: Optional[str] = None
+
+
+def _run_find_contacts(job_id: str, api_key: str, companies: list, job_levels: list, max_per_company: int):
+    """Background thread: for each company, find ICP contacts and store in lead_gen_contacts staging."""
+    conn = None
+    try:
+        conn = get_db()
+        conn.execute("UPDATE lead_gen_jobs SET status='running' WHERE id=?", (job_id,))
+        conn.commit()
+
+        total_found = 0
+        now = datetime.now().isoformat()
+
+        for company in companies:
+            company_id = company["id"]
+            linkedin_url = company.get("linkedin_url") or ""
+            company_name = company.get("name") or ""
+            company_domain = company.get("domain") or ""
+            workspace = company.get("workspace") or "US"
+
+            if not linkedin_url:
+                continue
+
+            try:
+                # Find employees via BlitzAPI employee-finder
+                body = {
+                    "company_linkedin_url": linkedin_url,
+                    "job_levels": job_levels,
+                    "limit": max_per_company,
+                }
+                data = _blitzapi_request_sync("POST", "/v2/search/employee-finder", api_key, body)
+                people = data.get("results", [])
+
+                for person in people:
+                    email = person.get("email") or ""
+                    # If no email, try email finder
+                    if not email and person.get("linkedin_url"):
+                        try:
+                            email_data = _blitzapi_request_sync(
+                                "POST", "/v2/people-enrichment/find-work-email", api_key,
+                                {"linkedin_url": person["linkedin_url"]}
+                            )
+                            email = email_data.get("email") or ""
+                        except Exception:
+                            pass
+
+                    if USE_POSTGRES:
+                        conn.execute("""
+                            INSERT INTO lead_gen_contacts
+                            (job_id, company_id, first_name, last_name, email, title,
+                             linkedin_url, company_name, company_domain, workspace, status, created_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                        """, (
+                            job_id, company_id,
+                            person.get("first_name"), person.get("last_name"),
+                            email, person.get("title"),
+                            person.get("linkedin_url"),
+                            company_name, company_domain, workspace, now
+                        ))
+                    else:
+                        conn.execute("""
+                            INSERT INTO lead_gen_contacts
+                            (job_id, company_id, first_name, last_name, email, title,
+                             linkedin_url, company_name, company_domain, workspace, status, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?)
+                        """, (
+                            job_id, company_id,
+                            person.get("first_name"), person.get("last_name"),
+                            email, person.get("title"),
+                            person.get("linkedin_url"),
+                            company_name, company_domain, workspace, now
+                        ))
+                    conn.commit()
+                    total_found += 1
+
+            except Exception as e:
+                print(f"[LEADGEN] Error finding contacts for {company_name}: {e}")
+                continue
+
+        conn.execute(
+            "UPDATE lead_gen_jobs SET status='awaiting_approval', results_count=? WHERE id=?",
+            (total_found, job_id)
+        )
+        conn.commit()
+
+    except Exception as e:
+        print(f"[LEADGEN CONTACTS THREAD] Error: {e}\n{traceback.format_exc()}")
+        if conn:
+            try:
+                conn.execute("UPDATE lead_gen_jobs SET status='failed', error=? WHERE id=?",
+                             (str(e)[:500], job_id))
+                conn.commit()
+            except Exception:
+                pass
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post("/api/leadgen/companies/find-contacts")
+async def find_contacts_for_companies(req: FindContactsRequest, user: dict = Depends(get_current_user)):
+    """Stage 2: Find ICP contacts for selected companies. Stores in staging table, NOT contacts table yet."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    conn = get_db()
+    api_key = _get_blitzapi_key(conn)
+    if not api_key:
+        conn.close()
+        raise HTTPException(400, "BlitzAPI key not configured.")
+
+    # Fetch selected companies
+    if USE_POSTGRES:
+        placeholders = ",".join(["%s"] * len(req.company_ids))
+    else:
+        placeholders = ",".join(["?"] * len(req.company_ids))
+
+    rows = conn.execute(
+        f"SELECT id, linkedin_url, name, domain, workspace FROM lead_gen_companies WHERE id IN ({placeholders})",
+        req.company_ids
+    ).fetchall()
+
+    if not rows:
+        conn.close()
+        raise HTTPException(404, "No companies found with those IDs")
+
+    companies = [
+        {"id": r[0], "linkedin_url": r[1], "name": r[2], "domain": r[3], "workspace": r[4]}
+        for r in rows
+    ]
+
+    job_id = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+
+    if USE_POSTGRES:
+        conn.execute("""
+            INSERT INTO lead_gen_jobs (id, job_type, status, parameters, workspace, created_by, created_at)
+            VALUES (%s,'contact_discovery','pending',%s,'AUTO',%s,%s)
+        """, (job_id, json.dumps({"company_count": len(companies)}), user["id"], now))
+    else:
+        conn.execute("""
+            INSERT INTO lead_gen_jobs (id, job_type, status, parameters, workspace, created_by, created_at)
+            VALUES (?,'contact_discovery','pending',?,'AUTO',?,?)
+        """, (job_id, json.dumps({"company_count": len(companies)}), user["id"], now))
+
+    conn.commit()
+    conn.close()
+
+    leadgen_jobs[job_id] = {"status": "running"}
+
+    thread = threading.Thread(
+        target=_run_find_contacts,
+        args=(job_id, api_key, companies, req.job_levels, req.max_per_company),
+        daemon=True
+    )
+    thread.start()
+
+    return {"job_id": job_id, "status": "running", "company_count": len(companies)}
+
+
+@router.get("/api/leadgen/contacts/preview")
+async def get_contacts_preview(job_id: str, user: dict = Depends(get_current_user)):
+    """Get staged contacts for review before approving import."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT id, job_id, company_id, first_name, last_name, email, title,
+               linkedin_url, company_name, company_domain, workspace, status, contact_id
+        FROM lead_gen_contacts WHERE job_id=? ORDER BY company_name, last_name
+    """, (job_id,)).fetchall()
+    conn.close()
+
+    contacts = [
+        {
+            "id": r[0], "job_id": r[1], "company_id": r[2],
+            "first_name": r[3], "last_name": r[4], "email": r[5],
+            "title": r[6], "linkedin_url": r[7],
+            "company_name": r[8], "company_domain": r[9],
+            "workspace": r[10], "status": r[11], "contact_id": r[12]
+        }
+        for r in rows
+    ]
+
+    pending = sum(1 for c in contacts if c["status"] == "pending")
+    approved = sum(1 for c in contacts if c["status"] == "approved")
+
+    return {
+        "contacts": contacts,
+        "total": len(contacts),
+        "pending": pending,
+        "approved": approved,
+    }
+
+
+@router.post("/api/leadgen/contacts/approve")
+async def approve_contacts(req: ApproveContactsRequest, user: dict = Depends(get_current_user)):
+    """Approve staged contacts — moves them to the main contacts table."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    conn = get_db()
+
+    # Get contacts to approve
+    if req.contact_ids:
+        if USE_POSTGRES:
+            placeholders = ",".join(["%s"] * len(req.contact_ids))
+        else:
+            placeholders = ",".join(["?"] * len(req.contact_ids))
+        rows = conn.execute(
+            f"SELECT * FROM lead_gen_contacts WHERE id IN ({placeholders}) AND status='pending'",
+            req.contact_ids
+        ).fetchall()
+    elif req.job_id:
+        rows = conn.execute(
+            "SELECT * FROM lead_gen_contacts WHERE job_id=? AND status='pending'",
+            (req.job_id,)
+        ).fetchall()
+    else:
+        conn.close()
+        raise HTTPException(400, "Provide contact_ids or job_id")
+
+    if not rows:
+        conn.close()
+        return {"imported": 0, "skipped_duplicates": 0}
+
+    imported = 0
+    skipped = 0
+    now = datetime.now().isoformat()
+
+    for r in rows:
+        lgc_id = r[0]
+        email = r[5] or ""
+
+        # Dedup check
+        if email:
+            existing = conn.execute("SELECT id FROM contacts WHERE email=?", (email,)).fetchone()
+            if existing:
+                conn.execute("UPDATE lead_gen_contacts SET status='rejected' WHERE id=?", (lgc_id,))
+                conn.commit()
+                skipped += 1
+                continue
+
+        # Insert into main contacts table
+        workspace = r[10] or "US"
+        if USE_POSTGRES:
+            cur = conn.execute("""
+                INSERT INTO contacts (first_name, last_name, email, title, person_linkedin_url,
+                    company, domain, reachinbox_workspace, enrichment_source, pipeline_stage, created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'blitzapi','new',%s)
+                RETURNING id
+            """, (r[3], r[4], email, r[6], r[7], r[8], r[9], workspace, now))
+            contact_id = cur.fetchone()[0]
+        else:
+            cur = conn.execute("""
+                INSERT INTO contacts (first_name, last_name, email, title, person_linkedin_url,
+                    company, domain, reachinbox_workspace, enrichment_source, pipeline_stage, created_at)
+                VALUES (?,?,?,?,?,?,?,?,'blitzapi','new',?)
+            """, (r[3], r[4], email, r[6], r[7], r[8], r[9], workspace, now))
+            contact_id = cur.lastrowid
+
+        conn.execute(
+            "UPDATE lead_gen_contacts SET status='approved', contact_id=? WHERE id=?",
+            (contact_id, lgc_id)
+        )
+        conn.commit()
+        imported += 1
+
+    # Update job approval status
+    if req.job_id:
+        conn.execute(
+            "UPDATE lead_gen_jobs SET approval_status='approved', approved_at=?, approved_by=? WHERE id=?",
+            (now, user["id"], req.job_id)
+        )
+        conn.commit()
+
+    conn.close()
+
+    return {
+        "imported": imported,
+        "skipped_duplicates": skipped,
+        "total_processed": imported + skipped,
+    }
+
+
+@router.post("/api/leadgen/contacts/reject")
+async def reject_contacts(req: ApproveContactsRequest, user: dict = Depends(get_current_user)):
+    """Reject staged contacts — removes them from the pipeline."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    conn = get_db()
+    if req.contact_ids:
+        if USE_POSTGRES:
+            placeholders = ",".join(["%s"] * len(req.contact_ids))
+        else:
+            placeholders = ",".join(["?"] * len(req.contact_ids))
+        conn.execute(
+            f"UPDATE lead_gen_contacts SET status='rejected' WHERE id IN ({placeholders})",
+            req.contact_ids
+        )
+    elif req.job_id:
+        conn.execute(
+            "UPDATE lead_gen_contacts SET status='rejected' WHERE job_id=? AND status='pending'",
+            (req.job_id,)
+        )
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
