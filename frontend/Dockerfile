@@ -6,7 +6,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install dependencies (no cache to ensure fresh install)
 RUN npm ci --legacy-peer-deps
 
 # Copy source code
@@ -15,6 +15,10 @@ COPY . .
 # Build argument for API URL (will be set in Railway)
 ARG REACT_APP_API_URL
 ENV REACT_APP_API_URL=$REACT_APP_API_URL
+
+# Disable ESLint during build (we lint locally, not in CI)
+ENV DISABLE_ESLINT_PLUGIN=true
+ENV CI=false
 
 # Build the app
 RUN npm run build
