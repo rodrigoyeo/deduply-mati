@@ -3854,6 +3854,12 @@ const SettingsPage = () => {
   const [savingHsToken, setSavingHsToken] = useState(false);
   const [hsTestResult, setHsTestResult] = useState(null);
 
+  // BlitzAPI state
+  const [blitzKey, setBlitzKey] = useState('');
+  const [blitzConfigured, setBlitzConfigured] = useState(false);
+  const [savingBlitzKey, setSavingBlitzKey] = useState(false);
+  const [blitzTestResult, setBlitzTestResult] = useState(null);
+
   // Load API key status on mount
   useEffect(() => {
     const loadApiKeyStatus = async () => {
@@ -3880,9 +3886,16 @@ const SettingsPage = () => {
         setHsConfigured(res.configured);
       } catch (e) {}
     };
+    const loadBlitzStatus = async () => {
+      try {
+        const res = await api.get('/settings/blitzapi_api_key');
+        setBlitzConfigured(res.configured);
+      } catch (e) {}
+    };
     loadApiKeyStatus();
     loadRiStatus();
     loadHsStatus();
+    loadBlitzStatus();
   }, []);
 
   const testRiConnection = async (ws) => {
@@ -3898,6 +3911,32 @@ const SettingsPage = () => {
     } catch (e) {
       addToast(`${ws} connection test failed`, 'error');
     }
+  };
+
+  const saveBlitzKey = async () => {
+    if (!blitzKey.trim()) { addToast('Enter an API key', 'error'); return; }
+    setSavingBlitzKey(true);
+    try {
+      await api.put('/settings/blitzapi_api_key', { value: blitzKey.trim() });
+      addToast('BlitzAPI key saved!', 'success');
+      setBlitzConfigured(true);
+      setBlitzKey('');
+    } catch (e) { addToast(e.message || 'Failed to save', 'error'); }
+    setSavingBlitzKey(false);
+  };
+
+  const testBlitzConnection = async () => {
+    try {
+      const res = await api.get('/leadgen/credits');
+      if (res.valid) {
+        const msg = `Connected — ${(res.remaining_credits || 0).toLocaleString()} credits remaining`;
+        addToast(msg, 'success');
+        setBlitzTestResult(msg);
+      } else {
+        addToast('BlitzAPI key invalid', 'error');
+        setBlitzTestResult('Invalid key');
+      }
+    } catch (e) { addToast('Connection test failed', 'error'); }
   };
 
   const saveHsToken = async () => {
@@ -4170,6 +4209,40 @@ const SettingsPage = () => {
           </div>
         </div>
 
+        {/* BlitzAPI Configuration */}
+        <div className="api-config-section" style={{marginTop: '32px'}}>
+          <div className="section-header">
+            <h2><Target size={20} /> BlitzAPI</h2>
+          </div>
+          <p className="help-text">
+            API key for the Lead Generation engine — company search, employee finder, email enrichment.
+            {' '}<a href="https://blitz-api.ai" target="_blank" rel="noopener noreferrer">Get your key at blitz-api.ai →</a>
+          </p>
+          <div className="api-key-form">
+            <div className="api-key-status">
+              {blitzConfigured
+                ? <span className="status-configured"><Check size={14} /> Configured</span>
+                : <span className="status-not-configured"><AlertCircle size={14} /> Not set</span>}
+            </div>
+            <div className="api-key-input-group">
+              <input
+                type="password"
+                placeholder={blitzConfigured ? 'Enter new key to replace existing' : 'blitz-xxxxxxxxxxxxxxxx'}
+                value={blitzKey}
+                onChange={e => setBlitzKey(e.target.value)}
+                className="api-key-input"
+              />
+              <button className="btn btn-primary" onClick={saveBlitzKey} disabled={savingBlitzKey || !blitzKey.trim()}>
+                {savingBlitzKey ? <><Loader2 size={16} className="spin" /> Saving...</> : 'Save'}
+              </button>
+              <button className="btn btn-secondary" onClick={testBlitzConnection} disabled={!blitzConfigured}>
+                Test
+              </button>
+            </div>
+            {blitzTestResult && <div className="ri-test-result"><Check size={13} /> {blitzTestResult}</div>}
+          </div>
+        </div>
+
         <div className="section-header" style={{marginTop: '32px'}}>
           <h2>Webhook Integrations</h2>
           <button className="btn btn-secondary" onClick={refetchWebhooks}><RefreshCw size={16} /> Refresh</button>
@@ -4319,8 +4392,23 @@ const AddUserForm = ({ onSubmit, onCancel }) => {
 // Lead Gen Page — BlitzAPI Enrichment Engine
 // ---------------------------------------------------------------------------
 const LEAD_GEN_INDUSTRIES = [
-  'Software Development', 'IT Services', 'Financial Services', 'Healthcare',
-  'Manufacturing', 'Retail', 'Real Estate', 'Education', 'Marketing', 'Consulting',
+  'Accounting', 'Advertising', 'Aerospace', 'Agriculture', 'Architecture',
+  'Automotive', 'Banking', 'Biotechnology', 'Chemical', 'Civil Engineering',
+  'Computer Software', 'Construction', 'Consumer Electronics', 'Consumer Goods',
+  'Defense & Space', 'Education Management', 'Electrical & Electronic Manufacturing',
+  'Entertainment', 'Environmental Services', 'Financial Services',
+  'Food & Beverages', 'Government Administration', 'Health, Wellness & Fitness',
+  'Healthcare', 'Hospital & Health Care', 'Human Resources',
+  'Information Technology', 'Insurance', 'Internet', 'IT Services',
+  'Logistics & Supply Chain', 'Management Consulting', 'Manufacturing',
+  'Marketing & Advertising', 'Media', 'Medical Devices', 'Mining', 'Nonprofit',
+  'Oil & Energy', 'Outsourcing', 'Pharmaceuticals', 'Public Relations',
+  'Real Estate', 'Retail', 'Security', 'Software Development',
+  'Staffing & Recruiting', 'Telecommunications', 'Transportation',
+  'Utilities', 'Venture Capital',
+];
+const LEAD_GEN_COMPANY_TYPES = [
+  'Privately Held', 'Public Company', 'Non Profit', 'Partnership', 'Self Owned',
 ];
 const LEAD_GEN_COUNTRIES = [
   { code: 'US', label: 'United States' }, { code: 'MX', label: 'Mexico' },
@@ -4328,6 +4416,8 @@ const LEAD_GEN_COUNTRIES = [
   { code: 'DE', label: 'Germany' }, { code: 'ES', label: 'Spain' },
   { code: 'FR', label: 'France' }, { code: 'AU', label: 'Australia' },
   { code: 'BR', label: 'Brazil' }, { code: 'IN', label: 'India' },
+  { code: 'AR', label: 'Argentina' }, { code: 'CL', label: 'Chile' },
+  { code: 'CO', label: 'Colombia' }, { code: 'PE', label: 'Peru' },
 ];
 const LEAD_GEN_EMP_RANGES = ['1-10', '11-50', '51-200', '201-500', '500+'];
 const LEAD_GEN_JOB_LEVELS = ['C-Level', 'VP', 'Director', 'Manager'];
@@ -4341,24 +4431,62 @@ const WorkspaceBadge = ({ workspace }) => {
   );
 };
 
+// Multi-value text-tag input used in filter panels
+const TagInput = ({ tags, onAdd, onRemove, placeholder = 'Type and press Enter' }) => {
+  const [input, setInput] = useState('');
+  const handleKeyDown = (e) => {
+    if ((e.key === 'Enter' || e.key === ',') && input.trim()) {
+      e.preventDefault();
+      const val = input.trim().replace(/,+$/, '');
+      if (val && !tags.includes(val)) onAdd(val);
+      setInput('');
+    }
+    if (e.key === 'Backspace' && !input && tags.length > 0) {
+      onRemove(tags[tags.length - 1]);
+    }
+  };
+  return (
+    <div className="tag-input-container">
+      {tags.map(t => (
+        <span key={t} className="tag-chip">
+          {t}
+          <button type="button" className="tag-chip-remove" onClick={() => onRemove(t)}><X size={10} /></button>
+        </span>
+      ))}
+      <input
+        className="tag-input-field"
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={tags.length === 0 ? placeholder : ''}
+      />
+    </div>
+  );
+};
+
 const LeadGenPage = () => {
   const { addToast } = useToast();
   const [activeTab, setActiveTab] = useState('search');
 
-  // --- Company Search state ---
-  const [searchKeywords, setSearchKeywords] = useState('');
-  const [searchIndustries, setSearchIndustries] = useState([]);
-  const [searchCountry, setSearchCountry] = useState('');
-  const [searchEmpRanges, setSearchEmpRanges] = useState([]);
-  const [searchFoundedAfter, setSearchFoundedAfter] = useState('');
-  const [searchMaxResults, setSearchMaxResults] = useState(25);
+  // --- Search filters ---
+  const [indInclude, setIndInclude] = useState([]);
+  const [indExclude, setIndExclude] = useState([]);
+  const [kwInclude, setKwInclude] = useState([]);
+  const [kwExclude, setKwExclude] = useState([]);
+  const [countries, setCountries] = useState([]);
+  const [states, setStates] = useState([]);
+  const [empRanges, setEmpRanges] = useState([]);
+  const [companyTypes, setCompanyTypes] = useState([]);
+  const [excludeDomains, setExcludeDomains] = useState('');
+  const [maxResults, setMaxResults] = useState(25);
+
+  // --- Search job state ---
   const [searchLoading, setSearchLoading] = useState(false);
   const [activeSearchJob, setActiveSearchJob] = useState(null);
   const [jobCompanies, setJobCompanies] = useState([]);
+  const [jobTotal, setJobTotal] = useState(0);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
   const [importLoading, setImportLoading] = useState(false);
-  const [jobs, setJobs] = useState([]);
-  const [jobsLoading, setJobsLoading] = useState(false);
 
   // --- Waterfall state ---
   const [waterfallUrl, setWaterfallUrl] = useState('');
@@ -4367,11 +4495,13 @@ const LeadGenPage = () => {
   const [waterfallLoading, setWaterfallLoading] = useState(false);
   const [waterfallResults, setWaterfallResults] = useState([]);
 
-  // --- Credits state ---
+  // --- Credits & Jobs state ---
   const [credits, setCredits] = useState(null);
   const [creditsLoading, setCreditsLoading] = useState(false);
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
 
-  // Poll active job
+  // Poll active search job
   useEffect(() => {
     if (!activeSearchJob?.job_id || activeSearchJob?.status === 'completed' || activeSearchJob?.status === 'failed') return;
     const interval = setInterval(async () => {
@@ -4381,6 +4511,7 @@ const LeadGenPage = () => {
         setActiveSearchJob(prev => ({ ...prev, status: job.status, results_count: job.results_count, error: job.error }));
         if (job.status === 'completed') {
           setJobCompanies(data.companies || []);
+          setJobTotal(job.results_count || 0);
           setSelectedCompanies([]);
           addToast(`Found ${job.results_count} companies`, 'success');
         } else if (job.status === 'failed') {
@@ -4410,10 +4541,7 @@ const LeadGenPage = () => {
   };
 
   useEffect(() => {
-    if (activeTab === 'credits') {
-      fetchCredits();
-      fetchJobs();
-    }
+    if (activeTab === 'credits') { fetchCredits(); fetchJobs(); }
   }, [activeTab]);
 
   const handleSearch = async (e) => {
@@ -4421,23 +4549,18 @@ const LeadGenPage = () => {
     setSearchLoading(true);
     setJobCompanies([]);
     setSelectedCompanies([]);
+    setJobTotal(0);
     try {
-      const body = { max_results: searchMaxResults };
-      if (searchKeywords.trim()) {
-        body.keywords = { include: searchKeywords.split(',').map(k => k.trim()).filter(Boolean), exclude: [] };
-      }
-      if (searchIndustries.length > 0) {
-        body.industry = { include: searchIndustries };
-      }
-      if (searchCountry) {
-        body.hq = { country_code: [searchCountry], continent: [], city: [] };
-      }
-      if (searchEmpRanges.length > 0) {
-        body.employee_range = searchEmpRanges;
-      }
-      if (searchFoundedAfter) {
-        body.founded_year = { min: parseInt(searchFoundedAfter, 10), max: null };
-      }
+      const body = { max_results: maxResults };
+      if (indInclude.length > 0) body.industries_include = indInclude;
+      if (indExclude.length > 0) body.industries_exclude = indExclude;
+      if (kwInclude.length > 0) body.keywords_include = kwInclude;
+      if (kwExclude.length > 0) body.keywords_exclude = kwExclude;
+      if (countries.length > 0) body.countries = countries;
+      if (states.length > 0) body.states = states;
+      if (empRanges.length > 0) body.employee_range = empRanges;
+      if (companyTypes.length > 0) body.company_types = companyTypes;
+      if (excludeDomains.trim()) body.exclude_domains = excludeDomains.split(/[\n,]+/).map(d => d.trim()).filter(Boolean);
       const result = await api.post('/leadgen/companies/search', body);
       setActiveSearchJob({ job_id: result.job_id, status: 'running', results_count: 0 });
       addToast('Search started...', 'info');
@@ -4445,10 +4568,7 @@ const LeadGenPage = () => {
     setSearchLoading(false);
   };
 
-  const toggleCompany = (id) => {
-    setSelectedCompanies(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
-  };
-
+  const toggleCompany = (id) => setSelectedCompanies(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
   const toggleAllCompanies = () => {
     if (selectedCompanies.length === jobCompanies.length) setSelectedCompanies([]);
     else setSelectedCompanies(jobCompanies.map(c => c.id));
@@ -4459,14 +4579,12 @@ const LeadGenPage = () => {
     setImportLoading(true);
     try {
       const result = await api.post('/leadgen/companies/import', { company_ids: selectedCompanies });
-      addToast(`Import started (job ${result.job_id.slice(0, 8)}...)`, 'success');
+      addToast(`Import started (job ${result.job_id.slice(0, 8)}...) — check Credits & Jobs for progress`, 'success');
     } catch (e) { addToast(e.message, 'error'); }
     setImportLoading(false);
   };
 
-  const toggleWaterfallLevel = (level) => {
-    setWaterfallLevels(prev => prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]);
-  };
+  const toggleWaterfallLevel = (level) => setWaterfallLevels(prev => prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]);
 
   const handleWaterfall = async (e) => {
     e.preventDefault();
@@ -4484,6 +4602,10 @@ const LeadGenPage = () => {
     } catch (e) { addToast(e.message, 'error'); }
     setWaterfallLoading(false);
   };
+
+  const toggleEmpRange = (r) => setEmpRanges(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]);
+  const toggleType = (t) => setCompanyTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
+  const toggleCountry = (code) => setCountries(prev => prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]);
 
   return (
     <div className="page-container">
@@ -4509,108 +4631,144 @@ const LeadGenPage = () => {
         </button>
       </div>
 
-      {/* ---- Sub-tab 1: Company Search ---- */}
+      {/* ---- Sub-tab 1: Company Search — split layout ---- */}
       {activeTab === 'search' && (
         <div className="leadgen-search-layout">
-          <div className="leadgen-form-panel">
-            <div className="card">
-              <div className="card-header"><h3>Search Companies</h3></div>
-              <div className="card-body">
-                <form onSubmit={handleSearch}>
-                  <div className="form-group">
-                    <label>Keywords (comma-separated)</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. SaaS, software, cloud"
-                      value={searchKeywords}
-                      onChange={e => setSearchKeywords(e.target.value)}
-                    />
-                  </div>
 
-                  <div className="form-group">
-                    <label>Industries</label>
-                    <div className="checkbox-grid">
-                      {LEAD_GEN_INDUSTRIES.map(ind => (
-                        <label key={ind} className="checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={searchIndustries.includes(ind)}
-                            onChange={() => setSearchIndustries(prev =>
-                              prev.includes(ind) ? prev.filter(i => i !== ind) : [...prev, ind]
-                            )}
-                          />
-                          {ind}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Country (HQ)</label>
-                    <select value={searchCountry} onChange={e => setSearchCountry(e.target.value)}>
-                      <option value="">Any Country</option>
-                      {LEAD_GEN_COUNTRIES.map(c => (
-                        <option key={c.code} value={c.code}>{c.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Employee Range</label>
-                    <div className="checkbox-row">
-                      {LEAD_GEN_EMP_RANGES.map(r => (
-                        <label key={r} className="checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={searchEmpRanges.includes(r)}
-                            onChange={() => setSearchEmpRanges(prev =>
-                              prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]
-                            )}
-                          />
-                          {r}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Founded After (year)</label>
-                      <input
-                        type="number"
-                        placeholder="e.g. 2015"
-                        value={searchFoundedAfter}
-                        onChange={e => setSearchFoundedAfter(e.target.value)}
-                        min="1900"
-                        max="2025"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Max Results</label>
-                      <select value={searchMaxResults} onChange={e => setSearchMaxResults(parseInt(e.target.value, 10))}>
-                        <option value={10}>10</option>
-                        <option value={25}>25</option>
-                        <option value={50}>50</option>
-                        <option value={100}>100</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="credit-preview">
-                    <Zap size={14} /> Estimated cost: ~{searchMaxResults} credits
-                  </div>
-
-                  <button type="submit" className="btn btn-primary" disabled={searchLoading}>
-                    {searchLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
-                    Search Companies
-                  </button>
-                </form>
+          {/* Left: Filters panel */}
+          <form onSubmit={handleSearch} className="leadgen-form-panel">
+            <div className="leadgen-filters-card">
+              <div className="leadgen-filters-header">
+                <Filter size={15} /><span>Filters</span>
               </div>
-            </div>
-          </div>
 
+              <div className="filter-section">
+                <label className="filter-label">Industries — Include</label>
+                <TagInput
+                  tags={indInclude}
+                  onAdd={v => setIndInclude(p => [...p, v])}
+                  onRemove={v => setIndInclude(p => p.filter(x => x !== v))}
+                  placeholder="Type industry and press Enter"
+                />
+                <div className="filter-presets">
+                  {['Manufacturing','Construction','Retail','Healthcare','Financial Services','Software Development','Logistics & Supply Chain','Real Estate'].map(ind => (
+                    <button key={ind} type="button"
+                      className={`preset-chip ${indInclude.includes(ind) ? 'active' : ''}`}
+                      onClick={() => setIndInclude(p => p.includes(ind) ? p.filter(x => x !== ind) : [...p, ind])}
+                    >{ind}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Industries — Exclude</label>
+                <TagInput
+                  tags={indExclude}
+                  onAdd={v => setIndExclude(p => [...p, v])}
+                  onRemove={v => setIndExclude(p => p.filter(x => x !== v))}
+                  placeholder="e.g. SaaS, Franchise"
+                />
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Company Size</label>
+                <div className="filter-checkboxes">
+                  {LEAD_GEN_EMP_RANGES.map(r => (
+                    <label key={r} className="filter-check-label">
+                      <input type="checkbox" checked={empRanges.includes(r)} onChange={() => toggleEmpRange(r)} />
+                      {r} employees
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Company Type</label>
+                <div className="filter-checkboxes">
+                  {LEAD_GEN_COMPANY_TYPES.map(t => (
+                    <label key={t} className="filter-check-label">
+                      <input type="checkbox" checked={companyTypes.includes(t)} onChange={() => toggleType(t)} />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Countries (HQ)</label>
+                <div className="filter-checkboxes filter-checkboxes-2col">
+                  {LEAD_GEN_COUNTRIES.map(c => (
+                    <label key={c.code} className="filter-check-label">
+                      <input type="checkbox" checked={countries.includes(c.code)} onChange={() => toggleCountry(c.code)} />
+                      {c.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">States / Cities</label>
+                <TagInput
+                  tags={states}
+                  onAdd={v => setStates(p => [...p, v])}
+                  onRemove={v => setStates(p => p.filter(x => x !== v))}
+                  placeholder="e.g. Texas, California"
+                />
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Description Keywords — Include</label>
+                <TagInput
+                  tags={kwInclude}
+                  onAdd={v => setKwInclude(p => [...p, v])}
+                  onRemove={v => setKwInclude(p => p.filter(x => x !== v))}
+                  placeholder="e.g. roofing, general contractor"
+                />
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Description Keywords — Exclude</label>
+                <TagInput
+                  tags={kwExclude}
+                  onAdd={v => setKwExclude(p => [...p, v])}
+                  onRemove={v => setKwExclude(p => p.filter(x => x !== v))}
+                  placeholder="e.g. franchise, SaaS"
+                />
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Exclude Domains (one per line)</label>
+                <textarea
+                  className="filter-textarea"
+                  rows={3}
+                  placeholder={"acme.com\nexample.org"}
+                  value={excludeDomains}
+                  onChange={e => setExcludeDomains(e.target.value)}
+                />
+              </div>
+
+              <div className="filter-section filter-section-row">
+                <div>
+                  <label className="filter-label">Max Results</label>
+                  <select className="filter-select" value={maxResults} onChange={e => setMaxResults(parseInt(e.target.value, 10))}>
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                </div>
+                <div className="credit-estimate"><Zap size={13} /> ~{maxResults} credits</div>
+              </div>
+
+              <button type="submit" className="btn btn-primary leadgen-search-btn" disabled={searchLoading}>
+                {searchLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
+                Search
+              </button>
+            </div>
+          </form>
+
+          {/* Right: Results panel */}
           <div className="leadgen-results-panel">
-            {/* Job progress widget */}
             {activeSearchJob && (activeSearchJob.status === 'running' || activeSearchJob.status === 'pending') && (
               <div className="leadgen-job-progress">
                 <Loader2 className="spin" size={16} />
@@ -4623,56 +4781,64 @@ const LeadGenPage = () => {
               </div>
             )}
 
+            {selectedCompanies.length > 0 && (
+              <div className="leadgen-bulk-bar">
+                <span>{selectedCompanies.length} selected</span>
+                <button className="btn btn-primary btn-sm" disabled={importLoading} onClick={handleImport}>
+                  {importLoading ? <Loader2 className="spin" size={14} /> : <UserPlus size={14} />}
+                  Import Selected ({selectedCompanies.length}) → Contacts
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => setSelectedCompanies([])}>Clear</button>
+              </div>
+            )}
+
             {jobCompanies.length > 0 && (
-              <div className="card">
-                <div className="card-header">
-                  <h3>{jobCompanies.length} Companies Found</h3>
-                  <div className="card-actions">
-                    <button className="btn btn-secondary btn-sm" onClick={toggleAllCompanies}>
-                      {selectedCompanies.length === jobCompanies.length ? 'Deselect All' : 'Select All'}
-                    </button>
-                    <button
-                      className="btn btn-primary btn-sm"
-                      disabled={selectedCompanies.length === 0 || importLoading}
-                      onClick={handleImport}
-                    >
-                      {importLoading ? <Loader2 className="spin" size={14} /> : <UserPlus size={14} />}
-                      Import Selected ({selectedCompanies.length})
-                    </button>
-                  </div>
+              <div className="leadgen-results-table-wrap">
+                <div className="leadgen-results-header">
+                  <span className="results-count">Showing {jobCompanies.length} of {jobTotal} results</span>
+                  <label className="select-all-label">
+                    <input type="checkbox" checked={selectedCompanies.length === jobCompanies.length && jobCompanies.length > 0} onChange={toggleAllCompanies} />
+                    Select all
+                  </label>
                 </div>
                 <div className="table-container">
-                  <table className="data-table">
+                  <table className="data-table leadgen-table">
                     <thead>
                       <tr>
-                        <th><input type="checkbox" checked={selectedCompanies.length === jobCompanies.length && jobCompanies.length > 0} onChange={toggleAllCompanies} /></th>
-                        <th>Company</th>
-                        <th>Industry</th>
+                        <th style={{width:36}}>#</th>
+                        <th style={{width:36}}><input type="checkbox" checked={selectedCompanies.length === jobCompanies.length && jobCompanies.length > 0} onChange={toggleAllCompanies} /></th>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Primary Industry</th>
                         <th>Size</th>
+                        <th>Type</th>
+                        <th>Location</th>
                         <th>Country</th>
-                        <th>Domain</th>
-                        <th>Workspace</th>
+                        <th>LinkedIn</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {jobCompanies.map(c => (
-                        <tr key={c.id} className={selectedCompanies.includes(c.id) ? 'selected' : ''}>
-                          <td><input type="checkbox" checked={selectedCompanies.includes(c.id)} onChange={() => toggleCompany(c.id)} /></td>
+                      {jobCompanies.map((c, i) => (
+                        <tr key={c.id} className={selectedCompanies.includes(c.id) ? 'selected' : ''} onClick={() => toggleCompany(c.id)} style={{cursor:'pointer'}}>
+                          <td className="row-num">{i + 1}</td>
+                          <td onClick={e => e.stopPropagation()}><input type="checkbox" checked={selectedCompanies.includes(c.id)} onChange={() => toggleCompany(c.id)} /></td>
                           <td>
                             <div className="company-name-cell">
                               <strong>{c.name || '—'}</strong>
-                              {c.linkedin_url && (
-                                <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="link-icon" title="LinkedIn">
-                                  <ArrowRight size={12} />
-                                </a>
-                              )}
+                              {c.domain && <span className="company-domain">{c.domain}</span>}
                             </div>
                           </td>
+                          <td className="about-cell" title={c.about || ''}>{c.about ? c.about.slice(0, 90) + (c.about.length > 90 ? '…' : '') : '—'}</td>
                           <td>{c.industry || '—'}</td>
-                          <td>{c.size || '—'}</td>
+                          <td className="nowrap">{c.size || '—'}</td>
+                          <td>{c.type || '—'}</td>
+                          <td className="nowrap">{[c.hq_city, c.hq_country].filter(Boolean).join(', ') || '—'}</td>
                           <td>{c.hq_country || '—'}</td>
-                          <td>{c.domain || '—'}</td>
-                          <td><WorkspaceBadge workspace={c.workspace} /></td>
+                          <td onClick={e => e.stopPropagation()}>
+                            {c.linkedin_url
+                              ? <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="link-text"><ArrowRight size={12} /> View</a>
+                              : '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -4685,7 +4851,8 @@ const LeadGenPage = () => {
               <div className="leadgen-empty-state">
                 <Building2 size={48} />
                 <h3>Search for Companies</h3>
-                <p>Use the form to find companies matching your ICP. Results will appear here.</p>
+                <p>Configure your filters and click Search. Results will appear here.</p>
+                <p className="empty-hint">BlitzAPI charges credits per search — not live.</p>
               </div>
             )}
           </div>

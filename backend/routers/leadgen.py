@@ -27,11 +27,15 @@ BLITZAPI_BASE = "https://api.blitz-api.ai"
 # ---------------------------------------------------------------------------
 
 class CompanySearchRequest(BaseModel):
-    keywords: Optional[dict] = None      # {"include": [], "exclude": []}
-    industry: Optional[dict] = None      # {"include": ["Software Development"]}
-    hq: Optional[dict] = None            # {"country_code": ["US"], "continent": [...]}
-    employee_range: Optional[List[str]] = None  # ["51-200", "201-500"]
-    founded_year: Optional[dict] = None  # {"min": 2015}
+    industries_include: Optional[List[str]] = None
+    industries_exclude: Optional[List[str]] = None
+    keywords_include: Optional[List[str]] = None   # description keywords to include
+    keywords_exclude: Optional[List[str]] = None   # description keywords to exclude
+    countries: Optional[List[str]] = None          # HQ country codes
+    states: Optional[List[str]] = None             # HQ states
+    employee_range: Optional[List[str]] = None     # ["51-200", "201-500"]
+    company_types: Optional[List[str]] = None      # ["Privately Held", ...]
+    exclude_domains: Optional[List[str]] = None
     max_results: int = 25
     workspace: Optional[str] = None
 
@@ -427,23 +431,37 @@ async def search_companies(req: CompanySearchRequest, user: dict = Depends(get_c
     job_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
 
-    # Build BlitzAPI search body
-    company_filter = {}
-    if req.keywords:
-        company_filter["keywords"] = req.keywords
-    if req.industry:
-        company_filter["industry"] = req.industry
-    if req.hq:
-        company_filter["hq"] = req.hq
+    # Build BlitzAPI search body — /v2/search/companies correct format
+    company_filter: dict = {}
+    if req.industries_include or req.industries_exclude:
+        company_filter["industry"] = {
+            "include": req.industries_include or [],
+            "exclude": req.industries_exclude or [],
+        }
+    if req.keywords_include or req.keywords_exclude:
+        company_filter["keywords"] = {
+            "description": {
+                "include": req.keywords_include or [],
+                "exclude": req.keywords_exclude or [],
+            }
+        }
+    hq_filter: dict = {}
+    if req.countries:
+        hq_filter["country_code"] = req.countries
+    if req.states:
+        hq_filter["state"] = req.states
+    if hq_filter:
+        company_filter["hq"] = hq_filter
     if req.employee_range:
         company_filter["employee_range"] = req.employee_range
-    if req.founded_year:
-        company_filter["founded_year"] = req.founded_year
+    if req.company_types:
+        company_filter["type"] = req.company_types
+    if req.exclude_domains:
+        company_filter["exclude_domains"] = req.exclude_domains
 
     search_body = {
         "company": company_filter,
         "max_results": req.max_results,
-        "cursor": None,
     }
 
     params_json = json.dumps(search_body)
@@ -511,12 +529,12 @@ def get_job(job_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(404, "Job not found")
 
     companies = conn.execute("""
-        SELECT id, name, industry, size, hq_country, hq_city, domain,
+        SELECT id, name, about, industry, type, size, hq_country, hq_city, domain,
                linkedin_url, workspace, imported
         FROM lead_gen_companies
         WHERE job_id=?
         ORDER BY id
-        LIMIT 50
+        LIMIT 100
     """, (job_id,)).fetchall()
     conn.close()
 
