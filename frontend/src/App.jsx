@@ -903,7 +903,7 @@ const ContactsPage = () => {
     // Person location
     { id: 'city', label: 'City', editable: true, default: false },
     { id: 'state', label: 'State', editable: true, default: false },
-    { id: 'country', label: 'Country', editable: true, default: false },
+    { id: 'country', label: 'Workspace', editable: true, default: false },
     // Company location
     { id: 'company_city', label: 'Company City', editable: true, default: false },
     { id: 'company_state', label: 'Company State', editable: true, default: false },
@@ -1138,7 +1138,7 @@ const ContactsPage = () => {
   const bulkEditableFields = [
     { id: 'status', label: 'Status', type: 'select', options: filterOptions?.statuses || [] },
     { id: 'email_status', label: 'Email Status', type: 'select', options: ['Not Verified', 'Valid', 'Invalid', 'Unknown'] },
-    { id: 'country_strategy', label: 'Country Strategy', type: 'select', options: filterOptions?.country_strategies || [] },
+    { id: 'country_strategy', label: 'Workspace', type: 'select', options: filterOptions?.country_strategies || [] },
     { id: 'campaigns_assigned', label: 'Campaign', type: 'list', options: filterOptions?.campaigns || [] },
     { id: 'outreach_lists', label: 'Outreach List', type: 'list', options: filterOptions?.outreach_lists || [] },
     { id: 'seniority', label: 'Seniority', type: 'select', options: filterOptions?.seniorities || [] },
@@ -1259,7 +1259,7 @@ const ContactsPage = () => {
             />
           </div>
           <div className="filter-group-v2">
-            <label>Country Strategy</label>
+            <label>Workspace</label>
             <MultiSelect
               options={countryStrategyOptions}
               value={filters.country_strategy || []}
@@ -1606,7 +1606,7 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
       <div className="form-group"><label>Or Create New List</label><input type="text" value={newListName} onChange={e => setNewListName(e.target.value)} placeholder="New list name..." /></div>
       <div className="form-group"><label>Assign to Campaign</label><select value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)}><option value="">Select existing campaign...</option>{filterOptions?.campaigns?.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
       <div className="form-group"><label>Or Create New Campaign</label><input type="text" value={newCampaignName} onChange={e => setNewCampaignName(e.target.value)} placeholder="New campaign name..." /></div>
-      <div className="form-group"><label>Country Strategy *</label><select value={countryStrategy} onChange={e => setCountryStrategy(e.target.value)} required><option value="">Select strategy...</option>{strategyOptions.map(s => <option key={s} value={s}>{s}</option>)}</select>{!countryStrategy && <span className="field-hint error">Required</span>}</div>
+      <div className="form-group"><label>Workspace *</label><select value={countryStrategy} onChange={e => setCountryStrategy(e.target.value)} required><option value="">Select strategy...</option>{strategyOptions.map(s => <option key={s} value={s}>{s}</option>)}</select>{!countryStrategy && <span className="field-hint error">Required</span>}</div>
       <div></div>
       <div className="import-option"><label><input type="checkbox" checked={checkDuplicates} onChange={e => setCheckDuplicates(e.target.checked)} /> Check for duplicates</label></div>
       <div className="import-option"><label><input type="checkbox" checked={mergeDuplicates} onChange={e => setMergeDuplicates(e.target.checked)} disabled={!checkDuplicates} /> Merge duplicates (add to existing lists/campaigns)</label></div>
@@ -1709,14 +1709,14 @@ const ExportForm = ({ filters, search, onClose }) => {
     { id: 'first_phone', label: 'Phone' }, { id: 'corporate_phone', label: 'Corporate Phone' },
     { id: 'person_linkedin_url', label: 'LinkedIn' }, { id: 'company_linkedin_url', label: 'Company LinkedIn' },
     { id: 'website', label: 'Website' }, { id: 'domain', label: 'Domain' },
-    { id: 'city', label: 'City' }, { id: 'state', label: 'State' }, { id: 'country', label: 'Country' },
+    { id: 'city', label: 'City' }, { id: 'state', label: 'State' }, { id: 'country', label: 'Workspace' },
     { id: 'company_city', label: 'Company City' }, { id: 'company_state', label: 'Company State' }, { id: 'company_country', label: 'Company Country' },
     { id: 'company_street_address', label: 'Company Address' }, { id: 'company_postal_code', label: 'Postal Code' },
     { id: 'employees', label: 'Employees' }, { id: 'employee_bucket', label: 'Employee Bucket' }, { id: 'industry', label: 'Industry' },
     { id: 'annual_revenue', label: 'Revenue' }, { id: 'annual_revenue_text', label: 'Revenue (Text)' },
     { id: 'company_description', label: 'Company Desc' }, { id: 'company_seo_description', label: 'SEO Desc' },
     { id: 'company_technologies', label: 'Technologies' }, { id: 'company_founded_year', label: 'Founded' }, { id: 'keywords', label: 'Keywords' },
-    { id: 'country_strategy', label: 'Country Strategy' }, { id: 'outreach_lists', label: 'Outreach Lists' }, { id: 'campaigns_assigned', label: 'Campaigns' },
+    { id: 'country_strategy', label: 'Workspace' }, { id: 'outreach_lists', label: 'Outreach Lists' }, { id: 'campaigns_assigned', label: 'Campaigns' },
     { id: 'status', label: 'Status' }, { id: 'email_status', label: 'Email Status' }, { id: 'times_contacted', label: 'Contacted' },
     { id: 'last_contacted_at', label: 'Last Contact' }, { id: 'notes', label: 'Notes' }, { id: 'created_at', label: 'Created' }
   ];
@@ -2442,6 +2442,7 @@ const DuplicatesPage = () => {
 // Campaigns Page with Template Breakdown
 const CampaignsPage = () => {
   const { addToast } = useToast();
+  const [mainTab, setMainTab] = useState('campaigns'); // 'campaigns' | 'templates'
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -2553,13 +2554,31 @@ const CampaignsPage = () => {
     <div className="page-header">
       <div>
         <h1>Campaigns</h1>
-        <p className="subtitle">Manage and track your cold email campaigns</p>
+        <p className="subtitle">Email campaigns and sequence templates</p>
       </div>
       <div className="header-actions">
-        <button className="btn btn-secondary" onClick={fetchCampaigns}><RefreshCw size={16} /> Refresh</button>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={16} /> New Campaign</button>
+        {mainTab === 'campaigns' && <>
+          <button className="btn btn-secondary" onClick={fetchCampaigns}><RefreshCw size={16} /> Refresh</button>
+          <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={16} /> New Campaign</button>
+        </>}
       </div>
     </div>
+
+    {/* Main tab switcher */}
+    <div style={{display:'flex', gap:4, marginBottom:20, borderBottom:'1px solid var(--border)', paddingBottom:0}}>
+      {[{id:'campaigns',label:'Campaigns',icon:'📧'},{id:'templates',label:'Templates',icon:'📝'}].map(t => (
+        <button key={t.id} onClick={() => setMainTab(t.id)}
+          style={{padding:'8px 20px', border:'none', cursor:'pointer', fontWeight: mainTab===t.id ? 600 : 400,
+            borderBottom: mainTab===t.id ? '2px solid var(--coral)' : '2px solid transparent',
+            background:'transparent', color: mainTab===t.id ? 'var(--coral)' : 'var(--text-secondary)',
+            fontSize:14, display:'flex', alignItems:'center', gap:6, transition:'all 0.15s'}}>
+          {t.icon} {t.label}
+        </button>
+      ))}
+    </div>
+
+    {mainTab === 'templates' && <TemplatesPage />}
+    {mainTab === 'campaigns' && <>
 
     {/* Campaign Stats */}
     <div className="campaigns-stats">
@@ -3023,6 +3042,8 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
         );
       })}
     </div>
+    </>}
+  </div>
   );
 };
 
@@ -3033,7 +3054,7 @@ const CampaignForm = ({ onSubmit, onCancel, initial = {} }) => {
     <div className="form-group"><label>Campaign Name *</label><input type="text" value={data.name} onChange={e => setData({ ...data, name: e.target.value })} required placeholder="E.g., SaaS Outreach - Q1" /></div>
     <div className="form-group"><label>Description</label><textarea value={data.description || ''} onChange={e => setData({ ...data, description: e.target.value })} rows={2} placeholder="Brief description of this campaign..." /></div>
     <div className="form-row">
-      <div className="form-group"><label>Country Strategy</label><select value={data.country || ''} onChange={e => setData({ ...data, country: e.target.value })}><option value="">Select country...</option>{countries.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+      <div className="form-group"><label>Workspace</label><select value={data.country || ''} onChange={e => setData({ ...data, country: e.target.value })}><option value="">Select country...</option>{countries.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
       <div className="form-group"><label>Status</label><select value={data.status} onChange={e => setData({ ...data, status: e.target.value })}><option>Active</option><option>Paused</option><option>Completed</option></select></div>
     </div>
     <div className="modal-actions"><button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button><button type="submit" className="btn btn-primary">{initial.id ? 'Save Changes' : 'Create Campaign'}</button></div>
@@ -3924,7 +3945,7 @@ const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }
           </select>
         </div>
         <div className="form-group">
-          <label>Country Strategy</label>
+          <label>Workspace</label>
           <select value={data.country || ''} onChange={e => setData({ ...data, country: e.target.value })}>
             <option value="">Select country...</option>
             {countries.map(c => <option key={c} value={c}>{c}</option>)}
