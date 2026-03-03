@@ -5,10 +5,11 @@ import json
 import re
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 
 from database import get_db
 from shared import recalc_rates, recalc_template_rates
+from routers.hubspot import push_contact_to_hubspot
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ async def reachinbox_webhook_verify():
 
 
 @router.post("/webhook/reachinbox")
-async def reachinbox_webhook(request: Request):
+async def reachinbox_webhook(request: Request, background_tasks: BackgroundTasks):
     try:
         payload = await request.json()
     except Exception:
@@ -193,6 +194,15 @@ async def reachinbox_webhook(request: Request):
                         "UPDATE contacts SET status='Scheduled', opportunities=opportunities+1, meetings_booked=meetings_booked+1, hubspot_queued=1, updated_at=? WHERE id=?",
                         (datetime.now().isoformat(), contact_id)
                     )
+
+                # HubSpot auto-push: queue interested/meeting contacts if token is configured
+                if normalized_event in ('lead_interested', 'meeting_booked') and contact:
+                    hs_row = conn.execute(
+                        "SELECT value FROM settings WHERE key='hubspot_private_app_token'"
+                    ).fetchone()
+                    if hs_row and hs_row[0]:
+                        background_tasks.add_task(push_contact_to_hubspot, contact_id, hs_row[0])
+
         conn.commit()
         conn.close()
         return {
