@@ -766,7 +766,12 @@ class ApproveContactsRequest(BaseModel):
 
 
 def _run_find_contacts(job_id: str, api_key: str, companies: list, job_levels: list, max_per_company: int):
-    """Background thread: for each company, find ICP contacts and store in lead_gen_contacts staging."""
+    """Background thread: Waterfall ICP + email enrichment per company. Stores in lead_gen_contacts staging.
+    
+    Uses /v2/search/waterfall-icp-keyword (NOT employee-finder).
+    Valid job_level values: C-Team, Director, Manager, Other, Staff, VP
+    icp field in response = which cascade tier matched (1=owner, 2=GM, 3=ops)
+    """
     conn = None
     try:
         conn = get_db()
@@ -775,6 +780,28 @@ def _run_find_contacts(job_id: str, api_key: str, companies: list, job_levels: l
 
         total_found = 0
         now = datetime.now().isoformat()
+
+        # Standard cascade for home services SMBs (from Hermes research)
+        waterfall_cascade = [
+            {
+                "include_title": ["owner", "CEO", "founder", "chief executive", "co-founder", "co-owner"],
+                "exclude_title": ["assistant", "intern", "junior", "associate"],
+                "location": ["WORLD"],
+                "include_headline_search": True
+            },
+            {
+                "include_title": ["president", "general manager", "managing director", "principal"],
+                "exclude_title": ["assistant", "intern"],
+                "location": ["WORLD"],
+                "include_headline_search": False
+            },
+            {
+                "include_title": ["operations manager", "COO", "director of operations", "VP operations"],
+                "exclude_title": ["assistant", "intern"],
+                "location": ["WORLD"],
+                "include_headline_search": False
+            }
+        ]
 
         for company in companies:
             company_id = company["id"]
@@ -787,53 +814,64 @@ def _run_find_contacts(job_id: str, api_key: str, companies: list, job_levels: l
                 continue
 
             try:
-                # Find employees via BlitzAPI employee-finder
-                body = {
+                # Step 1: Waterfall ICP — find best decision maker
+                waterfall_body = {
                     "company_linkedin_url": linkedin_url,
-                    "job_levels": job_levels,
-                    "limit": max_per_company,
+                    "cascade": waterfall_cascade,
+                    "max_results": max_per_company,
                 }
-                data = _blitzapi_request_sync("POST", "/v2/search/employee-finder", api_key, body)
-                people = data.get("results", [])
+                data = _blitzapi_request_sync("POST", "/v2/search/waterfall-icp-keyword", api_key, waterfall_body)
+                results = data.get("results", [])
 
-                for person in people:
+                for result in results:
+                    icp_tier = result.get("icp")  # 1=owner, 2=GM, 3=ops
+                    person = result.get("person") or {}
+                    person_linkedin = person.get("linkedin_url") or ""
+
+                    # Step 2: Email enrichment
                     email = person.get("email") or ""
-                    # If no email, try email finder
-                    if not email and person.get("linkedin_url"):
+                    if not email and person_linkedin:
                         try:
                             email_data = _blitzapi_request_sync(
-                                "POST", "/v2/people-enrichment/find-work-email", api_key,
-                                {"linkedin_url": person["linkedin_url"]}
+                                "POST", "/v2/enrichment/email", api_key,
+                                {"person_linkedin_url": person_linkedin}
                             )
-                            email = email_data.get("email") or ""
-                        except Exception:
-                            pass
+                            if email_data.get("found"):
+                                email = email_data.get("email") or ""
+                        except Exception as e:
+                            print(f"[LEADGEN] Email enrichment failed for {person_linkedin}: {e}")
 
                     if USE_POSTGRES:
                         conn.execute("""
                             INSERT INTO lead_gen_contacts
                             (job_id, company_id, first_name, last_name, email, title,
-                             linkedin_url, company_name, company_domain, workspace, status, created_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                             linkedin_url, company_name, company_domain, workspace,
+                             icp_tier, blitz_company_linkedin, blitz_person_linkedin,
+                             blitz_enriched_at, status, created_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
                         """, (
                             job_id, company_id,
                             person.get("first_name"), person.get("last_name"),
-                            email, person.get("title"),
-                            person.get("linkedin_url"),
-                            company_name, company_domain, workspace, now
+                            email, person.get("title") or person.get("headline"),
+                            person_linkedin, company_name, company_domain, workspace,
+                            icp_tier, linkedin_url, person_linkedin,
+                            now, now
                         ))
                     else:
                         conn.execute("""
                             INSERT INTO lead_gen_contacts
                             (job_id, company_id, first_name, last_name, email, title,
-                             linkedin_url, company_name, company_domain, workspace, status, created_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?)
+                             linkedin_url, company_name, company_domain, workspace,
+                             icp_tier, blitz_company_linkedin, blitz_person_linkedin,
+                             blitz_enriched_at, status, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
                         """, (
                             job_id, company_id,
                             person.get("first_name"), person.get("last_name"),
-                            email, person.get("title"),
-                            person.get("linkedin_url"),
-                            company_name, company_domain, workspace, now
+                            email, person.get("title") or person.get("headline"),
+                            person_linkedin, company_name, company_domain, workspace,
+                            icp_tier, linkedin_url, person_linkedin,
+                            now, now
                         ))
                     conn.commit()
                     total_found += 1
@@ -1009,20 +1047,31 @@ async def approve_contacts(req: ApproveContactsRequest, user: dict = Depends(get
 
         # Insert into main contacts table
         workspace = r[10] or "US"
+        # Column indices: 0=id,1=job_id,2=company_id,3=first_name,4=last_name,5=email,
+        # 6=title,7=linkedin_url,8=company_name,9=company_domain,10=workspace,
+        # 11=status,12=contact_id,13=icp_tier,14=blitz_company_linkedin,15=blitz_person_linkedin
+        icp_tier = r[13] if len(r) > 13 else None
+        blitz_co_li = r[14] if len(r) > 14 else None
+        blitz_p_li = r[15] if len(r) > 15 else None
+
         if USE_POSTGRES:
             cur = conn.execute("""
                 INSERT INTO contacts (first_name, last_name, email, title, person_linkedin_url,
-                    company, domain, reachinbox_workspace, enrichment_source, pipeline_stage, created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'blitzapi','new',%s)
+                    company, domain, reachinbox_workspace, enrichment_source, pipeline_stage,
+                    icp_tier, blitz_company_linkedin, blitz_person_linkedin, blitz_enriched_at, created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'blitzapi','new',%s,%s,%s,NOW(),%s)
                 RETURNING id
-            """, (r[3], r[4], email, r[6], r[7], r[8], r[9], workspace, now))
+            """, (r[3], r[4], email, r[6], r[7], r[8], r[9], workspace,
+                  icp_tier, blitz_co_li, blitz_p_li, now))
             contact_id = cur.fetchone()[0]
         else:
             cur = conn.execute("""
                 INSERT INTO contacts (first_name, last_name, email, title, person_linkedin_url,
-                    company, domain, reachinbox_workspace, enrichment_source, pipeline_stage, created_at)
-                VALUES (?,?,?,?,?,?,?,?,'blitzapi','new',?)
-            """, (r[3], r[4], email, r[6], r[7], r[8], r[9], workspace, now))
+                    company, domain, reachinbox_workspace, enrichment_source, pipeline_stage,
+                    icp_tier, blitz_company_linkedin, blitz_person_linkedin, blitz_enriched_at, created_at)
+                VALUES (?,?,?,?,?,?,?,?,'blitzapi','new',?,?,?,?,?)
+            """, (r[3], r[4], email, r[6], r[7], r[8], r[9], workspace,
+                  icp_tier, blitz_co_li, blitz_p_li, now, now))
             contact_id = cur.lastrowid
 
         conn.execute(
@@ -1073,3 +1122,295 @@ async def reject_contacts(req: ApproveContactsRequest, user: dict = Depends(get_
     conn.commit()
     conn.close()
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Bulk Run — Full Pipeline (Agent-callable overnight run)
+# ---------------------------------------------------------------------------
+
+class BulkRunRequest(BaseModel):
+    vertical: str                              # "roofing" | "hvac" | "plumbing" | "landscaping" | custom
+    country: str = "US"
+    employee_range: Optional[List[str]] = ["11-50", "51-200"]
+    max_companies: int = 500                   # safety cap
+    max_per_company: int = 1                   # usually 1 — the best ICP per company
+    workspace: Optional[str] = None            # override auto-detection
+
+# Preset verticals from Hermes research
+VERTICAL_PRESETS = {
+    "roofing": {
+        "keywords_include": ["roofing", "roofing contractor", "roofing company", "roofing services"],
+        "keywords_exclude": ["saas", "agency", "marketing", "technology", "media", "wholesale",
+                             "distributor", "software", "recruiting", "staffing", "manufacturer",
+                             "magazine", "association", "expo", "university", "college", "franchise",
+                             "advertising", "chemical", "supply", "materials"],
+    },
+    "hvac": {
+        "keywords_include": ["hvac", "heating and cooling", "air conditioning contractor", "hvac services"],
+        "keywords_exclude": ["parts", "wholesale", "distributor", "manufacturer", "association",
+                             "magazine", "software", "saas", "technology", "staffing"],
+    },
+    "plumbing": {
+        "keywords_include": ["plumbing", "plumbing contractor", "plumbing services", "plumber"],
+        "keywords_exclude": ["parts", "wholesale", "distributor", "manufacturer", "association",
+                             "software", "saas", "technology", "staffing", "magazine"],
+    },
+    "landscaping": {
+        "keywords_include": ["landscaping", "lawn care", "landscape contractor", "landscaping services"],
+        "keywords_exclude": ["wholesale", "distributor", "manufacturer", "association",
+                             "software", "saas", "technology", "staffing", "magazine", "design school"],
+    },
+}
+
+
+def _run_bulk_pipeline(job_id: str, api_key: str, req_data: dict):
+    """Background thread: full pipeline — search companies → waterfall ICP → email enrichment → stage."""
+    conn = None
+    stats = {"companies_searched": 0, "icp_found": 0, "emails_found": 0, "dupes_skipped": 0, "staged": 0}
+
+    try:
+        conn = get_db()
+        conn.execute("UPDATE lead_gen_jobs SET status='running' WHERE id=?", (job_id,))
+        conn.commit()
+
+        vertical = req_data["vertical"]
+        country = req_data.get("country", "US")
+        employee_range = req_data.get("employee_range", ["11-50", "51-200"])
+        max_companies = req_data.get("max_companies", 500)
+        max_per_company = req_data.get("max_per_company", 1)
+        workspace_override = req_data.get("workspace")
+
+        preset = VERTICAL_PRESETS.get(vertical.lower(), {})
+        keywords_include = preset.get("keywords_include", [vertical])
+        keywords_exclude = preset.get("keywords_exclude", [])
+
+        now = datetime.now().isoformat()
+
+        # Phase 1: Paginate company search
+        cursor = None
+        all_companies = []
+        while len(all_companies) < max_companies:
+            body = {
+                "company": {
+                    "keywords": {"include": keywords_include, "exclude": keywords_exclude},
+                    "hq": {"country_code": [country]},
+                    "employee_range": employee_range,
+                },
+                "max_results": min(50, max_companies - len(all_companies)),
+            }
+            if cursor:
+                body["cursor"] = cursor
+
+            try:
+                data = _blitzapi_request_sync("POST", "/v2/search/companies", api_key, body)
+            except Exception as e:
+                print(f"[BULK RUN] Company search failed: {e}")
+                break
+
+            results = data.get("results", [])
+            if not results:
+                break
+
+            for company in results:
+                hq = company.get("hq") or {}
+                workspace = workspace_override or _workspace_for_company(
+                    {"hq_country": hq.get("country_code", "")}, None
+                )
+                # Store company
+                if USE_POSTGRES:
+                    cur2 = conn.execute("""
+                        INSERT INTO lead_gen_companies
+                        (job_id, linkedin_url, linkedin_id, name, about, industry, type, size,
+                         employees_on_linkedin, followers, founded_year, domain,
+                         hq_country, hq_city, hq_continent, raw_data, workspace, created_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        RETURNING id
+                    """, (job_id, company.get("linkedin_url"), company.get("linkedin_id"),
+                          company.get("name"), company.get("about"), company.get("industry"),
+                          company.get("type"), company.get("size"), company.get("employees_on_linkedin"),
+                          company.get("followers"), company.get("founded_year"), company.get("domain"),
+                          hq.get("country_code"), hq.get("city"), hq.get("continent"),
+                          json.dumps(company), workspace, now))
+                    company_db_id = cur2.fetchone()[0]
+                else:
+                    cur2 = conn.execute("""
+                        INSERT INTO lead_gen_companies
+                        (job_id, linkedin_url, linkedin_id, name, about, industry, type, size,
+                         employees_on_linkedin, followers, founded_year, domain,
+                         hq_country, hq_city, hq_continent, raw_data, workspace, created_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, (job_id, company.get("linkedin_url"), company.get("linkedin_id"),
+                          company.get("name"), company.get("about"), company.get("industry"),
+                          company.get("type"), company.get("size"), company.get("employees_on_linkedin"),
+                          company.get("followers"), company.get("founded_year"), company.get("domain"),
+                          hq.get("country_code"), hq.get("city"), hq.get("continent"),
+                          json.dumps(company), workspace, now))
+                    company_db_id = cur2.lastrowid
+
+                conn.commit()
+                all_companies.append({
+                    "id": company_db_id,
+                    "linkedin_url": company.get("linkedin_url"),
+                    "name": company.get("name"),
+                    "domain": company.get("domain"),
+                    "workspace": workspace,
+                })
+                stats["companies_searched"] += 1
+
+            cursor = data.get("cursor")
+            if not cursor:
+                break
+
+        print(f"[BULK RUN] {job_id}: Found {stats['companies_searched']} companies, starting ICP search...")
+
+        # Phase 2: Waterfall ICP + email per company (sequential for now)
+        waterfall_cascade = [
+            {"include_title": ["owner", "CEO", "founder", "chief executive", "co-founder", "co-owner"],
+             "exclude_title": ["assistant", "intern", "junior"], "location": ["WORLD"], "include_headline_search": True},
+            {"include_title": ["president", "general manager", "managing director", "principal"],
+             "exclude_title": ["assistant", "intern"], "location": ["WORLD"], "include_headline_search": False},
+            {"include_title": ["operations manager", "COO", "director of operations"],
+             "exclude_title": ["assistant", "intern"], "location": ["WORLD"], "include_headline_search": False},
+        ]
+
+        for company in all_companies:
+            linkedin_url = company.get("linkedin_url") or ""
+            if not linkedin_url:
+                continue
+            try:
+                wf_data = _blitzapi_request_sync("POST", "/v2/search/waterfall-icp-keyword", api_key, {
+                    "company_linkedin_url": linkedin_url,
+                    "cascade": waterfall_cascade,
+                    "max_results": max_per_company,
+                })
+                for result in wf_data.get("results", []):
+                    icp_tier = result.get("icp")
+                    person = result.get("person") or {}
+                    person_li = person.get("linkedin_url") or ""
+                    stats["icp_found"] += 1
+
+                    # Email enrichment
+                    email = person.get("email") or ""
+                    if not email and person_li:
+                        try:
+                            ed = _blitzapi_request_sync("POST", "/v2/enrichment/email", api_key,
+                                                        {"person_linkedin_url": person_li})
+                            if ed.get("found"):
+                                email = ed.get("email") or ""
+                                stats["emails_found"] += 1
+                        except Exception:
+                            pass
+
+                    # Dedup check
+                    if email:
+                        existing = conn.execute("SELECT id FROM contacts WHERE email=?", (email,)).fetchone()
+                        if existing:
+                            stats["dupes_skipped"] += 1
+                            continue
+
+                    # Stage in lead_gen_contacts
+                    if USE_POSTGRES:
+                        conn.execute("""
+                            INSERT INTO lead_gen_contacts
+                            (job_id, company_id, first_name, last_name, email, title, linkedin_url,
+                             company_name, company_domain, workspace, icp_tier,
+                             blitz_company_linkedin, blitz_person_linkedin, blitz_enriched_at, status, created_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                        """, (job_id, company["id"], person.get("first_name"), person.get("last_name"),
+                              email, person.get("title") or person.get("headline"), person_li,
+                              company.get("name"), company.get("domain"), company.get("workspace"),
+                              icp_tier, linkedin_url, person_li, now, now))
+                    else:
+                        conn.execute("""
+                            INSERT INTO lead_gen_contacts
+                            (job_id, company_id, first_name, last_name, email, title, linkedin_url,
+                             company_name, company_domain, workspace, icp_tier,
+                             blitz_company_linkedin, blitz_person_linkedin, blitz_enriched_at, status, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
+                        """, (job_id, company["id"], person.get("first_name"), person.get("last_name"),
+                              email, person.get("title") or person.get("headline"), person_li,
+                              company.get("name"), company.get("domain"), company.get("workspace"),
+                              icp_tier, linkedin_url, person_li, now, now))
+                    conn.commit()
+                    stats["staged"] += 1
+
+            except Exception as e:
+                print(f"[BULK RUN] ICP failed for {company.get('name')}: {e}")
+                continue
+
+        # Mark job awaiting approval
+        stats_json = json.dumps(stats)
+        conn.execute("""
+            UPDATE lead_gen_jobs SET status='awaiting_approval', results_count=?,
+            parameters=?, completed_at=? WHERE id=?
+        """, (stats["staged"], stats_json, datetime.now().isoformat(), job_id))
+        conn.commit()
+        print(f"[BULK RUN] {job_id} complete: {stats}")
+
+    except Exception as e:
+        print(f"[BULK RUN] Fatal error: {e}\n{traceback.format_exc()}")
+        if conn:
+            try:
+                conn.execute("UPDATE lead_gen_jobs SET status='failed', error=? WHERE id=?",
+                             (str(e)[:500], job_id))
+                conn.commit()
+            except Exception:
+                pass
+    finally:
+        if conn:
+            conn.close()
+
+
+@router.post("/api/leadgen/bulk-run")
+async def start_bulk_run(req: BulkRunRequest, user: dict = Depends(get_current_user)):
+    """Start a full autonomous pipeline run: search → waterfall ICP → email → stage for approval.
+    
+    This is the primary endpoint Hermes calls. Results land in lead_gen_contacts with status='pending'.
+    Human approves via POST /api/leadgen/contacts/approve.
+    """
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    conn = get_db()
+    api_key = _get_blitzapi_key(conn)
+    if not api_key:
+        conn.close()
+        raise HTTPException(400, "BlitzAPI key not configured.")
+
+    job_id = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+    label = f"{req.vertical.title()} {req.country} — bulk run"
+
+    if USE_POSTGRES:
+        conn.execute("""
+            INSERT INTO lead_gen_jobs (id, job_type, status, parameters, workspace, created_by, created_at)
+            VALUES (%s,'bulk_run','pending',%s,%s,%s,%s)
+        """, (job_id, json.dumps({"vertical": req.vertical, "country": req.country,
+              "max_companies": req.max_companies, "label": label}),
+              req.workspace or req.country, user["id"], now))
+    else:
+        conn.execute("""
+            INSERT INTO lead_gen_jobs (id, job_type, status, parameters, workspace, created_by, created_at)
+            VALUES (?,'bulk_run','pending',?,?,?,?)
+        """, (job_id, json.dumps({"vertical": req.vertical, "country": req.country,
+              "max_companies": req.max_companies, "label": label}),
+              req.workspace or req.country, user["id"], now))
+    conn.commit()
+    conn.close()
+
+    leadgen_jobs[job_id] = {"status": "running"}
+    thread = threading.Thread(
+        target=_run_bulk_pipeline,
+        args=(job_id, api_key, req.dict()),
+        daemon=True
+    )
+    thread.start()
+
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "vertical": req.vertical,
+        "country": req.country,
+        "max_companies": req.max_companies,
+        "message": f"Bulk run started for {req.vertical} in {req.country}. Poll /api/leadgen/jobs/{job_id} for status."
+    }

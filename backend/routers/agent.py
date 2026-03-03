@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from database import get_db, USE_POSTGRES
 from shared import get_agent_user, leadgen_jobs
 from workspace_routing import detect_workspace
+from routers.leadgen import BulkRunRequest, ApproveContactsRequest, start_bulk_run, approve_contacts
 
 router = APIRouter(prefix="/agent/v1", tags=["Agent API"])
 
@@ -950,3 +951,28 @@ async def agent_blitz_credits(user: dict = Depends(get_agent_user)):
         "timestamp": _now_iso(),
         "next_action": "run_leadgen_search" if data.get("remaining_credits", 0) > 10 else "recharge_credits",
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /agent/v1/leadgen/bulk-run
+# ---------------------------------------------------------------------------
+
+@router.post("/leadgen/bulk-run")
+async def agent_bulk_run(req: BulkRunRequest, user: dict = Depends(get_agent_user)):
+    """Start a full autonomous pipeline: search companies → waterfall ICP → email → stage for approval.
+    Hermes calls this. Results land in lead_gen_contacts (status=pending) until approved by human.
+    Valid verticals: roofing, hvac, plumbing, landscaping
+    """
+    result = await start_bulk_run(req, user)
+    result["next_action"] = f"poll GET /agent/v1/leadgen/jobs/{result['job_id']} every 60s until status=awaiting_approval"
+    return result
+
+
+@router.post("/leadgen/approve")
+async def agent_approve_contacts(req: ApproveContactsRequest, user: dict = Depends(get_agent_user)):
+    """Approve staged contacts — moves them to main contacts table.
+    Use job_id to approve all pending for a job, or contact_ids for selective approval.
+    """
+    result = await approve_contacts(req, user)
+    result["next_action"] = "POST /agent/v1/reachinbox/push to push approved contacts to ReachInbox"
+    return result

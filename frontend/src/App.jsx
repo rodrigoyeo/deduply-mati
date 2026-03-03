@@ -192,7 +192,7 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
   const { data: stats } = useData('/stats');
   const { importJob, clearImportJob } = useImportJob();
   const { addToast } = useToast();
-  const nav = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'duplicates', label: 'Duplicates', icon: Layers }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'leadgen', label: 'Lead Gen', icon: Target }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'templates', label: 'Templates', icon: FileText }, { id: 'settings', label: 'Settings', icon: Settings }];
+  const nav = [{ id: 'inbox', label: 'Inbox', icon: MessageCircle }, { id: 'pipeline', label: 'Pipeline', icon: Target }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'reports', label: 'Reports', icon: TrendingUp }, { id: 'settings', label: 'Settings', icon: Settings }];
 
   // Show toast when import completes
   useEffect(() => {
@@ -5385,15 +5385,345 @@ function App() {
   if (!user) return <ToastProvider><LoginPage onLogin={setUser} /></ToastProvider>;
 
   return (<ToastProvider><ImportJobProvider><div className="app"><Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} /><main className="main-content">
-    {page === 'dashboard' && <DashboardPage />}
+    {page === 'inbox' && <InboxPage setPage={setPage} />}
+    {page === 'pipeline' && <PipelinePage />}
     {page === 'contacts' && <ContactsPage />}
+    {page === 'campaigns' && <CampaignsPage />}
+    {page === 'templates' && <TemplatesPage />}
+    {page === 'reports' && <DashboardPage />}
+    {page === 'settings' && <SettingsPage />}
+    {/* Legacy routes still accessible */}
+    {page === 'dashboard' && <DashboardPage />}
     {page === 'duplicates' && <DuplicatesPage />}
     {page === 'enrichment' && <EnrichmentPage />}
     {page === 'leadgen' && <LeadGenPage />}
-    {page === 'campaigns' && <CampaignsPage />}
-    {page === 'templates' && <TemplatesPage />}
-    {page === 'settings' && <SettingsPage />}
   </main></div></ImportJobProvider></ToastProvider>);
 }
+
+
+// ============================================================
+// INBOX PAGE — What needs your attention
+// ============================================================
+const InboxPage = ({ setPage }) => {
+  const { addToast } = useToast();
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { fetchJobs(); }, []);
+
+  const fetchJobs = async () => {
+    setLoading(true);
+    try {
+      const data = await api.get('/leadgen/jobs');
+      setJobs((data.data || []).filter(j => j.status === 'awaiting_approval' || j.status === 'failed'));
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const pendingJobs = jobs.filter(j => j.status === 'awaiting_approval');
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div className="page-title">
+          <MessageCircle size={24} style={{color:'var(--coral)'}} />
+          <div>
+            <h1>Inbox</h1>
+            <p className="page-subtitle">What needs your attention</p>
+          </div>
+        </div>
+      </div>
+
+      {loading ? <div style={{textAlign:'center',padding:40}}><Loader2 className="spin" size={24} /></div> : (
+        <>
+          {pendingJobs.length === 0 ? (
+            <div className="card" style={{textAlign:'center', padding:60}}>
+              <CheckCircle size={48} style={{color:'var(--green)',marginBottom:16}} />
+              <h3>All clear</h3>
+              <p style={{color:'var(--text-secondary)'}}>No pending approvals. Hermes is working on it.</p>
+              <button className="btn btn-primary" style={{marginTop:16}} onClick={() => setPage('pipeline')}>
+                View Pipeline
+              </button>
+            </div>
+          ) : (
+            <div style={{display:'flex', flexDirection:'column', gap:12}}>
+              {pendingJobs.map(job => {
+                const params = (() => { try { return JSON.parse(job.parameters || '{}'); } catch { return {}; } })();
+                return (
+                  <div key={job.id} className="card" style={{borderLeft:'3px solid var(--coral)'}}>
+                    <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 20px'}}>
+                      <div style={{display:'flex', alignItems:'center', gap:12}}>
+                        <Target size={20} style={{color:'var(--coral)'}} />
+                        <div>
+                          <div style={{fontWeight:600, fontSize:15}}>
+                            {params.label || params.vertical || job.job_type} — {job.results_count} contacts ready
+                          </div>
+                          <div style={{fontSize:12, color:'var(--text-secondary)', marginTop:2}}>
+                            {new Date(job.created_at).toLocaleString()} · {job.workspace || 'US'}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{display:'flex', gap:8}}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setPage('pipeline')}>
+                          Review
+                        </button>
+                        <ApproveJobButton jobId={job.id} count={job.results_count} onDone={fetchJobs} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+const ApproveJobButton = ({ jobId, count, onDone }) => {
+  const { addToast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const handleApprove = async () => {
+    setLoading(true);
+    try {
+      const result = await api.post('/leadgen/contacts/approve', { job_id: jobId });
+      addToast(`✅ ${result.imported} contacts imported! ${result.skipped_duplicates} duplicates skipped.`, 'success');
+      onDone();
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+  return (
+    <button className="btn btn-primary btn-sm" disabled={loading} onClick={handleApprove}>
+      {loading ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+      Approve All ({count})
+    </button>
+  );
+};
+
+// ============================================================
+// PIPELINE PAGE — All runs, companies, staged contacts
+// ============================================================
+const PipelinePage = () => {
+  const { addToast } = useToast();
+  const [jobs, setJobs] = useState([]);
+  const [selectedJob, setSelectedJob] = useState(null);
+  const [jobDetail, setJobDetail] = useState(null);
+  const [stagedContacts, setStagedContacts] = useState([]);
+  const [selectedContacts, setSelectedContacts] = useState([]);
+  const [activeTab, setActiveTab] = useState('runs');
+  const [loading, setLoading] = useState(true);
+  const [approveLoading, setApproveLoading] = useState(false);
+
+  useEffect(() => { fetchJobs(); }, []);
+
+  const fetchJobs = async () => {
+    setLoading(true);
+    try {
+      const data = await api.get('/leadgen/jobs');
+      setJobs(data.data || []);
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const selectJob = async (job) => {
+    setSelectedJob(job);
+    setActiveTab('companies');
+    try {
+      const detail = await api.get(`/leadgen/jobs/${job.id}`);
+      setJobDetail(detail);
+      const preview = await api.get(`/leadgen/contacts/preview?job_id=${job.id}`);
+      setStagedContacts(preview.contacts || []);
+      setSelectedContacts((preview.contacts || []).filter(c => c.status === 'pending').map(c => c.id));
+    } catch (e) { addToast(e.message, 'error'); }
+  };
+
+  const handleApprove = async () => {
+    if (selectedContacts.length === 0) return;
+    setApproveLoading(true);
+    try {
+      const result = await api.post('/leadgen/contacts/approve', { contact_ids: selectedContacts });
+      addToast(`✅ ${result.imported} imported, ${result.skipped_duplicates} dupes skipped`, 'success');
+      const preview = await api.get(`/leadgen/contacts/preview?job_id=${selectedJob.id}`);
+      setStagedContacts(preview.contacts || []);
+      setSelectedContacts([]);
+      fetchJobs();
+    } catch (e) { addToast(e.message, 'error'); }
+    setApproveLoading(false);
+  };
+
+  const pendingContacts = stagedContacts.filter(c => c.status === 'pending');
+
+  const statusBadge = (status) => {
+    const colors = {
+      'awaiting_approval': 'var(--coral)',
+      'completed': 'var(--green)',
+      'running': 'var(--blue, #3b82f6)',
+      'failed': '#ef4444',
+      'pending': 'var(--text-secondary)',
+      'bulk_run': 'var(--coral)',
+    };
+    return <span style={{fontSize:11, fontWeight:600, color: colors[status] || 'var(--text-secondary)',
+      background: `${colors[status] || '#888'}20`, padding:'2px 8px', borderRadius:10}}>
+      {status?.replace('_', ' ').toUpperCase()}
+    </span>;
+  };
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div className="page-title">
+          <Target size={24} style={{color:'var(--coral)'}} />
+          <div>
+            <h1>Pipeline</h1>
+            <p className="page-subtitle">All enrichment runs — companies found, contacts staged, approvals</p>
+          </div>
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={fetchJobs}>
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns: selectedJob ? '340px 1fr' : '1fr', gap:16}}>
+        {/* Runs list */}
+        <div className="card" style={{overflow:'hidden'}}>
+          <div style={{padding:'12px 16px', borderBottom:'1px solid var(--border)', fontWeight:600, fontSize:13}}>
+            Runs ({jobs.length})
+          </div>
+          {loading ? <div style={{padding:24,textAlign:'center'}}><Loader2 className="spin" size={20} /></div> : (
+            <div style={{maxHeight:600, overflowY:'auto'}}>
+              {jobs.length === 0 ? (
+                <div style={{padding:32, textAlign:'center', color:'var(--text-secondary)', fontSize:13}}>
+                  No runs yet. Hermes will start one soon.
+                </div>
+              ) : jobs.map(job => {
+                const params = (() => { try { return JSON.parse(job.parameters || '{}'); } catch { return {}; } })();
+                const isSelected = selectedJob?.id === job.id;
+                return (
+                  <div key={job.id} onClick={() => selectJob(job)}
+                    style={{padding:'12px 16px', cursor:'pointer', borderBottom:'1px solid var(--border)',
+                      background: isSelected ? 'var(--bg-secondary)' : 'transparent',
+                      borderLeft: isSelected ? '3px solid var(--coral)' : '3px solid transparent'}}>
+                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
+                      <div style={{fontWeight:500, fontSize:13}}>
+                        {params.label || params.vertical || job.job_type}
+                      </div>
+                      {statusBadge(job.status)}
+                    </div>
+                    <div style={{fontSize:11, color:'var(--text-secondary)', marginTop:4}}>
+                      {job.results_count > 0 && <span>{job.results_count} contacts · </span>}
+                      {new Date(job.created_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Job detail */}
+        {selectedJob && (
+          <div style={{display:'flex', flexDirection:'column', gap:12}}>
+            {/* Tabs */}
+            <div style={{display:'flex', gap:8}}>
+              {['companies', 'contacts'].map(t => (
+                <button key={t} onClick={() => setActiveTab(t)}
+                  className={`btn btn-sm ${activeTab === t ? 'btn-primary' : 'btn-secondary'}`}>
+                  {t === 'companies' ? `Companies (${jobDetail?.companies?.length || 0})` : `Contacts (${stagedContacts.length})`}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'companies' && (
+              <div className="card" style={{overflow:'hidden'}}>
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th><th>Industry</th><th>Size</th><th>Country</th><th>Domain</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(jobDetail?.companies || []).map(c => (
+                        <tr key={c.id}>
+                          <td><strong>{c.name}</strong></td>
+                          <td style={{fontSize:12, color:'var(--text-secondary)'}}>{c.industry}</td>
+                          <td style={{fontSize:12}}>{c.size}</td>
+                          <td><span className={`workspace-badge workspace-${(c.workspace||'US').toLowerCase()}`}>{c.workspace==='MX'?'🇲🇽':'🇺🇸'} {c.workspace||'US'}</span></td>
+                          <td style={{fontSize:12}}>{c.domain}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'contacts' && (
+              <div className="card" style={{overflow:'hidden'}}>
+                {pendingContacts.length > 0 && (
+                  <div style={{padding:'12px 16px', borderBottom:'1px solid var(--border)',
+                    display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                    <span style={{fontSize:13}}>{selectedContacts.length} of {pendingContacts.length} pending selected</span>
+                    <div style={{display:'flex', gap:8}}>
+                      <button className="btn btn-secondary btn-sm"
+                        onClick={() => setSelectedContacts(selectedContacts.length === pendingContacts.length ? [] : pendingContacts.map(c=>c.id))}>
+                        {selectedContacts.length === pendingContacts.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                      <button className="btn btn-primary btn-sm" disabled={approveLoading || selectedContacts.length === 0} onClick={handleApprove}>
+                        {approveLoading ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+                        Approve &amp; Import ({selectedContacts.length})
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th style={{width:36}}></th>
+                        <th>Name</th><th>Title</th><th>ICP Tier</th><th>Email</th><th>Company</th><th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stagedContacts.map(c => (
+                        <tr key={c.id} style={{opacity: c.status !== 'pending' ? 0.5 : 1}}>
+                          <td>
+                            {c.status === 'pending' && (
+                              <input type="checkbox" checked={selectedContacts.includes(c.id)}
+                                onChange={() => setSelectedContacts(prev => prev.includes(c.id) ? prev.filter(x=>x!==c.id) : [...prev, c.id])} />
+                            )}
+                          </td>
+                          <td><strong>{c.first_name} {c.last_name}</strong></td>
+                          <td style={{fontSize:12, color:'var(--text-secondary)'}}>{c.title || '—'}</td>
+                          <td>
+                            {c.icp_tier && (
+                              <span style={{fontSize:11, fontWeight:600, padding:'2px 6px', borderRadius:8,
+                                background: c.icp_tier===1?'#dcfce7':c.icp_tier===2?'#fef9c3':'#f3f4f6',
+                                color: c.icp_tier===1?'#166534':c.icp_tier===2?'#854d0e':'#374151'}}>
+                                T{c.icp_tier} {c.icp_tier===1?'Owner':c.icp_tier===2?'GM':'Ops'}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{fontSize:12}}>{c.email || <span style={{color:'var(--text-muted)'}}>No email</span>}</td>
+                          <td style={{fontSize:12}}>{c.company_name}</td>
+                          <td>
+                            {c.status==='approved'&&<span style={{color:'var(--green)',fontSize:12}}>✅ Imported</span>}
+                            {c.status==='rejected'&&<span style={{color:'var(--text-muted)',fontSize:12}}>Skipped</span>}
+                            {c.status==='pending'&&<span style={{color:'var(--text-secondary)',fontSize:12}}>Pending</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export default App;
