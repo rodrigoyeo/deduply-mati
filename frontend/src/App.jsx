@@ -3043,7 +3043,6 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
         );
       })}
     </div>
-    </>}
   );
 };
 
