@@ -555,6 +555,10 @@ const DashboardPage = () => {
   const [loadingDb, setLoadingDb] = useState(false);
   const [loadingPerf, setLoadingPerf] = useState(false);
   const [loadingFunnel, setLoadingFunnel] = useState(false);
+  const [learningStats, setLearningStats] = useState(null);
+  const [abWinners, setAbWinners] = useState(null);
+  const [workspaceCompare, setWorkspaceCompare] = useState(null);
+  const [loadingLearning, setLoadingLearning] = useState(false);
 
   useEffect(() => {
     if (activeTab === 'database' && !dbStats) {
@@ -569,7 +573,19 @@ const DashboardPage = () => {
       setLoadingFunnel(true);
       api.get('/stats/funnel').then(setFunnelStats).finally(() => setLoadingFunnel(false));
     }
-  }, [activeTab, dbStats, perfStats, funnelStats]);
+    if (activeTab === 'learning' && !learningStats) {
+      setLoadingLearning(true);
+      Promise.all([
+        api.get('/analytics/learning'),
+        api.get('/analytics/ab-winners'),
+        api.get('/analytics/workspace-compare'),
+      ]).then(([ls, ab, ws]) => {
+        setLearningStats(ls);
+        setAbWinners(ab);
+        setWorkspaceCompare(ws);
+      }).finally(() => setLoadingLearning(false));
+    }
+  }, [activeTab, dbStats, perfStats, funnelStats, learningStats]);
 
   if (loading || !stats) return <div className="page loading"><Loader2 className="spin" size={24} /></div>;
 
@@ -590,6 +606,9 @@ const DashboardPage = () => {
       </button>
       <button className={`dash-tab ${activeTab === 'funnel' ? 'active' : ''}`} onClick={() => setActiveTab('funnel')}>
         <TrendingUp size={18} /> Sales Funnel
+      </button>
+      <button className={`dash-tab ${activeTab === 'learning' ? 'active' : ''}`} onClick={() => setActiveTab('learning')}>
+        <Sparkles size={18} /> What's Working
       </button>
     </div>
 
@@ -695,6 +714,130 @@ const DashboardPage = () => {
             </div>
           </div>
         </>
+      )
+    )}
+
+    {activeTab === 'learning' && (
+      loadingLearning ? <div className="loading-state"><Loader2 className="spin" size={32} /><span>Loading learning analytics...</span></div> : (
+        <div className="dashboard-grid">
+          {/* Top Templates */}
+          <div className="card">
+            <h3><Sparkles size={16} style={{display:'inline',marginRight:6,color:'var(--coral)'}} />What's Working — Top Templates</h3>
+            {learningStats?.top_templates?.length > 0 ? (
+              <div className="chart-bars">
+                {learningStats.top_templates.map((t, i) => (
+                  <div key={i} className="chart-row">
+                    <span className="chart-label">
+                      <span style={{marginRight:4}}>{t.workspace === 'MX' ? '🇲🇽' : '🇺🇸'}</span>
+                      {t.template_name} ({t.variant})
+                    </span>
+                    <div className="chart-bar-track">
+                      <div className="chart-bar-fill" style={{ width: `${Math.min(100, t.reply_rate * 5)}%`, background: 'var(--coral)' }}></div>
+                    </div>
+                    <span className="chart-count">{t.reply_rate}% reply ({t.sends} sent)</span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="empty-hint">No template data yet — data appears after campaigns run.</p>}
+            {learningStats?.best_days?.length > 0 && (
+              <>
+                <h4 style={{marginTop:20,marginBottom:8,fontSize:'0.85rem',color:'var(--text-muted)'}}>Best Days to Send</h4>
+                <div className="chart-bars">
+                  {learningStats.best_days.slice(0, 5).map((d, i) => (
+                    <div key={i} className="chart-row">
+                      <span className="chart-label">{d.day}</span>
+                      <div className="chart-bar-track">
+                        <div className="chart-bar-fill navy" style={{ width: `${Math.min(100, (d.events / (learningStats.best_days[0]?.events || 1)) * 100)}%` }}></div>
+                      </div>
+                      <span className="chart-count">{d.events} events</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {learningStats && (
+              <div style={{marginTop:16,display:'flex',gap:24,flexWrap:'wrap'}}>
+                <div className="stat-card" style={{flex:'1 1 120px',minHeight:'auto',padding:'10px 14px'}}>
+                  <div className="stat-value" style={{fontSize:'1.4rem'}}>{learningStats.reply_to_interested_rate ?? 0}%</div>
+                  <div className="stat-label">Reply → Interested</div>
+                </div>
+                <div className="stat-card" style={{flex:'1 1 120px',minHeight:'auto',padding:'10px 14px'}}>
+                  <div className="stat-value" style={{fontSize:'1.4rem'}}>{learningStats.avg_steps_to_reply ?? '—'}</div>
+                  <div className="stat-label">Avg Steps to Reply</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* US vs MX Comparison */}
+          <div className="card">
+            <h3><ArrowRightLeft size={16} style={{display:'inline',marginRight:6,color:'var(--navy)'}} />US vs MX Workspace</h3>
+            {workspaceCompare?.workspaces && (
+              <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                {['US', 'MX'].map(ws => {
+                  const d = workspaceCompare.workspaces[ws];
+                  return (
+                    <div key={ws} style={{flex:'1 1 160px',background:'var(--bg-secondary)',borderRadius:8,padding:14}}>
+                      <div style={{fontWeight:700,fontSize:'1.1rem',marginBottom:10}}>
+                        {ws === 'US' ? '🇺🇸 US' : '🇲🇽 MX'}
+                      </div>
+                      <div className="chart-bars" style={{gap:6}}>
+                        {[
+                          ['Campaigns', d.campaign_count],
+                          ['Sent', d.sent?.toLocaleString()],
+                          ['Open Rate', `${d.open_rate}%`],
+                          ['Reply Rate', `${d.reply_rate}%`],
+                          ['Interested', d.interested],
+                          ['Meetings', d.meetings],
+                        ].map(([label, val]) => (
+                          <div key={label} style={{display:'flex',justifyContent:'space-between',fontSize:'0.82rem',padding:'2px 0',borderBottom:'1px solid var(--border-light)'}}>
+                            <span style={{color:'var(--text-muted)'}}>{label}</span>
+                            <span style={{fontWeight:600}}>{val ?? 0}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* A/B Winners */}
+          <div className="card full-width">
+            <h3><Trophy size={16} style={{display:'inline',marginRight:6,color:'#f59e0b'}} />A/B Test Winners</h3>
+            {abWinners?.winners?.length > 0 ? (
+              <div className="perf-table-wrapper">
+                <table className="perf-table">
+                  <thead>
+                    <tr>
+                      <th>Campaign</th>
+                      <th>Winner</th>
+                      <th>Winner Reply Rate</th>
+                      <th>Winner Sends</th>
+                      <th>Loser</th>
+                      <th>Loser Reply Rate</th>
+                      <th>Delta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {abWinners.winners.map((w, i) => (
+                      <tr key={i}>
+                        <td className="perf-name">{w.campaign_name}</td>
+                        <td><span style={{background:'#dcfce7',color:'#166534',borderRadius:4,padding:'2px 8px',fontWeight:700}}>Variant {w.winner_variant}</span></td>
+                        <td className="highlight">{w.winner_reply_rate}%</td>
+                        <td>{w.winner_sends}</td>
+                        <td>Variant {w.loser_variant}</td>
+                        <td>{w.loser_reply_rate}%</td>
+                        <td style={{color:'var(--coral)',fontWeight:600}}>+{(w.winner_reply_rate - w.loser_reply_rate).toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="empty-hint">No A/B winners yet — campaigns need ≥ 20 sends per variant with different reply rates.</p>}
+          </div>
+        </div>
       )
     )}
   </div>);
