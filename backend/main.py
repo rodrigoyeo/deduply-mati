@@ -25,6 +25,7 @@ from routers.verify import router as verify_router
 from routers.reachinbox import router as reachinbox_router
 from routers.leadgen import router as leadgen_router
 from routers.agent import router as agent_router
+from routers.hubspot import router as hubspot_router
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -53,6 +54,7 @@ app.include_router(verify_router)
 app.include_router(reachinbox_router)
 app.include_router(leadgen_router)
 app.include_router(agent_router)
+app.include_router(hubspot_router)
 
 # ---------------------------------------------------------------------------
 # Database initialisation (SQLite only; PostgreSQL uses schema.sql)
@@ -184,6 +186,8 @@ def init_db():
         "ALTER TABLE email_templates ADD COLUMN country TEXT",
         "ALTER TABLE contacts ADD COLUMN hubspot_queued BOOLEAN DEFAULT 0",
         "ALTER TABLE contacts ADD COLUMN hubspot_synced_at TIMESTAMP",
+        "ALTER TABLE contacts ADD COLUMN hubspot_contact_id TEXT",
+        "ALTER TABLE contacts ADD COLUMN hubspot_deal_id TEXT",
     ]:
         try:
             conn.execute(col)

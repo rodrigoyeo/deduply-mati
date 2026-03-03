@@ -862,6 +862,25 @@ const ContactsPage = () => {
     if (!bulkField) return;
     setBulkLoading(true);
     try {
+      // HubSpot sync — separate flow
+      if (bulkField === 'hubspot_push') {
+        let contact_ids;
+        if (selectAll) {
+          const params = new URLSearchParams({ page: 1, page_size: selectLimitNum > 0 && selectLimitNum < total ? selectLimitNum : total, ...filters });
+          if (search) params.append('search', search);
+          const r = await api.get(`/contacts?${params}`);
+          contact_ids = r.data.map(c => c.id);
+        } else {
+          contact_ids = Array.from(selected);
+        }
+        const result = await api.post('/hubspot/sync/bulk', { contact_ids, limit: contact_ids.length });
+        addToast(`HubSpot: queued ${result.count} contacts for sync`, 'success');
+        setSelected(new Set()); setSelectAll(false); setSelectLimit('');
+        setBulkField('');
+        setBulkLoading(false);
+        return;
+      }
+
       // ReachInbox push — separate flow
       if (bulkField === 'reachinbox_push') {
         if (!riCampaignId) { addToast('Enter a ReachInbox Campaign ID', 'error'); setBulkLoading(false); return; }
@@ -982,7 +1001,8 @@ const ContactsPage = () => {
     { id: 'seniority', label: 'Seniority', type: 'select', options: filterOptions?.seniorities || [] },
     { id: 'industry', label: 'Industry', type: 'select', options: filterOptions?.industries || [] },
     { id: 'delete', label: 'Delete Contacts', type: 'action' },
-    { id: 'reachinbox_push', label: 'Push to ReachInbox', type: 'reachinbox' }
+    { id: 'reachinbox_push', label: 'Push to ReachInbox', type: 'reachinbox' },
+    { id: 'hubspot_push', label: 'Sync to HubSpot', type: 'action' }
   ];
 
   const selectedBulkField = bulkEditableFields.find(f => f.id === bulkField);
@@ -1318,9 +1338,9 @@ const ContactsPage = () => {
           <button className="btn btn-primary" onClick={executeBulkAction} disabled={
             !bulkField || bulkLoading ||
             (bulkField === 'reachinbox_push' && !riCampaignId) ||
-            (bulkField !== 'delete' && bulkField !== 'reachinbox_push' && (!bulkValue || (bulkValue === '__new__' && !bulkNewList.trim())))
+            (bulkField !== 'delete' && bulkField !== 'reachinbox_push' && bulkField !== 'hubspot_push' && (!bulkValue || (bulkValue === '__new__' && !bulkNewList.trim())))
           }>
-            {bulkLoading ? <Loader2 className="spin" size={16} /> : bulkField === 'reachinbox_push' ? <><Send size={14} /> Push</> : 'Apply'}
+            {bulkLoading ? <Loader2 className="spin" size={16} /> : bulkField === 'reachinbox_push' ? <><Send size={14} /> Push</> : bulkField === 'hubspot_push' ? <><Zap size={14} /> Sync to HubSpot</> : 'Apply'}
           </button>
         </div>
       </div>
@@ -3828,6 +3848,12 @@ const SettingsPage = () => {
   const [savingRiKey, setSavingRiKey] = useState({ US: false, MX: false });
   const [riTestResults, setRiTestResults] = useState({ US: null, MX: null });
 
+  // HubSpot state
+  const [hsToken, setHsToken] = useState('');
+  const [hsConfigured, setHsConfigured] = useState(false);
+  const [savingHsToken, setSavingHsToken] = useState(false);
+  const [hsTestResult, setHsTestResult] = useState(null);
+
   // Load API key status on mount
   useEffect(() => {
     const loadApiKeyStatus = async () => {
@@ -3848,8 +3874,15 @@ const SettingsPage = () => {
         }));
       } catch (e) { console.error('Failed to load ReachInbox status:', e); }
     };
+    const loadHsStatus = async () => {
+      try {
+        const res = await api.get('/settings/hubspot_private_app_token');
+        setHsConfigured(res.configured);
+      } catch (e) {}
+    };
     loadApiKeyStatus();
     loadRiStatus();
+    loadHsStatus();
   }, []);
 
   const testRiConnection = async (ws) => {
@@ -3865,6 +3898,31 @@ const SettingsPage = () => {
     } catch (e) {
       addToast(`${ws} connection test failed`, 'error');
     }
+  };
+
+  const saveHsToken = async () => {
+    if (!hsToken.trim()) { addToast('Enter a token', 'error'); return; }
+    setSavingHsToken(true);
+    try {
+      await api.put('/settings/hubspot_private_app_token', { value: hsToken.trim() });
+      addToast('HubSpot token saved!', 'success');
+      setHsConfigured(true);
+      setHsToken('');
+    } catch (e) { addToast(e.message || 'Failed to save', 'error'); }
+    setSavingHsToken(false);
+  };
+
+  const testHsConnection = async () => {
+    try {
+      const res = await api.get('/hubspot/status');
+      if (res.status === 'connected') {
+        addToast('HubSpot connected!', 'success');
+        setHsTestResult('Connected');
+      } else {
+        addToast(`HubSpot: ${res.detail || res.status}`, 'error');
+        setHsTestResult(`Error: ${res.detail || res.status}`);
+      }
+    } catch (e) { addToast('Connection test failed', 'error'); }
   };
 
   const saveRiKey = async (workspace) => {
@@ -4072,6 +4130,43 @@ const SettingsPage = () => {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* HubSpot CRM Integration */}
+        <div className="api-config-section" style={{marginTop: '32px'}}>
+          <div className="section-header">
+            <h2><Zap size={20} /> HubSpot CRM</h2>
+          </div>
+          <p className="help-text">
+            Sync contacts to HubSpot when they become Interested or book a meeting. A deal is automatically created and linked.
+            {' '}<a href="https://developers.hubspot.com/docs/api/private-apps" target="_blank" rel="noopener noreferrer">Get your private app token →</a>
+          </p>
+          <div className="api-key-form">
+            <div className="api-key-status">
+              {hsConfigured
+                ? <span className="status-configured"><Check size={14} /> Token Configured</span>
+                : <span className="status-not-configured"><AlertCircle size={14} /> Not Configured</span>}
+            </div>
+            <div className="api-key-input-group">
+              <input
+                type="password"
+                placeholder={hsConfigured ? 'Enter new token to replace existing' : 'pat-na-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'}
+                value={hsToken}
+                onChange={e => setHsToken(e.target.value)}
+                className="api-key-input"
+              />
+              <button className="btn btn-primary" onClick={saveHsToken} disabled={savingHsToken || !hsToken.trim()}>
+                {savingHsToken ? <><Loader2 size={16} className="spin" /> Saving...</> : 'Save Token'}
+              </button>
+              <button className="btn btn-secondary" onClick={testHsConnection} disabled={!hsConfigured}>
+                Test
+              </button>
+            </div>
+            {hsTestResult && <div className="ri-test-result"><Check size={13} /> {hsTestResult}</div>}
+          </div>
+          <div className="help-text" style={{marginTop: 8}}>
+            <strong>Auto-push:</strong> When a contact receives a <code>lead_interested</code> or <code>meeting_booked</code> webhook event, they are automatically synced to HubSpot in the background.
           </div>
         </div>
 
