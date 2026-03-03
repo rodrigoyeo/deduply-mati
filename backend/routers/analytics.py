@@ -60,6 +60,23 @@ def get_stats():
             "SELECT name, contact_count FROM outreach_lists ORDER BY contact_count DESC LIMIT 10"
         )
     ]
+    # Workspace breakdown
+    try:
+        stats['us_contacts'] = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE reachinbox_workspace='US' OR country_strategy NOT IN ('Mexico') OR country_strategy IS NULL"
+        ).fetchone()[0]
+        stats['mx_contacts'] = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE reachinbox_workspace='MX' OR country_strategy='Mexico'"
+        ).fetchone()[0]
+        stats['pushed_contacts'] = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE reachinbox_lead_id IS NOT NULL AND reachinbox_lead_id != ''"
+        ).fetchone()[0]
+        stats['hubspot_synced'] = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE hubspot_contact_id IS NOT NULL AND hubspot_contact_id != ''"
+        ).fetchone()[0]
+        stats['duplicate_contacts'] = stats['duplicates']
+    except Exception:
+        pass
     conn.close()
     return stats
 

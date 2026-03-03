@@ -5411,7 +5411,7 @@ function App() {
     {page === 'contacts' && <ContactsPage />}
     {page === 'campaigns' && <CampaignsPage />}
     {page === 'templates' && <TemplatesPage />}
-    {page === 'reports' && <DashboardPage />}
+    {page === 'reports' && <ReportsPage />}
     {page === 'settings' && <SettingsPage />}
     {/* Legacy routes still accessible */}
     {page === 'dashboard' && <DashboardPage />}
@@ -5420,6 +5420,203 @@ function App() {
     {page === 'leadgen' && <LeadGenPage />}
   </main></div></ImportJobProvider></ToastProvider>);
 }
+
+
+// ============================================================
+// REPORTS PAGE — Pipeline health, campaign performance
+// ============================================================
+const ReportsPage = () => {
+  const { addToast } = useToast();
+  const [stats, setStats] = useState(null);
+  const [campaigns, setCampaigns] = useState([]);
+  const [learning, setLearning] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('overview');
+
+  useEffect(() => {
+    Promise.all([
+      api.get('/stats'),
+      api.get('/campaigns'),
+      api.get('/analytics/learning').catch(() => null),
+    ]).then(([s, c, l]) => {
+      setStats(s);
+      setCampaigns(c.data || []);
+      setLearning(l);
+      setLoading(false);
+    }).catch(e => { addToast(e.message, 'error'); setLoading(false); });
+  }, []);
+
+  if (loading) return <div style={{padding:40,textAlign:'center'}}><Loader2 className="spin" size={28} /></div>;
+
+  const totalSent = campaigns.reduce((a,c) => a+(c.emails_sent||0), 0);
+  const totalOpened = campaigns.reduce((a,c) => a+(c.emails_opened||0), 0);
+  const totalReplied = campaigns.reduce((a,c) => a+(c.emails_replied||0), 0);
+  const totalBounced = campaigns.reduce((a,c) => a+(c.emails_bounced||0), 0);
+  const openRate = totalSent > 0 ? ((totalOpened/totalSent)*100).toFixed(1) : 0;
+  const replyRate = totalSent > 0 ? ((totalReplied/totalSent)*100).toFixed(1) : 0;
+  const bounceRate = totalSent > 0 ? ((totalBounced/totalSent)*100).toFixed(1) : 0;
+
+  const Metric = ({label, value, sub, color}) => (
+    <div className="card" style={{padding:'20px 24px', flex:1, minWidth:160}}>
+      <div style={{fontSize:28, fontWeight:700, color:color||'var(--text-primary)'}}>{value}</div>
+      <div style={{fontWeight:600, fontSize:13, marginTop:4}}>{label}</div>
+      {sub && <div style={{fontSize:12, color:'var(--text-secondary)', marginTop:2}}>{sub}</div>}
+    </div>
+  );
+
+  const topCampaigns = [...campaigns]
+    .sort((a,b) => (b.emails_replied||0)-(a.emails_replied||0))
+    .slice(0,10);
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div className="page-title">
+          <TrendingUp size={24} style={{color:'var(--coral)'}} />
+          <div>
+            <h1>Reports</h1>
+            <p className="page-subtitle">Pipeline health and campaign performance</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{display:'flex', gap:4, marginBottom:20, borderBottom:'1px solid var(--border)', paddingBottom:0}}>
+        {[{id:'overview',label:'Overview'},{id:'campaigns',label:'Campaigns'},{id:'learning',label:"What's Working"}].map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            style={{padding:'8px 20px', border:'none', cursor:'pointer', fontWeight: activeTab===t.id ? 600 : 400,
+              borderBottom: activeTab===t.id ? '2px solid var(--coral)' : '2px solid transparent',
+              background:'transparent', color: activeTab===t.id ? 'var(--coral)' : 'var(--text-secondary)',
+              fontSize:14, transition:'all 0.15s'}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'overview' && (
+        <div style={{display:'flex', flexDirection:'column', gap:20}}>
+          {/* Contact pipeline */}
+          <div>
+            <h3 style={{fontSize:13, textTransform:'uppercase', letterSpacing:'0.05em', color:'var(--text-secondary)', marginBottom:12}}>Contact Pipeline</h3>
+            <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
+              <Metric label="Total Contacts" value={(stats?.total_contacts||0).toLocaleString()} />
+              <Metric label="Pushed to ReachInbox" value={(stats?.pushed_contacts||0).toLocaleString()} color="var(--coral)" />
+              <Metric label="HubSpot Synced" value={(stats?.hubspot_synced||0).toLocaleString()} color="#f59e0b" />
+              <Metric label="Duplicates" value={(stats?.duplicate_contacts||0).toLocaleString()} color="var(--text-secondary)" />
+            </div>
+          </div>
+
+          {/* Email stats */}
+          <div>
+            <h3 style={{fontSize:13, textTransform:'uppercase', letterSpacing:'0.05em', color:'var(--text-secondary)', marginBottom:12}}>Email Performance</h3>
+            <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
+              <Metric label="Emails Sent" value={totalSent.toLocaleString()} />
+              <Metric label="Open Rate" value={`${openRate}%`} sub={`${totalOpened.toLocaleString()} opened`} color={openRate>=30?'var(--green)':openRate>=20?'#f59e0b':'#ef4444'} />
+              <Metric label="Reply Rate" value={`${replyRate}%`} sub={`${totalReplied.toLocaleString()} replies`} color={replyRate>=5?'var(--green)':replyRate>=2?'#f59e0b':'#ef4444'} />
+              <Metric label="Bounce Rate" value={`${bounceRate}%`} sub={`${totalBounced.toLocaleString()} bounced`} color={bounceRate<3?'var(--green)':bounceRate<8?'#f59e0b':'#ef4444'} />
+            </div>
+          </div>
+
+          {/* Workspace split */}
+          <div>
+            <h3 style={{fontSize:13, textTransform:'uppercase', letterSpacing:'0.05em', color:'var(--text-secondary)', marginBottom:12}}>By Workspace</h3>
+            <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
+              <Metric label="🇺🇸 US Contacts" value={(stats?.us_contacts||0).toLocaleString()} />
+              <Metric label="🇲🇽 MX Contacts" value={(stats?.mx_contacts||0).toLocaleString()} />
+              <Metric label="US Campaigns" value={campaigns.filter(c=>c.country==='United States'||c.country==='US').length} />
+              <Metric label="MX Campaigns" value={campaigns.filter(c=>c.country==='Mexico'||c.country==='MX').length} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'campaigns' && (
+        <div className="card" style={{overflow:'hidden'}}>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Campaign</th>
+                  <th>Workspace</th>
+                  <th>Sent</th>
+                  <th>Open %</th>
+                  <th>Reply %</th>
+                  <th>Bounce %</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topCampaigns.map(c => {
+                  const sent = c.emails_sent||0;
+                  const oRate = sent>0?((c.emails_opened||0)/sent*100).toFixed(1):0;
+                  const rRate = sent>0?((c.emails_replied||0)/sent*100).toFixed(1):0;
+                  const bRate = sent>0?((c.emails_bounced||0)/sent*100).toFixed(1):0;
+                  return (
+                    <tr key={c.id}>
+                      <td><strong>{c.name}</strong></td>
+                      <td>
+                        <span className={`workspace-badge workspace-${(c.country==='Mexico'||c.country==='MX')?'mx':'us'}`}>
+                          {(c.country==='Mexico'||c.country==='MX')?'🇲🇽 MX':'🇺🇸 US'}
+                        </span>
+                      </td>
+                      <td>{sent.toLocaleString()}</td>
+                      <td style={{color:oRate>=30?'var(--green)':oRate>=20?'#f59e0b':'inherit'}}>{oRate}%</td>
+                      <td style={{color:rRate>=5?'var(--green)':rRate>=2?'#f59e0b':'inherit'}}>{rRate}%</td>
+                      <td style={{color:bRate<3?'var(--green)':bRate<8?'#f59e0b':'#ef4444'}}>{bRate}%</td>
+                      <td>
+                        <span style={{fontSize:11, padding:'2px 8px', borderRadius:10,
+                          background:c.status==='Active'?'#dcfce7':c.status==='Paused'?'#fef9c3':'#f3f4f6',
+                          color:c.status==='Active'?'#166534':c.status==='Paused'?'#854d0e':'#6b7280', fontWeight:600}}>
+                          {c.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {topCampaigns.length === 0 && (
+                  <tr><td colSpan={7} style={{textAlign:'center', color:'var(--text-secondary)', padding:32}}>No campaigns yet</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'learning' && (
+        <div>
+          {!learning ? (
+            <div className="card" style={{padding:40, textAlign:'center', color:'var(--text-secondary)'}}>
+              <TrendingUp size={40} style={{marginBottom:16, opacity:0.3}} />
+              <h3>Not enough data yet</h3>
+              <p>Learning insights appear after your campaigns have enough send data.</p>
+            </div>
+          ) : (
+            <div style={{display:'flex', flexDirection:'column', gap:16}}>
+              {learning.best_performing_templates?.length > 0 && (
+                <div className="card" style={{padding:20}}>
+                  <h3 style={{marginBottom:12}}>🏆 Top Templates</h3>
+                  {learning.best_performing_templates.map((t,i) => (
+                    <div key={i} style={{display:'flex', justifyContent:'space-between', padding:'8px 0',
+                      borderBottom:'1px solid var(--border)'}}>
+                      <span>{t.template_name || `Template ${t.template_id}`}</span>
+                      <span style={{color:'var(--green)', fontWeight:600}}>{t.reply_rate}% reply</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {learning.subject_line_patterns && (
+                <div className="card" style={{padding:20}}>
+                  <h3 style={{marginBottom:12}}>💡 Subject Line Patterns</h3>
+                  <p style={{color:'var(--text-secondary)', fontSize:13}}>{learning.subject_line_patterns}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 
 // ============================================================
