@@ -192,7 +192,7 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
   const { data: stats } = useData('/stats');
   const { importJob, clearImportJob } = useImportJob();
   const { addToast } = useToast();
-  const nav = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'duplicates', label: 'Duplicates', icon: Layers }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'leadgen', label: 'Lead Gen', icon: Target }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'templates', label: 'Templates', icon: FileText }, { id: 'settings', label: 'Settings', icon: Settings }];
+  const nav = [{ id: 'inbox', label: 'Inbox', icon: MessageCircle }, { id: 'pipeline', label: 'Pipeline', icon: Target }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'reports', label: 'Reports', icon: TrendingUp }, { id: 'settings', label: 'Settings', icon: Settings }];
 
   // Show toast when import completes
   useEffect(() => {
@@ -555,6 +555,10 @@ const DashboardPage = () => {
   const [loadingDb, setLoadingDb] = useState(false);
   const [loadingPerf, setLoadingPerf] = useState(false);
   const [loadingFunnel, setLoadingFunnel] = useState(false);
+  const [learningStats, setLearningStats] = useState(null);
+  const [abWinners, setAbWinners] = useState(null);
+  const [workspaceCompare, setWorkspaceCompare] = useState(null);
+  const [loadingLearning, setLoadingLearning] = useState(false);
 
   useEffect(() => {
     if (activeTab === 'database' && !dbStats) {
@@ -569,7 +573,19 @@ const DashboardPage = () => {
       setLoadingFunnel(true);
       api.get('/stats/funnel').then(setFunnelStats).finally(() => setLoadingFunnel(false));
     }
-  }, [activeTab, dbStats, perfStats, funnelStats]);
+    if (activeTab === 'learning' && !learningStats) {
+      setLoadingLearning(true);
+      Promise.all([
+        api.get('/analytics/learning'),
+        api.get('/analytics/ab-winners'),
+        api.get('/analytics/workspace-compare'),
+      ]).then(([ls, ab, ws]) => {
+        setLearningStats(ls);
+        setAbWinners(ab);
+        setWorkspaceCompare(ws);
+      }).finally(() => setLoadingLearning(false));
+    }
+  }, [activeTab, dbStats, perfStats, funnelStats, learningStats]);
 
   if (loading || !stats) return <div className="page loading"><Loader2 className="spin" size={24} /></div>;
 
@@ -590,6 +606,9 @@ const DashboardPage = () => {
       </button>
       <button className={`dash-tab ${activeTab === 'funnel' ? 'active' : ''}`} onClick={() => setActiveTab('funnel')}>
         <TrendingUp size={18} /> Sales Funnel
+      </button>
+      <button className={`dash-tab ${activeTab === 'learning' ? 'active' : ''}`} onClick={() => setActiveTab('learning')}>
+        <Sparkles size={18} /> What's Working
       </button>
     </div>
 
@@ -697,6 +716,130 @@ const DashboardPage = () => {
         </>
       )
     )}
+
+    {activeTab === 'learning' && (
+      loadingLearning ? <div className="loading-state"><Loader2 className="spin" size={32} /><span>Loading learning analytics...</span></div> : (
+        <div className="dashboard-grid">
+          {/* Top Templates */}
+          <div className="card">
+            <h3><Sparkles size={16} style={{display:'inline',marginRight:6,color:'var(--coral)'}} />What's Working — Top Templates</h3>
+            {learningStats?.top_templates?.length > 0 ? (
+              <div className="chart-bars">
+                {learningStats.top_templates.map((t, i) => (
+                  <div key={i} className="chart-row">
+                    <span className="chart-label">
+                      <span style={{marginRight:4}}>{t.workspace === 'MX' ? '🇲🇽' : '🇺🇸'}</span>
+                      {t.template_name} ({t.variant})
+                    </span>
+                    <div className="chart-bar-track">
+                      <div className="chart-bar-fill" style={{ width: `${Math.min(100, t.reply_rate * 5)}%`, background: 'var(--coral)' }}></div>
+                    </div>
+                    <span className="chart-count">{t.reply_rate}% reply ({t.sends} sent)</span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="empty-hint">No template data yet — data appears after campaigns run.</p>}
+            {learningStats?.best_days?.length > 0 && (
+              <>
+                <h4 style={{marginTop:20,marginBottom:8,fontSize:'0.85rem',color:'var(--text-muted)'}}>Best Days to Send</h4>
+                <div className="chart-bars">
+                  {learningStats.best_days.slice(0, 5).map((d, i) => (
+                    <div key={i} className="chart-row">
+                      <span className="chart-label">{d.day}</span>
+                      <div className="chart-bar-track">
+                        <div className="chart-bar-fill navy" style={{ width: `${Math.min(100, (d.events / (learningStats.best_days[0]?.events || 1)) * 100)}%` }}></div>
+                      </div>
+                      <span className="chart-count">{d.events} events</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {learningStats && (
+              <div style={{marginTop:16,display:'flex',gap:24,flexWrap:'wrap'}}>
+                <div className="stat-card" style={{flex:'1 1 120px',minHeight:'auto',padding:'10px 14px'}}>
+                  <div className="stat-value" style={{fontSize:'1.4rem'}}>{learningStats.reply_to_interested_rate ?? 0}%</div>
+                  <div className="stat-label">Reply → Interested</div>
+                </div>
+                <div className="stat-card" style={{flex:'1 1 120px',minHeight:'auto',padding:'10px 14px'}}>
+                  <div className="stat-value" style={{fontSize:'1.4rem'}}>{learningStats.avg_steps_to_reply ?? '—'}</div>
+                  <div className="stat-label">Avg Steps to Reply</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* US vs MX Comparison */}
+          <div className="card">
+            <h3><ArrowRightLeft size={16} style={{display:'inline',marginRight:6,color:'var(--navy)'}} />US vs MX Workspace</h3>
+            {workspaceCompare?.workspaces && (
+              <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                {['US', 'MX'].map(ws => {
+                  const d = workspaceCompare.workspaces[ws];
+                  return (
+                    <div key={ws} style={{flex:'1 1 160px',background:'var(--bg-secondary)',borderRadius:8,padding:14}}>
+                      <div style={{fontWeight:700,fontSize:'1.1rem',marginBottom:10}}>
+                        {ws === 'US' ? '🇺🇸 US' : '🇲🇽 MX'}
+                      </div>
+                      <div className="chart-bars" style={{gap:6}}>
+                        {[
+                          ['Campaigns', d.campaign_count],
+                          ['Sent', d.sent?.toLocaleString()],
+                          ['Open Rate', `${d.open_rate}%`],
+                          ['Reply Rate', `${d.reply_rate}%`],
+                          ['Interested', d.interested],
+                          ['Meetings', d.meetings],
+                        ].map(([label, val]) => (
+                          <div key={label} style={{display:'flex',justifyContent:'space-between',fontSize:'0.82rem',padding:'2px 0',borderBottom:'1px solid var(--border-light)'}}>
+                            <span style={{color:'var(--text-muted)'}}>{label}</span>
+                            <span style={{fontWeight:600}}>{val ?? 0}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* A/B Winners */}
+          <div className="card full-width">
+            <h3><Trophy size={16} style={{display:'inline',marginRight:6,color:'#f59e0b'}} />A/B Test Winners</h3>
+            {abWinners?.winners?.length > 0 ? (
+              <div className="perf-table-wrapper">
+                <table className="perf-table">
+                  <thead>
+                    <tr>
+                      <th>Campaign</th>
+                      <th>Winner</th>
+                      <th>Winner Reply Rate</th>
+                      <th>Winner Sends</th>
+                      <th>Loser</th>
+                      <th>Loser Reply Rate</th>
+                      <th>Delta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {abWinners.winners.map((w, i) => (
+                      <tr key={i}>
+                        <td className="perf-name">{w.campaign_name}</td>
+                        <td><span style={{background:'#dcfce7',color:'#166534',borderRadius:4,padding:'2px 8px',fontWeight:700}}>Variant {w.winner_variant}</span></td>
+                        <td className="highlight">{w.winner_reply_rate}%</td>
+                        <td>{w.winner_sends}</td>
+                        <td>Variant {w.loser_variant}</td>
+                        <td>{w.loser_reply_rate}%</td>
+                        <td style={{color:'var(--coral)',fontWeight:600}}>+{(w.winner_reply_rate - w.loser_reply_rate).toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="empty-hint">No A/B winners yet — campaigns need ≥ 20 sends per variant with different reply rates.</p>}
+          </div>
+        </div>
+      )
+    )}
   </div>);
 };
 
@@ -760,7 +903,7 @@ const ContactsPage = () => {
     // Person location
     { id: 'city', label: 'City', editable: true, default: false },
     { id: 'state', label: 'State', editable: true, default: false },
-    { id: 'country', label: 'Country', editable: true, default: false },
+    { id: 'country', label: 'Workspace', editable: true, default: false },
     // Company location
     { id: 'company_city', label: 'Company City', editable: true, default: false },
     { id: 'company_state', label: 'Company State', editable: true, default: false },
@@ -995,7 +1138,7 @@ const ContactsPage = () => {
   const bulkEditableFields = [
     { id: 'status', label: 'Status', type: 'select', options: filterOptions?.statuses || [] },
     { id: 'email_status', label: 'Email Status', type: 'select', options: ['Not Verified', 'Valid', 'Invalid', 'Unknown'] },
-    { id: 'country_strategy', label: 'Country Strategy', type: 'select', options: filterOptions?.country_strategies || [] },
+    { id: 'country_strategy', label: 'Workspace', type: 'select', options: filterOptions?.country_strategies || [] },
     { id: 'campaigns_assigned', label: 'Campaign', type: 'list', options: filterOptions?.campaigns || [] },
     { id: 'outreach_lists', label: 'Outreach List', type: 'list', options: filterOptions?.outreach_lists || [] },
     { id: 'seniority', label: 'Seniority', type: 'select', options: filterOptions?.seniorities || [] },
@@ -1116,7 +1259,7 @@ const ContactsPage = () => {
             />
           </div>
           <div className="filter-group-v2">
-            <label>Country Strategy</label>
+            <label>Workspace</label>
             <MultiSelect
               options={countryStrategyOptions}
               value={filters.country_strategy || []}
@@ -1463,7 +1606,7 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
       <div className="form-group"><label>Or Create New List</label><input type="text" value={newListName} onChange={e => setNewListName(e.target.value)} placeholder="New list name..." /></div>
       <div className="form-group"><label>Assign to Campaign</label><select value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)}><option value="">Select existing campaign...</option>{filterOptions?.campaigns?.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
       <div className="form-group"><label>Or Create New Campaign</label><input type="text" value={newCampaignName} onChange={e => setNewCampaignName(e.target.value)} placeholder="New campaign name..." /></div>
-      <div className="form-group"><label>Country Strategy *</label><select value={countryStrategy} onChange={e => setCountryStrategy(e.target.value)} required><option value="">Select strategy...</option>{strategyOptions.map(s => <option key={s} value={s}>{s}</option>)}</select>{!countryStrategy && <span className="field-hint error">Required</span>}</div>
+      <div className="form-group"><label>Workspace *</label><select value={countryStrategy} onChange={e => setCountryStrategy(e.target.value)} required><option value="">Select strategy...</option>{strategyOptions.map(s => <option key={s} value={s}>{s}</option>)}</select>{!countryStrategy && <span className="field-hint error">Required</span>}</div>
       <div></div>
       <div className="import-option"><label><input type="checkbox" checked={checkDuplicates} onChange={e => setCheckDuplicates(e.target.checked)} /> Check for duplicates</label></div>
       <div className="import-option"><label><input type="checkbox" checked={mergeDuplicates} onChange={e => setMergeDuplicates(e.target.checked)} disabled={!checkDuplicates} /> Merge duplicates (add to existing lists/campaigns)</label></div>
@@ -1566,14 +1709,14 @@ const ExportForm = ({ filters, search, onClose }) => {
     { id: 'first_phone', label: 'Phone' }, { id: 'corporate_phone', label: 'Corporate Phone' },
     { id: 'person_linkedin_url', label: 'LinkedIn' }, { id: 'company_linkedin_url', label: 'Company LinkedIn' },
     { id: 'website', label: 'Website' }, { id: 'domain', label: 'Domain' },
-    { id: 'city', label: 'City' }, { id: 'state', label: 'State' }, { id: 'country', label: 'Country' },
+    { id: 'city', label: 'City' }, { id: 'state', label: 'State' }, { id: 'country', label: 'Workspace' },
     { id: 'company_city', label: 'Company City' }, { id: 'company_state', label: 'Company State' }, { id: 'company_country', label: 'Company Country' },
     { id: 'company_street_address', label: 'Company Address' }, { id: 'company_postal_code', label: 'Postal Code' },
     { id: 'employees', label: 'Employees' }, { id: 'employee_bucket', label: 'Employee Bucket' }, { id: 'industry', label: 'Industry' },
     { id: 'annual_revenue', label: 'Revenue' }, { id: 'annual_revenue_text', label: 'Revenue (Text)' },
     { id: 'company_description', label: 'Company Desc' }, { id: 'company_seo_description', label: 'SEO Desc' },
     { id: 'company_technologies', label: 'Technologies' }, { id: 'company_founded_year', label: 'Founded' }, { id: 'keywords', label: 'Keywords' },
-    { id: 'country_strategy', label: 'Country Strategy' }, { id: 'outreach_lists', label: 'Outreach Lists' }, { id: 'campaigns_assigned', label: 'Campaigns' },
+    { id: 'country_strategy', label: 'Workspace' }, { id: 'outreach_lists', label: 'Outreach Lists' }, { id: 'campaigns_assigned', label: 'Campaigns' },
     { id: 'status', label: 'Status' }, { id: 'email_status', label: 'Email Status' }, { id: 'times_contacted', label: 'Contacted' },
     { id: 'last_contacted_at', label: 'Last Contact' }, { id: 'notes', label: 'Notes' }, { id: 'created_at', label: 'Created' }
   ];
@@ -2299,6 +2442,7 @@ const DuplicatesPage = () => {
 // Campaigns Page with Template Breakdown
 const CampaignsPage = () => {
   const { addToast } = useToast();
+  const [mainTab, setMainTab] = useState('campaigns'); // 'campaigns' | 'templates'
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -2410,13 +2554,31 @@ const CampaignsPage = () => {
     <div className="page-header">
       <div>
         <h1>Campaigns</h1>
-        <p className="subtitle">Manage and track your cold email campaigns</p>
+        <p className="subtitle">Email campaigns and sequence templates</p>
       </div>
       <div className="header-actions">
-        <button className="btn btn-secondary" onClick={fetchCampaigns}><RefreshCw size={16} /> Refresh</button>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={16} /> New Campaign</button>
+        {mainTab === 'campaigns' && <>
+          <button className="btn btn-secondary" onClick={fetchCampaigns}><RefreshCw size={16} /> Refresh</button>
+          <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={16} /> New Campaign</button>
+        </>}
       </div>
     </div>
+
+    {/* Main tab switcher */}
+    <div style={{display:'flex', gap:4, marginBottom:20, borderBottom:'1px solid var(--border)', paddingBottom:0}}>
+      {[{id:'campaigns',label:'Campaigns',icon:'📧'},{id:'templates',label:'Templates',icon:'📝'}].map(t => (
+        <button key={t.id} onClick={() => setMainTab(t.id)}
+          style={{padding:'8px 20px', border:'none', cursor:'pointer', fontWeight: mainTab===t.id ? 600 : 400,
+            borderBottom: mainTab===t.id ? '2px solid var(--coral)' : '2px solid transparent',
+            background:'transparent', color: mainTab===t.id ? 'var(--coral)' : 'var(--text-secondary)',
+            fontSize:14, display:'flex', alignItems:'center', gap:6, transition:'all 0.15s'}}>
+          {t.icon} {t.label}
+        </button>
+      ))}
+    </div>
+
+    {mainTab === 'templates' && <TemplatesPage />}
+    {mainTab === 'campaigns' && <>
 
     {/* Campaign Stats */}
     <div className="campaigns-stats">
@@ -2880,6 +3042,8 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
         );
       })}
     </div>
+    </>}
+  </div>
   );
 };
 
@@ -2890,7 +3054,7 @@ const CampaignForm = ({ onSubmit, onCancel, initial = {} }) => {
     <div className="form-group"><label>Campaign Name *</label><input type="text" value={data.name} onChange={e => setData({ ...data, name: e.target.value })} required placeholder="E.g., SaaS Outreach - Q1" /></div>
     <div className="form-group"><label>Description</label><textarea value={data.description || ''} onChange={e => setData({ ...data, description: e.target.value })} rows={2} placeholder="Brief description of this campaign..." /></div>
     <div className="form-row">
-      <div className="form-group"><label>Country Strategy</label><select value={data.country || ''} onChange={e => setData({ ...data, country: e.target.value })}><option value="">Select country...</option>{countries.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+      <div className="form-group"><label>Workspace</label><select value={data.country || ''} onChange={e => setData({ ...data, country: e.target.value })}><option value="">Select country...</option>{countries.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
       <div className="form-group"><label>Status</label><select value={data.status} onChange={e => setData({ ...data, status: e.target.value })}><option>Active</option><option>Paused</option><option>Completed</option></select></div>
     </div>
     <div className="modal-actions"><button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button><button type="submit" className="btn btn-primary">{initial.id ? 'Save Changes' : 'Create Campaign'}</button></div>
@@ -3781,7 +3945,7 @@ const TemplateForm = ({ campaigns, onSubmit, onCancel, initial = {}, variables }
           </select>
         </div>
         <div className="form-group">
-          <label>Country Strategy</label>
+          <label>Workspace</label>
           <select value={data.country || ''} onChange={e => setData({ ...data, country: e.target.value })}>
             <option value="">Select country...</option>
             {countries.map(c => <option key={c} value={c}>{c}</option>)}
@@ -3854,6 +4018,12 @@ const SettingsPage = () => {
   const [savingHsToken, setSavingHsToken] = useState(false);
   const [hsTestResult, setHsTestResult] = useState(null);
 
+  // BlitzAPI state
+  const [blitzKey, setBlitzKey] = useState('');
+  const [blitzConfigured, setBlitzConfigured] = useState(false);
+  const [savingBlitzKey, setSavingBlitzKey] = useState(false);
+  const [blitzTestResult, setBlitzTestResult] = useState(null);
+
   // Load API key status on mount
   useEffect(() => {
     const loadApiKeyStatus = async () => {
@@ -3880,9 +4050,16 @@ const SettingsPage = () => {
         setHsConfigured(res.configured);
       } catch (e) {}
     };
+    const loadBlitzStatus = async () => {
+      try {
+        const res = await api.get('/settings/blitzapi_api_key');
+        setBlitzConfigured(res.configured);
+      } catch (e) {}
+    };
     loadApiKeyStatus();
     loadRiStatus();
     loadHsStatus();
+    loadBlitzStatus();
   }, []);
 
   const testRiConnection = async (ws) => {
@@ -3898,6 +4075,32 @@ const SettingsPage = () => {
     } catch (e) {
       addToast(`${ws} connection test failed`, 'error');
     }
+  };
+
+  const saveBlitzKey = async () => {
+    if (!blitzKey.trim()) { addToast('Enter an API key', 'error'); return; }
+    setSavingBlitzKey(true);
+    try {
+      await api.put('/settings/blitzapi_api_key', { value: blitzKey.trim() });
+      addToast('BlitzAPI key saved!', 'success');
+      setBlitzConfigured(true);
+      setBlitzKey('');
+    } catch (e) { addToast(e.message || 'Failed to save', 'error'); }
+    setSavingBlitzKey(false);
+  };
+
+  const testBlitzConnection = async () => {
+    try {
+      const res = await api.get('/leadgen/credits');
+      if (res.valid) {
+        const msg = `Connected — ${(res.remaining_credits || 0).toLocaleString()} credits remaining`;
+        addToast(msg, 'success');
+        setBlitzTestResult(msg);
+      } else {
+        addToast('BlitzAPI key invalid', 'error');
+        setBlitzTestResult('Invalid key');
+      }
+    } catch (e) { addToast('Connection test failed', 'error'); }
   };
 
   const saveHsToken = async () => {
@@ -4170,6 +4373,40 @@ const SettingsPage = () => {
           </div>
         </div>
 
+        {/* BlitzAPI Configuration */}
+        <div className="api-config-section" style={{marginTop: '32px'}}>
+          <div className="section-header">
+            <h2><Target size={20} /> BlitzAPI</h2>
+          </div>
+          <p className="help-text">
+            API key for the Lead Generation engine — company search, employee finder, email enrichment.
+            {' '}<a href="https://blitz-api.ai" target="_blank" rel="noopener noreferrer">Get your key at blitz-api.ai →</a>
+          </p>
+          <div className="api-key-form">
+            <div className="api-key-status">
+              {blitzConfigured
+                ? <span className="status-configured"><Check size={14} /> Configured</span>
+                : <span className="status-not-configured"><AlertCircle size={14} /> Not set</span>}
+            </div>
+            <div className="api-key-input-group">
+              <input
+                type="password"
+                placeholder={blitzConfigured ? 'Enter new key to replace existing' : 'blitz-xxxxxxxxxxxxxxxx'}
+                value={blitzKey}
+                onChange={e => setBlitzKey(e.target.value)}
+                className="api-key-input"
+              />
+              <button className="btn btn-primary" onClick={saveBlitzKey} disabled={savingBlitzKey || !blitzKey.trim()}>
+                {savingBlitzKey ? <><Loader2 size={16} className="spin" /> Saving...</> : 'Save'}
+              </button>
+              <button className="btn btn-secondary" onClick={testBlitzConnection} disabled={!blitzConfigured}>
+                Test
+              </button>
+            </div>
+            {blitzTestResult && <div className="ri-test-result"><Check size={13} /> {blitzTestResult}</div>}
+          </div>
+        </div>
+
         <div className="section-header" style={{marginTop: '32px'}}>
           <h2>Webhook Integrations</h2>
           <button className="btn btn-secondary" onClick={refetchWebhooks}><RefreshCw size={16} /> Refresh</button>
@@ -4319,8 +4556,23 @@ const AddUserForm = ({ onSubmit, onCancel }) => {
 // Lead Gen Page — BlitzAPI Enrichment Engine
 // ---------------------------------------------------------------------------
 const LEAD_GEN_INDUSTRIES = [
-  'Software Development', 'IT Services', 'Financial Services', 'Healthcare',
-  'Manufacturing', 'Retail', 'Real Estate', 'Education', 'Marketing', 'Consulting',
+  'Accounting', 'Advertising', 'Aerospace', 'Agriculture', 'Architecture',
+  'Automotive', 'Banking', 'Biotechnology', 'Chemical', 'Civil Engineering',
+  'Computer Software', 'Construction', 'Consumer Electronics', 'Consumer Goods',
+  'Defense & Space', 'Education Management', 'Electrical & Electronic Manufacturing',
+  'Entertainment', 'Environmental Services', 'Financial Services',
+  'Food & Beverages', 'Government Administration', 'Health, Wellness & Fitness',
+  'Healthcare', 'Hospital & Health Care', 'Human Resources',
+  'Information Technology', 'Insurance', 'Internet', 'IT Services',
+  'Logistics & Supply Chain', 'Management Consulting', 'Manufacturing',
+  'Marketing & Advertising', 'Media', 'Medical Devices', 'Mining', 'Nonprofit',
+  'Oil & Energy', 'Outsourcing', 'Pharmaceuticals', 'Public Relations',
+  'Real Estate', 'Retail', 'Security', 'Software Development',
+  'Staffing & Recruiting', 'Telecommunications', 'Transportation',
+  'Utilities', 'Venture Capital',
+];
+const LEAD_GEN_COMPANY_TYPES = [
+  'Privately Held', 'Public Company', 'Non Profit', 'Partnership', 'Self Owned',
 ];
 const LEAD_GEN_COUNTRIES = [
   { code: 'US', label: 'United States' }, { code: 'MX', label: 'Mexico' },
@@ -4328,6 +4580,8 @@ const LEAD_GEN_COUNTRIES = [
   { code: 'DE', label: 'Germany' }, { code: 'ES', label: 'Spain' },
   { code: 'FR', label: 'France' }, { code: 'AU', label: 'Australia' },
   { code: 'BR', label: 'Brazil' }, { code: 'IN', label: 'India' },
+  { code: 'AR', label: 'Argentina' }, { code: 'CL', label: 'Chile' },
+  { code: 'CO', label: 'Colombia' }, { code: 'PE', label: 'Peru' },
 ];
 const LEAD_GEN_EMP_RANGES = ['1-10', '11-50', '51-200', '201-500', '500+'];
 const LEAD_GEN_JOB_LEVELS = ['C-Level', 'VP', 'Director', 'Manager'];
@@ -4341,24 +4595,70 @@ const WorkspaceBadge = ({ workspace }) => {
   );
 };
 
+// Multi-value text-tag input used in filter panels
+const TagInput = ({ tags, onAdd, onRemove, placeholder = 'Type and press Enter' }) => {
+  const [input, setInput] = useState('');
+  const handleKeyDown = (e) => {
+    if ((e.key === 'Enter' || e.key === ',') && input.trim()) {
+      e.preventDefault();
+      const val = input.trim().replace(/,+$/, '');
+      if (val && !tags.includes(val)) onAdd(val);
+      setInput('');
+    }
+    if (e.key === 'Backspace' && !input && tags.length > 0) {
+      onRemove(tags[tags.length - 1]);
+    }
+  };
+  return (
+    <div className="tag-input-container">
+      {tags.map(t => (
+        <span key={t} className="tag-chip">
+          {t}
+          <button type="button" className="tag-chip-remove" onClick={() => onRemove(t)}><X size={10} /></button>
+        </span>
+      ))}
+      <input
+        className="tag-input-field"
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={tags.length === 0 ? placeholder : ''}
+      />
+    </div>
+  );
+};
+
 const LeadGenPage = () => {
   const { addToast } = useToast();
   const [activeTab, setActiveTab] = useState('search');
 
-  // --- Company Search state ---
-  const [searchKeywords, setSearchKeywords] = useState('');
-  const [searchIndustries, setSearchIndustries] = useState([]);
-  const [searchCountry, setSearchCountry] = useState('');
-  const [searchEmpRanges, setSearchEmpRanges] = useState([]);
-  const [searchFoundedAfter, setSearchFoundedAfter] = useState('');
-  const [searchMaxResults, setSearchMaxResults] = useState(25);
+  // --- Search filters ---
+  const [indInclude, setIndInclude] = useState([]);
+  const [indExclude, setIndExclude] = useState([]);
+  const [kwInclude, setKwInclude] = useState([]);
+  const [kwExclude, setKwExclude] = useState([]);
+  const [countries, setCountries] = useState([]);
+  const [states, setStates] = useState([]);
+  const [empRanges, setEmpRanges] = useState([]);
+  const [companyTypes, setCompanyTypes] = useState([]);
+  const [excludeDomains, setExcludeDomains] = useState('');
+  const [maxResults, setMaxResults] = useState(25);
+
+  // --- Search job state ---
   const [searchLoading, setSearchLoading] = useState(false);
   const [activeSearchJob, setActiveSearchJob] = useState(null);
   const [jobCompanies, setJobCompanies] = useState([]);
+  const [jobTotal, setJobTotal] = useState(0);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
   const [importLoading, setImportLoading] = useState(false);
-  const [jobs, setJobs] = useState([]);
-  const [jobsLoading, setJobsLoading] = useState(false);
+
+  // --- Two-stage pipeline: Stage 2 ---
+  const [findContactsJob, setFindContactsJob] = useState(null);
+  const [stagedContacts, setStagedContacts] = useState([]);
+  const [stagedTotal, setStagedTotal] = useState(0);
+  const [selectedStagedContacts, setSelectedStagedContacts] = useState([]);
+  const [approveLoading, setApproveLoading] = useState(false);
+  const [showContactsPreview, setShowContactsPreview] = useState(false);
 
   // --- Waterfall state ---
   const [waterfallUrl, setWaterfallUrl] = useState('');
@@ -4367,11 +4667,13 @@ const LeadGenPage = () => {
   const [waterfallLoading, setWaterfallLoading] = useState(false);
   const [waterfallResults, setWaterfallResults] = useState([]);
 
-  // --- Credits state ---
+  // --- Credits & Jobs state ---
   const [credits, setCredits] = useState(null);
   const [creditsLoading, setCreditsLoading] = useState(false);
+  const [jobs, setJobs] = useState([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
 
-  // Poll active job
+  // Poll active search job
   useEffect(() => {
     if (!activeSearchJob?.job_id || activeSearchJob?.status === 'completed' || activeSearchJob?.status === 'failed') return;
     const interval = setInterval(async () => {
@@ -4381,6 +4683,7 @@ const LeadGenPage = () => {
         setActiveSearchJob(prev => ({ ...prev, status: job.status, results_count: job.results_count, error: job.error }));
         if (job.status === 'completed') {
           setJobCompanies(data.companies || []);
+          setJobTotal(job.results_count || 0);
           setSelectedCompanies([]);
           addToast(`Found ${job.results_count} companies`, 'success');
         } else if (job.status === 'failed') {
@@ -4410,10 +4713,7 @@ const LeadGenPage = () => {
   };
 
   useEffect(() => {
-    if (activeTab === 'credits') {
-      fetchCredits();
-      fetchJobs();
-    }
+    if (activeTab === 'credits') { fetchCredits(); fetchJobs(); }
   }, [activeTab]);
 
   const handleSearch = async (e) => {
@@ -4421,23 +4721,18 @@ const LeadGenPage = () => {
     setSearchLoading(true);
     setJobCompanies([]);
     setSelectedCompanies([]);
+    setJobTotal(0);
     try {
-      const body = { max_results: searchMaxResults };
-      if (searchKeywords.trim()) {
-        body.keywords = { include: searchKeywords.split(',').map(k => k.trim()).filter(Boolean), exclude: [] };
-      }
-      if (searchIndustries.length > 0) {
-        body.industry = { include: searchIndustries };
-      }
-      if (searchCountry) {
-        body.hq = { country_code: [searchCountry], continent: [], city: [] };
-      }
-      if (searchEmpRanges.length > 0) {
-        body.employee_range = searchEmpRanges;
-      }
-      if (searchFoundedAfter) {
-        body.founded_year = { min: parseInt(searchFoundedAfter, 10), max: null };
-      }
+      const body = { max_results: maxResults };
+      if (indInclude.length > 0) body.industries_include = indInclude;
+      if (indExclude.length > 0) body.industries_exclude = indExclude;
+      if (kwInclude.length > 0) body.keywords_include = kwInclude;
+      if (kwExclude.length > 0) body.keywords_exclude = kwExclude;
+      if (countries.length > 0) body.countries = countries;
+      if (states.length > 0) body.states = states;
+      if (empRanges.length > 0) body.employee_range = empRanges;
+      if (companyTypes.length > 0) body.company_types = companyTypes;
+      if (excludeDomains.trim()) body.exclude_domains = excludeDomains.split(/[\n,]+/).map(d => d.trim()).filter(Boolean);
       const result = await api.post('/leadgen/companies/search', body);
       setActiveSearchJob({ job_id: result.job_id, status: 'running', results_count: 0 });
       addToast('Search started...', 'info');
@@ -4445,10 +4740,7 @@ const LeadGenPage = () => {
     setSearchLoading(false);
   };
 
-  const toggleCompany = (id) => {
-    setSelectedCompanies(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
-  };
-
+  const toggleCompany = (id) => setSelectedCompanies(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
   const toggleAllCompanies = () => {
     if (selectedCompanies.length === jobCompanies.length) setSelectedCompanies([]);
     else setSelectedCompanies(jobCompanies.map(c => c.id));
@@ -4459,14 +4751,73 @@ const LeadGenPage = () => {
     setImportLoading(true);
     try {
       const result = await api.post('/leadgen/companies/import', { company_ids: selectedCompanies });
-      addToast(`Import started (job ${result.job_id.slice(0, 8)}...)`, 'success');
+      addToast(`Import started (job ${result.job_id.slice(0, 8)}...) — check Credits & Jobs for progress`, 'success');
     } catch (e) { addToast(e.message, 'error'); }
     setImportLoading(false);
   };
 
-  const toggleWaterfallLevel = (level) => {
-    setWaterfallLevels(prev => prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]);
+  // Stage 2: Find contacts for selected companies (staging table)
+  const handleFindContacts = async () => {
+    if (selectedCompanies.length === 0) { addToast('Select at least one company first', 'error'); return; }
+    setImportLoading(true);
+    setStagedContacts([]);
+    setShowContactsPreview(false);
+    try {
+      const result = await api.post('/leadgen/companies/find-contacts', {
+        company_ids: selectedCompanies,
+        job_levels: ['C-Level', 'VP', 'Director', 'Manager'],
+        max_per_company: 5,
+      });
+      setFindContactsJob({ job_id: result.job_id, status: 'running', company_count: result.company_count });
+      addToast(`Finding contacts for ${result.company_count} companies...`, 'info');
+      // Poll until done
+      const poll = setInterval(async () => {
+        try {
+          const jobs = await api.get('/leadgen/jobs');
+          const job = (jobs.data || []).find(j => j.id === result.job_id);
+          if (job && (job.status === 'awaiting_approval' || job.status === 'completed' || job.status === 'failed')) {
+            clearInterval(poll);
+            if (job.status === 'failed') {
+              addToast('Contact search failed: ' + (job.error || 'Unknown'), 'error');
+            } else {
+              // Load preview
+              const preview = await api.get('/leadgen/contacts/preview?job_id=' + result.job_id);
+              setStagedContacts(preview.contacts || []);
+              setStagedTotal(preview.total || 0);
+              setSelectedStagedContacts((preview.contacts || []).map(c => c.id));
+              setShowContactsPreview(true);
+              addToast(`${preview.total} contacts ready for review`, 'success');
+            }
+            setFindContactsJob(prev => ({ ...prev, status: job.status }));
+          }
+        } catch (e) { clearInterval(poll); }
+      }, 3000);
+    } catch (e) { addToast(e.message, 'error'); }
+    setImportLoading(false);
   };
+
+  // Stage 3: Approve selected staged contacts → move to main contacts table
+  const handleApproveContacts = async () => {
+    if (selectedStagedContacts.length === 0) { addToast('Select contacts to approve', 'error'); return; }
+    setApproveLoading(true);
+    try {
+      const result = await api.post('/leadgen/contacts/approve', { contact_ids: selectedStagedContacts });
+      addToast(`✅ ${result.imported} contacts imported! ${result.skipped_duplicates} duplicates skipped.`, 'success');
+      setStagedContacts(prev => prev.filter(c => !selectedStagedContacts.includes(c.id)));
+      setSelectedStagedContacts([]);
+      if (stagedContacts.length - selectedStagedContacts.length === 0) setShowContactsPreview(false);
+    } catch (e) { addToast(e.message, 'error'); }
+    setApproveLoading(false);
+  };
+
+  const toggleStagedContact = (id) => setSelectedStagedContacts(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  const toggleAllStaged = () => {
+    const pending = stagedContacts.filter(c => c.status === 'pending').map(c => c.id);
+    if (selectedStagedContacts.length === pending.length) setSelectedStagedContacts([]);
+    else setSelectedStagedContacts(pending);
+  };
+
+  const toggleWaterfallLevel = (level) => setWaterfallLevels(prev => prev.includes(level) ? prev.filter(l => l !== level) : [...prev, level]);
 
   const handleWaterfall = async (e) => {
     e.preventDefault();
@@ -4484,6 +4835,10 @@ const LeadGenPage = () => {
     } catch (e) { addToast(e.message, 'error'); }
     setWaterfallLoading(false);
   };
+
+  const toggleEmpRange = (r) => setEmpRanges(prev => prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]);
+  const toggleType = (t) => setCompanyTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
+  const toggleCountry = (code) => setCountries(prev => prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]);
 
   return (
     <div className="page-container">
@@ -4509,108 +4864,144 @@ const LeadGenPage = () => {
         </button>
       </div>
 
-      {/* ---- Sub-tab 1: Company Search ---- */}
+      {/* ---- Sub-tab 1: Company Search — split layout ---- */}
       {activeTab === 'search' && (
         <div className="leadgen-search-layout">
-          <div className="leadgen-form-panel">
-            <div className="card">
-              <div className="card-header"><h3>Search Companies</h3></div>
-              <div className="card-body">
-                <form onSubmit={handleSearch}>
-                  <div className="form-group">
-                    <label>Keywords (comma-separated)</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. SaaS, software, cloud"
-                      value={searchKeywords}
-                      onChange={e => setSearchKeywords(e.target.value)}
-                    />
-                  </div>
 
-                  <div className="form-group">
-                    <label>Industries</label>
-                    <div className="checkbox-grid">
-                      {LEAD_GEN_INDUSTRIES.map(ind => (
-                        <label key={ind} className="checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={searchIndustries.includes(ind)}
-                            onChange={() => setSearchIndustries(prev =>
-                              prev.includes(ind) ? prev.filter(i => i !== ind) : [...prev, ind]
-                            )}
-                          />
-                          {ind}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Country (HQ)</label>
-                    <select value={searchCountry} onChange={e => setSearchCountry(e.target.value)}>
-                      <option value="">Any Country</option>
-                      {LEAD_GEN_COUNTRIES.map(c => (
-                        <option key={c.code} value={c.code}>{c.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Employee Range</label>
-                    <div className="checkbox-row">
-                      {LEAD_GEN_EMP_RANGES.map(r => (
-                        <label key={r} className="checkbox-label">
-                          <input
-                            type="checkbox"
-                            checked={searchEmpRanges.includes(r)}
-                            onChange={() => setSearchEmpRanges(prev =>
-                              prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]
-                            )}
-                          />
-                          {r}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Founded After (year)</label>
-                      <input
-                        type="number"
-                        placeholder="e.g. 2015"
-                        value={searchFoundedAfter}
-                        onChange={e => setSearchFoundedAfter(e.target.value)}
-                        min="1900"
-                        max="2025"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Max Results</label>
-                      <select value={searchMaxResults} onChange={e => setSearchMaxResults(parseInt(e.target.value, 10))}>
-                        <option value={10}>10</option>
-                        <option value={25}>25</option>
-                        <option value={50}>50</option>
-                        <option value={100}>100</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="credit-preview">
-                    <Zap size={14} /> Estimated cost: ~{searchMaxResults} credits
-                  </div>
-
-                  <button type="submit" className="btn btn-primary" disabled={searchLoading}>
-                    {searchLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
-                    Search Companies
-                  </button>
-                </form>
+          {/* Left: Filters panel */}
+          <form onSubmit={handleSearch} className="leadgen-form-panel">
+            <div className="leadgen-filters-card">
+              <div className="leadgen-filters-header">
+                <Filter size={15} /><span>Filters</span>
               </div>
-            </div>
-          </div>
 
+              <div className="filter-section">
+                <label className="filter-label">Industries — Include</label>
+                <TagInput
+                  tags={indInclude}
+                  onAdd={v => setIndInclude(p => [...p, v])}
+                  onRemove={v => setIndInclude(p => p.filter(x => x !== v))}
+                  placeholder="Type industry and press Enter"
+                />
+                <div className="filter-presets">
+                  {['Manufacturing','Construction','Retail','Healthcare','Financial Services','Software Development','Logistics & Supply Chain','Real Estate'].map(ind => (
+                    <button key={ind} type="button"
+                      className={`preset-chip ${indInclude.includes(ind) ? 'active' : ''}`}
+                      onClick={() => setIndInclude(p => p.includes(ind) ? p.filter(x => x !== ind) : [...p, ind])}
+                    >{ind}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Industries — Exclude</label>
+                <TagInput
+                  tags={indExclude}
+                  onAdd={v => setIndExclude(p => [...p, v])}
+                  onRemove={v => setIndExclude(p => p.filter(x => x !== v))}
+                  placeholder="e.g. SaaS, Franchise"
+                />
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Company Size</label>
+                <div className="filter-checkboxes">
+                  {LEAD_GEN_EMP_RANGES.map(r => (
+                    <label key={r} className="filter-check-label">
+                      <input type="checkbox" checked={empRanges.includes(r)} onChange={() => toggleEmpRange(r)} />
+                      {r} employees
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Company Type</label>
+                <div className="filter-checkboxes">
+                  {LEAD_GEN_COMPANY_TYPES.map(t => (
+                    <label key={t} className="filter-check-label">
+                      <input type="checkbox" checked={companyTypes.includes(t)} onChange={() => toggleType(t)} />
+                      {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Countries (HQ)</label>
+                <div className="filter-checkboxes filter-checkboxes-2col">
+                  {LEAD_GEN_COUNTRIES.map(c => (
+                    <label key={c.code} className="filter-check-label">
+                      <input type="checkbox" checked={countries.includes(c.code)} onChange={() => toggleCountry(c.code)} />
+                      {c.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">States / Cities</label>
+                <TagInput
+                  tags={states}
+                  onAdd={v => setStates(p => [...p, v])}
+                  onRemove={v => setStates(p => p.filter(x => x !== v))}
+                  placeholder="e.g. Texas, California"
+                />
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Description Keywords — Include</label>
+                <TagInput
+                  tags={kwInclude}
+                  onAdd={v => setKwInclude(p => [...p, v])}
+                  onRemove={v => setKwInclude(p => p.filter(x => x !== v))}
+                  placeholder="e.g. roofing, general contractor"
+                />
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Description Keywords — Exclude</label>
+                <TagInput
+                  tags={kwExclude}
+                  onAdd={v => setKwExclude(p => [...p, v])}
+                  onRemove={v => setKwExclude(p => p.filter(x => x !== v))}
+                  placeholder="e.g. franchise, SaaS"
+                />
+              </div>
+
+              <div className="filter-section">
+                <label className="filter-label">Exclude Domains (one per line)</label>
+                <textarea
+                  className="filter-textarea"
+                  rows={3}
+                  placeholder={"acme.com\nexample.org"}
+                  value={excludeDomains}
+                  onChange={e => setExcludeDomains(e.target.value)}
+                />
+              </div>
+
+              <div className="filter-section filter-section-row">
+                <div>
+                  <label className="filter-label">Max Results</label>
+                  <select className="filter-select" value={maxResults} onChange={e => setMaxResults(parseInt(e.target.value, 10))}>
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                </div>
+                <div className="credit-estimate"><Zap size={13} /> ~{maxResults} credits</div>
+              </div>
+
+              <button type="submit" className="btn btn-primary leadgen-search-btn" disabled={searchLoading}>
+                {searchLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
+                Search
+              </button>
+            </div>
+          </form>
+
+          {/* Right: Results panel */}
           <div className="leadgen-results-panel">
-            {/* Job progress widget */}
             {activeSearchJob && (activeSearchJob.status === 'running' || activeSearchJob.status === 'pending') && (
               <div className="leadgen-job-progress">
                 <Loader2 className="spin" size={16} />
@@ -4623,56 +5014,64 @@ const LeadGenPage = () => {
               </div>
             )}
 
+            {selectedCompanies.length > 0 && (
+              <div className="leadgen-bulk-bar">
+                <span>{selectedCompanies.length} {selectedCompanies.length === 1 ? 'company' : 'companies'} selected</span>
+                <button className="btn btn-primary btn-sm" disabled={importLoading} onClick={handleFindContacts}>
+                  {importLoading ? <Loader2 className="spin" size={14} /> : <Users size={14} />}
+                  {importLoading ? 'Finding contacts...' : `Find Contacts (${selectedCompanies.length})`}
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => setSelectedCompanies([])}>Clear</button>
+              </div>
+            )}
+
             {jobCompanies.length > 0 && (
-              <div className="card">
-                <div className="card-header">
-                  <h3>{jobCompanies.length} Companies Found</h3>
-                  <div className="card-actions">
-                    <button className="btn btn-secondary btn-sm" onClick={toggleAllCompanies}>
-                      {selectedCompanies.length === jobCompanies.length ? 'Deselect All' : 'Select All'}
-                    </button>
-                    <button
-                      className="btn btn-primary btn-sm"
-                      disabled={selectedCompanies.length === 0 || importLoading}
-                      onClick={handleImport}
-                    >
-                      {importLoading ? <Loader2 className="spin" size={14} /> : <UserPlus size={14} />}
-                      Import Selected ({selectedCompanies.length})
-                    </button>
-                  </div>
+              <div className="leadgen-results-table-wrap">
+                <div className="leadgen-results-header">
+                  <span className="results-count">Showing {jobCompanies.length} of {jobTotal} results</span>
+                  <label className="select-all-label">
+                    <input type="checkbox" checked={selectedCompanies.length === jobCompanies.length && jobCompanies.length > 0} onChange={toggleAllCompanies} />
+                    Select all
+                  </label>
                 </div>
                 <div className="table-container">
-                  <table className="data-table">
+                  <table className="data-table leadgen-table">
                     <thead>
                       <tr>
-                        <th><input type="checkbox" checked={selectedCompanies.length === jobCompanies.length && jobCompanies.length > 0} onChange={toggleAllCompanies} /></th>
-                        <th>Company</th>
-                        <th>Industry</th>
+                        <th style={{width:36}}>#</th>
+                        <th style={{width:36}}><input type="checkbox" checked={selectedCompanies.length === jobCompanies.length && jobCompanies.length > 0} onChange={toggleAllCompanies} /></th>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Primary Industry</th>
                         <th>Size</th>
+                        <th>Type</th>
+                        <th>Location</th>
                         <th>Country</th>
-                        <th>Domain</th>
-                        <th>Workspace</th>
+                        <th>LinkedIn</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {jobCompanies.map(c => (
-                        <tr key={c.id} className={selectedCompanies.includes(c.id) ? 'selected' : ''}>
-                          <td><input type="checkbox" checked={selectedCompanies.includes(c.id)} onChange={() => toggleCompany(c.id)} /></td>
+                      {jobCompanies.map((c, i) => (
+                        <tr key={c.id} className={selectedCompanies.includes(c.id) ? 'selected' : ''} onClick={() => toggleCompany(c.id)} style={{cursor:'pointer'}}>
+                          <td className="row-num">{i + 1}</td>
+                          <td onClick={e => e.stopPropagation()}><input type="checkbox" checked={selectedCompanies.includes(c.id)} onChange={() => toggleCompany(c.id)} /></td>
                           <td>
                             <div className="company-name-cell">
                               <strong>{c.name || '—'}</strong>
-                              {c.linkedin_url && (
-                                <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="link-icon" title="LinkedIn">
-                                  <ArrowRight size={12} />
-                                </a>
-                              )}
+                              {c.domain && <span className="company-domain">{c.domain}</span>}
                             </div>
                           </td>
+                          <td className="about-cell" title={c.about || ''}>{c.about ? c.about.slice(0, 90) + (c.about.length > 90 ? '…' : '') : '—'}</td>
                           <td>{c.industry || '—'}</td>
-                          <td>{c.size || '—'}</td>
+                          <td className="nowrap">{c.size || '—'}</td>
+                          <td>{c.type || '—'}</td>
+                          <td className="nowrap">{[c.hq_city, c.hq_country].filter(Boolean).join(', ') || '—'}</td>
                           <td>{c.hq_country || '—'}</td>
-                          <td>{c.domain || '—'}</td>
-                          <td><WorkspaceBadge workspace={c.workspace} /></td>
+                          <td onClick={e => e.stopPropagation()}>
+                            {c.linkedin_url
+                              ? <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer" className="link-text"><ArrowRight size={12} /> View</a>
+                              : '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -4685,9 +5084,81 @@ const LeadGenPage = () => {
               <div className="leadgen-empty-state">
                 <Building2 size={48} />
                 <h3>Search for Companies</h3>
-                <p>Use the form to find companies matching your ICP. Results will appear here.</p>
+                <p>Configure your filters and click Search. Results will appear here.</p>
+                <p className="empty-hint">BlitzAPI charges credits per search — not live.</p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ---- Contacts Preview Panel (Stage 2 result) ---- */}
+      {showContactsPreview && activeTab === 'search' && (
+        <div className="card" style={{marginTop: 24}}>
+          <div className="card-header" style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <Users size={18} style={{color:'var(--coral)'}} />
+              <h3 style={{margin:0}}>Contacts Preview — Review Before Importing</h3>
+              <span className="badge badge-info">{stagedContacts.filter(c=>c.status==='pending').length} pending</span>
+            </div>
+            <div style={{display:'flex', gap:8}}>
+              <button className="btn btn-secondary btn-sm" onClick={toggleAllStaged}>
+                {selectedStagedContacts.length === stagedContacts.filter(c=>c.status==='pending').length ? 'Deselect All' : 'Select All'}
+              </button>
+              <button className="btn btn-primary btn-sm" disabled={approveLoading || selectedStagedContacts.length === 0} onClick={handleApproveContacts}>
+                {approveLoading ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+                Approve &amp; Import ({selectedStagedContacts.length})
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowContactsPreview(false)}>
+                <X size={14} /> Dismiss
+              </button>
+            </div>
+          </div>
+          <div style={{padding:'0 16px 8px', fontSize:12, color:'var(--text-secondary)'}}>
+            Review these contacts before they enter your main contacts table. Uncheck anyone you want to skip.
+          </div>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th style={{width:36}}><input type="checkbox" checked={selectedStagedContacts.length === stagedContacts.filter(c=>c.status==='pending').length && stagedContacts.length > 0} onChange={toggleAllStaged} /></th>
+                  <th>Name</th>
+                  <th>Title</th>
+                  <th>Email</th>
+                  <th>Company</th>
+                  <th>Workspace</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stagedContacts.map(c => (
+                  <tr key={c.id} style={{opacity: c.status !== 'pending' ? 0.5 : 1}}>
+                    <td>
+                      {c.status === 'pending' && (
+                        <input type="checkbox" checked={selectedStagedContacts.includes(c.id)} onChange={() => toggleStagedContact(c.id)} />
+                      )}
+                    </td>
+                    <td><strong>{c.first_name} {c.last_name}</strong></td>
+                    <td style={{color:'var(--text-secondary)', fontSize:12}}>{c.title || '—'}</td>
+                    <td style={{fontSize:12}}>{c.email || <span style={{color:'var(--text-muted)'}}>No email</span>}</td>
+                    <td style={{fontSize:12}}>
+                      {c.company_name}
+                      {c.company_domain && <span style={{color:'var(--text-muted)'}}> ({c.company_domain})</span>}
+                    </td>
+                    <td>
+                      <span className={`workspace-badge workspace-${(c.workspace||'US').toLowerCase()}`}>
+                        {c.workspace === 'MX' ? '🇲🇽' : '🇺🇸'} {c.workspace || 'US'}
+                      </span>
+                    </td>
+                    <td>
+                      {c.status === 'approved' && <span style={{color:'var(--green)',fontSize:12}}>✅ Imported</span>}
+                      {c.status === 'rejected' && <span style={{color:'var(--text-muted)',fontSize:12}}>Skipped</span>}
+                      {c.status === 'pending' && <span style={{color:'var(--text-secondary)',fontSize:12}}>Pending</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -4935,15 +5406,542 @@ function App() {
   if (!user) return <ToastProvider><LoginPage onLogin={setUser} /></ToastProvider>;
 
   return (<ToastProvider><ImportJobProvider><div className="app"><Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} /><main className="main-content">
-    {page === 'dashboard' && <DashboardPage />}
+    {page === 'inbox' && <InboxPage setPage={setPage} />}
+    {page === 'pipeline' && <PipelinePage />}
     {page === 'contacts' && <ContactsPage />}
+    {page === 'campaigns' && <CampaignsPage />}
+    {page === 'templates' && <TemplatesPage />}
+    {page === 'reports' && <ReportsPage />}
+    {page === 'settings' && <SettingsPage />}
+    {/* Legacy routes still accessible */}
+    {page === 'dashboard' && <DashboardPage />}
     {page === 'duplicates' && <DuplicatesPage />}
     {page === 'enrichment' && <EnrichmentPage />}
     {page === 'leadgen' && <LeadGenPage />}
-    {page === 'campaigns' && <CampaignsPage />}
-    {page === 'templates' && <TemplatesPage />}
-    {page === 'settings' && <SettingsPage />}
   </main></div></ImportJobProvider></ToastProvider>);
 }
+
+
+// ============================================================
+// REPORTS PAGE — Pipeline health, campaign performance
+// ============================================================
+const ReportsPage = () => {
+  const { addToast } = useToast();
+  const [stats, setStats] = useState(null);
+  const [campaigns, setCampaigns] = useState([]);
+  const [learning, setLearning] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('overview');
+
+  useEffect(() => {
+    Promise.all([
+      api.get('/stats'),
+      api.get('/campaigns'),
+      api.get('/analytics/learning').catch(() => null),
+    ]).then(([s, c, l]) => {
+      setStats(s);
+      setCampaigns(c.data || []);
+      setLearning(l);
+      setLoading(false);
+    }).catch(e => { addToast(e.message, 'error'); setLoading(false); });
+  }, []);
+
+  if (loading) return <div style={{padding:40,textAlign:'center'}}><Loader2 className="spin" size={28} /></div>;
+
+  const totalSent = campaigns.reduce((a,c) => a+(c.emails_sent||0), 0);
+  const totalOpened = campaigns.reduce((a,c) => a+(c.emails_opened||0), 0);
+  const totalReplied = campaigns.reduce((a,c) => a+(c.emails_replied||0), 0);
+  const totalBounced = campaigns.reduce((a,c) => a+(c.emails_bounced||0), 0);
+  const openRate = totalSent > 0 ? ((totalOpened/totalSent)*100).toFixed(1) : 0;
+  const replyRate = totalSent > 0 ? ((totalReplied/totalSent)*100).toFixed(1) : 0;
+  const bounceRate = totalSent > 0 ? ((totalBounced/totalSent)*100).toFixed(1) : 0;
+
+  const Metric = ({label, value, sub, color}) => (
+    <div className="card" style={{padding:'20px 24px', flex:1, minWidth:160}}>
+      <div style={{fontSize:28, fontWeight:700, color:color||'var(--text-primary)'}}>{value}</div>
+      <div style={{fontWeight:600, fontSize:13, marginTop:4}}>{label}</div>
+      {sub && <div style={{fontSize:12, color:'var(--text-secondary)', marginTop:2}}>{sub}</div>}
+    </div>
+  );
+
+  const topCampaigns = [...campaigns]
+    .sort((a,b) => (b.emails_replied||0)-(a.emails_replied||0))
+    .slice(0,10);
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div className="page-title">
+          <TrendingUp size={24} style={{color:'var(--coral)'}} />
+          <div>
+            <h1>Reports</h1>
+            <p className="page-subtitle">Pipeline health and campaign performance</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{display:'flex', gap:4, marginBottom:20, borderBottom:'1px solid var(--border)', paddingBottom:0}}>
+        {[{id:'overview',label:'Overview'},{id:'campaigns',label:'Campaigns'},{id:'learning',label:"What's Working"}].map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            style={{padding:'8px 20px', border:'none', cursor:'pointer', fontWeight: activeTab===t.id ? 600 : 400,
+              borderBottom: activeTab===t.id ? '2px solid var(--coral)' : '2px solid transparent',
+              background:'transparent', color: activeTab===t.id ? 'var(--coral)' : 'var(--text-secondary)',
+              fontSize:14, transition:'all 0.15s'}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'overview' && (
+        <div style={{display:'flex', flexDirection:'column', gap:20}}>
+          {/* Contact pipeline */}
+          <div>
+            <h3 style={{fontSize:13, textTransform:'uppercase', letterSpacing:'0.05em', color:'var(--text-secondary)', marginBottom:12}}>Contact Pipeline</h3>
+            <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
+              <Metric label="Total Contacts" value={(stats?.total_contacts||0).toLocaleString()} />
+              <Metric label="Pushed to ReachInbox" value={(stats?.pushed_contacts||0).toLocaleString()} color="var(--coral)" />
+              <Metric label="HubSpot Synced" value={(stats?.hubspot_synced||0).toLocaleString()} color="#f59e0b" />
+              <Metric label="Duplicates" value={(stats?.duplicate_contacts||0).toLocaleString()} color="var(--text-secondary)" />
+            </div>
+          </div>
+
+          {/* Email stats */}
+          <div>
+            <h3 style={{fontSize:13, textTransform:'uppercase', letterSpacing:'0.05em', color:'var(--text-secondary)', marginBottom:12}}>Email Performance</h3>
+            <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
+              <Metric label="Emails Sent" value={totalSent.toLocaleString()} />
+              <Metric label="Open Rate" value={`${openRate}%`} sub={`${totalOpened.toLocaleString()} opened`} color={openRate>=30?'var(--green)':openRate>=20?'#f59e0b':'#ef4444'} />
+              <Metric label="Reply Rate" value={`${replyRate}%`} sub={`${totalReplied.toLocaleString()} replies`} color={replyRate>=5?'var(--green)':replyRate>=2?'#f59e0b':'#ef4444'} />
+              <Metric label="Bounce Rate" value={`${bounceRate}%`} sub={`${totalBounced.toLocaleString()} bounced`} color={bounceRate<3?'var(--green)':bounceRate<8?'#f59e0b':'#ef4444'} />
+            </div>
+          </div>
+
+          {/* Workspace split */}
+          <div>
+            <h3 style={{fontSize:13, textTransform:'uppercase', letterSpacing:'0.05em', color:'var(--text-secondary)', marginBottom:12}}>By Workspace</h3>
+            <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
+              <Metric label="🇺🇸 US Contacts" value={(stats?.us_contacts||0).toLocaleString()} />
+              <Metric label="🇲🇽 MX Contacts" value={(stats?.mx_contacts||0).toLocaleString()} />
+              <Metric label="US Campaigns" value={campaigns.filter(c=>c.country==='United States'||c.country==='US').length} />
+              <Metric label="MX Campaigns" value={campaigns.filter(c=>c.country==='Mexico'||c.country==='MX').length} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'campaigns' && (
+        <div className="card" style={{overflow:'hidden'}}>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Campaign</th>
+                  <th>Workspace</th>
+                  <th>Sent</th>
+                  <th>Open %</th>
+                  <th>Reply %</th>
+                  <th>Bounce %</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topCampaigns.map(c => {
+                  const sent = c.emails_sent||0;
+                  const oRate = sent>0?((c.emails_opened||0)/sent*100).toFixed(1):0;
+                  const rRate = sent>0?((c.emails_replied||0)/sent*100).toFixed(1):0;
+                  const bRate = sent>0?((c.emails_bounced||0)/sent*100).toFixed(1):0;
+                  return (
+                    <tr key={c.id}>
+                      <td><strong>{c.name}</strong></td>
+                      <td>
+                        <span className={`workspace-badge workspace-${(c.country==='Mexico'||c.country==='MX')?'mx':'us'}`}>
+                          {(c.country==='Mexico'||c.country==='MX')?'🇲🇽 MX':'🇺🇸 US'}
+                        </span>
+                      </td>
+                      <td>{sent.toLocaleString()}</td>
+                      <td style={{color:oRate>=30?'var(--green)':oRate>=20?'#f59e0b':'inherit'}}>{oRate}%</td>
+                      <td style={{color:rRate>=5?'var(--green)':rRate>=2?'#f59e0b':'inherit'}}>{rRate}%</td>
+                      <td style={{color:bRate<3?'var(--green)':bRate<8?'#f59e0b':'#ef4444'}}>{bRate}%</td>
+                      <td>
+                        <span style={{fontSize:11, padding:'2px 8px', borderRadius:10,
+                          background:c.status==='Active'?'#dcfce7':c.status==='Paused'?'#fef9c3':'#f3f4f6',
+                          color:c.status==='Active'?'#166534':c.status==='Paused'?'#854d0e':'#6b7280', fontWeight:600}}>
+                          {c.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {topCampaigns.length === 0 && (
+                  <tr><td colSpan={7} style={{textAlign:'center', color:'var(--text-secondary)', padding:32}}>No campaigns yet</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'learning' && (
+        <div>
+          {!learning ? (
+            <div className="card" style={{padding:40, textAlign:'center', color:'var(--text-secondary)'}}>
+              <TrendingUp size={40} style={{marginBottom:16, opacity:0.3}} />
+              <h3>Not enough data yet</h3>
+              <p>Learning insights appear after your campaigns have enough send data.</p>
+            </div>
+          ) : (
+            <div style={{display:'flex', flexDirection:'column', gap:16}}>
+              {learning.best_performing_templates?.length > 0 && (
+                <div className="card" style={{padding:20}}>
+                  <h3 style={{marginBottom:12}}>🏆 Top Templates</h3>
+                  {learning.best_performing_templates.map((t,i) => (
+                    <div key={i} style={{display:'flex', justifyContent:'space-between', padding:'8px 0',
+                      borderBottom:'1px solid var(--border)'}}>
+                      <span>{t.template_name || `Template ${t.template_id}`}</span>
+                      <span style={{color:'var(--green)', fontWeight:600}}>{t.reply_rate}% reply</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {learning.subject_line_patterns && (
+                <div className="card" style={{padding:20}}>
+                  <h3 style={{marginBottom:12}}>💡 Subject Line Patterns</h3>
+                  <p style={{color:'var(--text-secondary)', fontSize:13}}>{learning.subject_line_patterns}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// ============================================================
+// INBOX PAGE — What needs your attention
+// ============================================================
+const InboxPage = ({ setPage }) => {
+  const { addToast } = useToast();
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { fetchJobs(); }, []);
+
+  const fetchJobs = async () => {
+    setLoading(true);
+    try {
+      const data = await api.get('/leadgen/jobs');
+      setJobs((data.data || []).filter(j => j.status === 'awaiting_approval' || j.status === 'failed'));
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const pendingJobs = jobs.filter(j => j.status === 'awaiting_approval');
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div className="page-title">
+          <MessageCircle size={24} style={{color:'var(--coral)'}} />
+          <div>
+            <h1>Inbox</h1>
+            <p className="page-subtitle">What needs your attention</p>
+          </div>
+        </div>
+      </div>
+
+      {loading ? <div style={{textAlign:'center',padding:40}}><Loader2 className="spin" size={24} /></div> : (
+        <>
+          {pendingJobs.length === 0 ? (
+            <div className="card" style={{textAlign:'center', padding:60}}>
+              <CheckCircle size={48} style={{color:'var(--green)',marginBottom:16}} />
+              <h3>All clear</h3>
+              <p style={{color:'var(--text-secondary)'}}>No pending approvals. Hermes is working on it.</p>
+              <button className="btn btn-primary" style={{marginTop:16}} onClick={() => setPage('pipeline')}>
+                View Pipeline
+              </button>
+            </div>
+          ) : (
+            <div style={{display:'flex', flexDirection:'column', gap:12}}>
+              {pendingJobs.map(job => {
+                const params = (() => { try { return JSON.parse(job.parameters || '{}'); } catch { return {}; } })();
+                return (
+                  <div key={job.id} className="card" style={{borderLeft:'3px solid var(--coral)'}}>
+                    <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 20px'}}>
+                      <div style={{display:'flex', alignItems:'center', gap:12}}>
+                        <Target size={20} style={{color:'var(--coral)'}} />
+                        <div>
+                          <div style={{fontWeight:600, fontSize:15}}>
+                            {params.label || params.vertical || job.job_type} — {job.results_count} contacts ready
+                          </div>
+                          <div style={{fontSize:12, color:'var(--text-secondary)', marginTop:2}}>
+                            {new Date(job.created_at).toLocaleString()} · {job.workspace || 'US'}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{display:'flex', gap:8}}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setPage('pipeline')}>
+                          Review
+                        </button>
+                        <ApproveJobButton jobId={job.id} count={job.results_count} onDone={fetchJobs} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+const ApproveJobButton = ({ jobId, count, onDone }) => {
+  const { addToast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const handleApprove = async () => {
+    setLoading(true);
+    try {
+      const result = await api.post('/leadgen/contacts/approve', { job_id: jobId });
+      addToast(`✅ ${result.imported} contacts imported! ${result.skipped_duplicates} duplicates skipped.`, 'success');
+      onDone();
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+  return (
+    <button className="btn btn-primary btn-sm" disabled={loading} onClick={handleApprove}>
+      {loading ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+      Approve All ({count})
+    </button>
+  );
+};
+
+// ============================================================
+// PIPELINE PAGE — All runs, companies, staged contacts
+// ============================================================
+const PipelinePage = () => {
+  const { addToast } = useToast();
+  const [jobs, setJobs] = useState([]);
+  const [selectedJob, setSelectedJob] = useState(null);
+  const [jobDetail, setJobDetail] = useState(null);
+  const [stagedContacts, setStagedContacts] = useState([]);
+  const [selectedContacts, setSelectedContacts] = useState([]);
+  const [activeTab, setActiveTab] = useState('runs');
+  const [loading, setLoading] = useState(true);
+  const [approveLoading, setApproveLoading] = useState(false);
+
+  useEffect(() => { fetchJobs(); }, []);
+
+  const fetchJobs = async () => {
+    setLoading(true);
+    try {
+      const data = await api.get('/leadgen/jobs');
+      setJobs(data.data || []);
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const selectJob = async (job) => {
+    setSelectedJob(job);
+    setActiveTab('companies');
+    try {
+      const detail = await api.get(`/leadgen/jobs/${job.id}`);
+      setJobDetail(detail);
+      const preview = await api.get(`/leadgen/contacts/preview?job_id=${job.id}`);
+      setStagedContacts(preview.contacts || []);
+      setSelectedContacts((preview.contacts || []).filter(c => c.status === 'pending').map(c => c.id));
+    } catch (e) { addToast(e.message, 'error'); }
+  };
+
+  const handleApprove = async () => {
+    if (selectedContacts.length === 0) return;
+    setApproveLoading(true);
+    try {
+      const result = await api.post('/leadgen/contacts/approve', { contact_ids: selectedContacts });
+      addToast(`✅ ${result.imported} imported, ${result.skipped_duplicates} dupes skipped`, 'success');
+      const preview = await api.get(`/leadgen/contacts/preview?job_id=${selectedJob.id}`);
+      setStagedContacts(preview.contacts || []);
+      setSelectedContacts([]);
+      fetchJobs();
+    } catch (e) { addToast(e.message, 'error'); }
+    setApproveLoading(false);
+  };
+
+  const pendingContacts = stagedContacts.filter(c => c.status === 'pending');
+
+  const statusBadge = (status) => {
+    const colors = {
+      'awaiting_approval': 'var(--coral)',
+      'completed': 'var(--green)',
+      'running': 'var(--blue, #3b82f6)',
+      'failed': '#ef4444',
+      'pending': 'var(--text-secondary)',
+      'bulk_run': 'var(--coral)',
+    };
+    return <span style={{fontSize:11, fontWeight:600, color: colors[status] || 'var(--text-secondary)',
+      background: `${colors[status] || '#888'}20`, padding:'2px 8px', borderRadius:10}}>
+      {status?.replace('_', ' ').toUpperCase()}
+    </span>;
+  };
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <div className="page-title">
+          <Target size={24} style={{color:'var(--coral)'}} />
+          <div>
+            <h1>Pipeline</h1>
+            <p className="page-subtitle">All enrichment runs — companies found, contacts staged, approvals</p>
+          </div>
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={fetchJobs}>
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns: selectedJob ? '340px 1fr' : '1fr', gap:16}}>
+        {/* Runs list */}
+        <div className="card" style={{overflow:'hidden'}}>
+          <div style={{padding:'12px 16px', borderBottom:'1px solid var(--border)', fontWeight:600, fontSize:13}}>
+            Runs ({jobs.length})
+          </div>
+          {loading ? <div style={{padding:24,textAlign:'center'}}><Loader2 className="spin" size={20} /></div> : (
+            <div style={{maxHeight:600, overflowY:'auto'}}>
+              {jobs.length === 0 ? (
+                <div style={{padding:32, textAlign:'center', color:'var(--text-secondary)', fontSize:13}}>
+                  No runs yet. Hermes will start one soon.
+                </div>
+              ) : jobs.map(job => {
+                const params = (() => { try { return JSON.parse(job.parameters || '{}'); } catch { return {}; } })();
+                const isSelected = selectedJob?.id === job.id;
+                return (
+                  <div key={job.id} onClick={() => selectJob(job)}
+                    style={{padding:'12px 16px', cursor:'pointer', borderBottom:'1px solid var(--border)',
+                      background: isSelected ? 'var(--bg-secondary)' : 'transparent',
+                      borderLeft: isSelected ? '3px solid var(--coral)' : '3px solid transparent'}}>
+                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start'}}>
+                      <div style={{fontWeight:500, fontSize:13}}>
+                        {params.label || params.vertical || job.job_type}
+                      </div>
+                      {statusBadge(job.status)}
+                    </div>
+                    <div style={{fontSize:11, color:'var(--text-secondary)', marginTop:4}}>
+                      {job.results_count > 0 && <span>{job.results_count} contacts · </span>}
+                      {new Date(job.created_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Job detail */}
+        {selectedJob && (
+          <div style={{display:'flex', flexDirection:'column', gap:12}}>
+            {/* Tabs */}
+            <div style={{display:'flex', gap:8}}>
+              {['companies', 'contacts'].map(t => (
+                <button key={t} onClick={() => setActiveTab(t)}
+                  className={`btn btn-sm ${activeTab === t ? 'btn-primary' : 'btn-secondary'}`}>
+                  {t === 'companies' ? `Companies (${jobDetail?.companies?.length || 0})` : `Contacts (${stagedContacts.length})`}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'companies' && (
+              <div className="card" style={{overflow:'hidden'}}>
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th><th>Industry</th><th>Size</th><th>Country</th><th>Domain</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(jobDetail?.companies || []).map(c => (
+                        <tr key={c.id}>
+                          <td><strong>{c.name}</strong></td>
+                          <td style={{fontSize:12, color:'var(--text-secondary)'}}>{c.industry}</td>
+                          <td style={{fontSize:12}}>{c.size}</td>
+                          <td><span className={`workspace-badge workspace-${(c.workspace||'US').toLowerCase()}`}>{c.workspace==='MX'?'🇲🇽':'🇺🇸'} {c.workspace||'US'}</span></td>
+                          <td style={{fontSize:12}}>{c.domain}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'contacts' && (
+              <div className="card" style={{overflow:'hidden'}}>
+                {pendingContacts.length > 0 && (
+                  <div style={{padding:'12px 16px', borderBottom:'1px solid var(--border)',
+                    display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                    <span style={{fontSize:13}}>{selectedContacts.length} of {pendingContacts.length} pending selected</span>
+                    <div style={{display:'flex', gap:8}}>
+                      <button className="btn btn-secondary btn-sm"
+                        onClick={() => setSelectedContacts(selectedContacts.length === pendingContacts.length ? [] : pendingContacts.map(c=>c.id))}>
+                        {selectedContacts.length === pendingContacts.length ? 'Deselect All' : 'Select All'}
+                      </button>
+                      <button className="btn btn-primary btn-sm" disabled={approveLoading || selectedContacts.length === 0} onClick={handleApprove}>
+                        {approveLoading ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+                        Approve &amp; Import ({selectedContacts.length})
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th style={{width:36}}></th>
+                        <th>Name</th><th>Title</th><th>ICP Tier</th><th>Email</th><th>Company</th><th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stagedContacts.map(c => (
+                        <tr key={c.id} style={{opacity: c.status !== 'pending' ? 0.5 : 1}}>
+                          <td>
+                            {c.status === 'pending' && (
+                              <input type="checkbox" checked={selectedContacts.includes(c.id)}
+                                onChange={() => setSelectedContacts(prev => prev.includes(c.id) ? prev.filter(x=>x!==c.id) : [...prev, c.id])} />
+                            )}
+                          </td>
+                          <td><strong>{c.first_name} {c.last_name}</strong></td>
+                          <td style={{fontSize:12, color:'var(--text-secondary)'}}>{c.title || '—'}</td>
+                          <td>
+                            {c.icp_tier && (
+                              <span style={{fontSize:11, fontWeight:600, padding:'2px 6px', borderRadius:8,
+                                background: c.icp_tier===1?'#dcfce7':c.icp_tier===2?'#fef9c3':'#f3f4f6',
+                                color: c.icp_tier===1?'#166534':c.icp_tier===2?'#854d0e':'#374151'}}>
+                                T{c.icp_tier} {c.icp_tier===1?'Owner':c.icp_tier===2?'GM':'Ops'}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{fontSize:12}}>{c.email || <span style={{color:'var(--text-muted)'}}>No email</span>}</td>
+                          <td style={{fontSize:12}}>{c.company_name}</td>
+                          <td>
+                            {c.status==='approved'&&<span style={{color:'var(--green)',fontSize:12}}>✅ Imported</span>}
+                            {c.status==='rejected'&&<span style={{color:'var(--text-muted)',fontSize:12}}>Skipped</span>}
+                            {c.status==='pending'&&<span style={{color:'var(--text-secondary)',fontSize:12}}>Pending</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export default App;

@@ -160,10 +160,28 @@ def init_db():
         title TEXT, headline TEXT, company TEXT, seniority TEXT, first_phone TEXT, corporate_phone TEXT,
         employees INTEGER, employee_bucket TEXT, industry TEXT, keywords TEXT,
         person_linkedin_url TEXT, website TEXT, domain TEXT, company_linkedin_url TEXT,
-        company_city TEXT, company_state TEXT, company_country TEXT, region TEXT,
+        city TEXT, state TEXT, country TEXT,
+        company_city TEXT, company_state TEXT, company_country TEXT,
+        company_street_address TEXT, company_postal_code TEXT,
+        annual_revenue INTEGER, annual_revenue_text TEXT,
+        company_description TEXT, company_seo_description TEXT, company_founded_year INTEGER,
+        region TEXT,
         country_strategy TEXT,
+        reachinbox_workspace TEXT,
+        reachinbox_lead_id TEXT, reachinbox_pushed_at TIMESTAMP,
+        reachinbox_campaign_id INTEGER,
+        pipeline_stage TEXT DEFAULT 'new',
+        enrichment_source TEXT,
+        hubspot_queued BOOLEAN DEFAULT 0, hubspot_synced_at TIMESTAMP,
+        hubspot_contact_id TEXT, hubspot_deal_id TEXT,
+        icp_tier INTEGER,
+        blitz_company_linkedin TEXT, blitz_person_linkedin TEXT, blitz_enriched_at TIMESTAMP,
         outreach_lists TEXT, campaigns_assigned TEXT, status TEXT DEFAULT 'Lead',
-        email_status TEXT DEFAULT 'Unknown', times_contacted INTEGER DEFAULT 0,
+        email_status TEXT DEFAULT 'Unknown',
+        email_verified_at TIMESTAMP, email_verification_event TEXT,
+        email_is_disposable BOOLEAN, email_is_free_service BOOLEAN,
+        email_is_role_account BOOLEAN, email_suggested TEXT,
+        times_contacted INTEGER DEFAULT 0,
         last_contacted_at TIMESTAMP, opportunities INTEGER DEFAULT 0, meetings_booked INTEGER DEFAULT 0,
         notes TEXT, source_file TEXT, is_duplicate BOOLEAN DEFAULT 0, duplicate_of INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
@@ -274,6 +292,84 @@ def init_db():
     try:
         cur.execute("ALTER TABLE contacts ADD COLUMN email_suggested TEXT")
     except: pass
+
+    # Lead Gen tables (pipeline-two-stage)
+    cur.execute("""CREATE TABLE IF NOT EXISTS lead_gen_jobs (
+        id TEXT PRIMARY KEY,
+        job_type TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        parameters TEXT,
+        workspace TEXT DEFAULT 'US',
+        results_count INTEGER DEFAULT 0,
+        error TEXT,
+        approval_status TEXT DEFAULT 'pending',
+        approved_at TIMESTAMP,
+        approved_by INTEGER,
+        completed_at TIMESTAMP,
+        created_by INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+    cur.execute("""CREATE TABLE IF NOT EXISTS lead_gen_companies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT REFERENCES lead_gen_jobs(id) ON DELETE CASCADE,
+        linkedin_url TEXT,
+        linkedin_id TEXT,
+        name TEXT,
+        about TEXT,
+        industry TEXT,
+        type TEXT,
+        size TEXT,
+        employees_on_linkedin INTEGER,
+        followers INTEGER,
+        founded_year INTEGER,
+        domain TEXT,
+        hq_country TEXT,
+        hq_city TEXT,
+        hq_continent TEXT,
+        raw_data TEXT,
+        workspace TEXT DEFAULT 'US',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+    cur.execute("""CREATE TABLE IF NOT EXISTS lead_gen_contacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT REFERENCES lead_gen_jobs(id) ON DELETE CASCADE,
+        company_id INTEGER REFERENCES lead_gen_companies(id) ON DELETE SET NULL,
+        first_name TEXT,
+        last_name TEXT,
+        email TEXT,
+        title TEXT,
+        linkedin_url TEXT,
+        company_name TEXT,
+        company_domain TEXT,
+        workspace TEXT DEFAULT 'US',
+        icp_tier INTEGER,
+        blitz_company_linkedin TEXT,
+        blitz_person_linkedin TEXT,
+        blitz_enriched_at TIMESTAMP,
+        status TEXT DEFAULT 'pending',
+        contact_id INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+
+    # BlitzAPI enrichment fields on contacts
+    for col, coltype in [
+        ('icp_tier', 'INTEGER'),
+        ('blitz_company_linkedin', 'TEXT'),
+        ('blitz_person_linkedin', 'TEXT'),
+        ('blitz_enriched_at', 'TIMESTAMP'),
+        ('pipeline_stage', 'TEXT'),
+        ('enrichment_source', 'TEXT'),
+        ('reachinbox_workspace', 'TEXT'),
+        ('reachinbox_lead_id', 'TEXT'),
+        ('reachinbox_pushed_at', 'TIMESTAMP'),
+        ('reachinbox_campaign_id', 'INTEGER'),
+        ('hubspot_queued', 'BOOLEAN'),
+        ('hubspot_synced_at', 'TIMESTAMP'),
+        ('hubspot_contact_id', 'TEXT'),
+        ('hubspot_deal_id', 'TEXT'),
+    ]:
+        try:
+            cur.execute(f"ALTER TABLE contacts ADD COLUMN {col} {coltype}")
+        except: pass
 
     # Create default admin user
     import hashlib

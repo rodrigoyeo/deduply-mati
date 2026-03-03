@@ -6653,3 +6653,200 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 
 /* btn-sm utility */
 .btn-sm { font-size: 13px; padding: 5px 10px; }
+
+/* ============================================================
+   Lead Gen — Redesigned Filter Panel + Results Table
+   ============================================================ */
+
+/* Left filters panel */
+.leadgen-filters-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  position: sticky;
+  top: 16px;
+}
+.leadgen-filters-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.filter-section {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-light);
+}
+.filter-section:last-child { border-bottom: none; }
+.filter-section-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.filter-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+.filter-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.filter-checkboxes-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.filter-check-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.filter-check-label input[type="checkbox"] { margin: 0; }
+.filter-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.preset-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.preset-chip:hover { border-color: var(--coral); color: var(--coral); }
+.preset-chip.active { background: var(--coral); color: #fff; border-color: var(--coral); }
+.filter-textarea {
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-1);
+  resize: vertical;
+  font-family: monospace;
+}
+.filter-select {
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-1);
+}
+.credit-estimate {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.leadgen-search-btn {
+  width: 100%;
+  margin-top: 4px;
+  justify-content: center;
+}
+
+/* TagInput component */
+.tag-input-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  cursor: text;
+}
+.tag-input-container:focus-within { border-color: var(--navy); }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px 2px 8px;
+  border-radius: 12px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.tag-chip-remove {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: rgba(255,255,255,0.7);
+  display: flex;
+  align-items: center;
+  line-height: 1;
+}
+.tag-chip-remove:hover { color: #fff; }
+.tag-input-field {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-1);
+  min-width: 100px;
+  flex: 1;
+}
+
+/* Results area */
+.leadgen-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--navy);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.leadgen-bulk-bar .btn { flex-shrink: 0; }
+.leadgen-results-table-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.leadgen-results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.results-count { font-size: 13px; color: var(--text-2); font-weight: 500; }
+.select-all-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+
+/* Leadgen table specific */
+.leadgen-table { font-size: 12px; }
+.leadgen-table .about-cell { max-width: 200px; color: var(--text-3); font-size: 11px; }
+.leadgen-table .company-domain { display: block; font-size: 10px; color: var(--text-3); }
+.leadgen-table .row-num { color: var(--text-3); font-size: 11px; text-align: center; }
+.leadgen-table .nowrap { white-space: nowrap; }
+.leadgen-table tr:hover { background: var(--bg-hover); }
+.leadgen-table tr.selected { background: var(--bg-selected, rgba(37,99,235,0.07)); }

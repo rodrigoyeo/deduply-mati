@@ -1,6 +1,7 @@
 """
-Analytics router — /api/stats/*, /api/cleaning/*
+Analytics router — /api/stats/*, /api/analytics/*, /api/cleaning/*
 """
+import json
 from datetime import datetime
 from typing import List
 
@@ -59,6 +60,23 @@ def get_stats():
             "SELECT name, contact_count FROM outreach_lists ORDER BY contact_count DESC LIMIT 10"
         )
     ]
+    # Workspace breakdown
+    try:
+        stats['us_contacts'] = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE reachinbox_workspace='US' OR country_strategy NOT IN ('Mexico') OR country_strategy IS NULL"
+        ).fetchone()[0]
+        stats['mx_contacts'] = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE reachinbox_workspace='MX' OR country_strategy='Mexico'"
+        ).fetchone()[0]
+        stats['pushed_contacts'] = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE reachinbox_lead_id IS NOT NULL AND reachinbox_lead_id != ''"
+        ).fetchone()[0]
+        stats['hubspot_synced'] = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE hubspot_contact_id IS NOT NULL AND hubspot_contact_id != ''"
+        ).fetchone()[0]
+        stats['duplicate_contacts'] = stats['duplicates']
+    except Exception:
+        pass
     conn.close()
     return stats
 
@@ -460,3 +478,214 @@ def apply_all_title_cleaning(limit: int = 10000):
     conn.commit()
     conn.close()
     return {"updated": updated, "message": f"Cleaned {updated} titles"}
+
+
+# ==================== LEARNING LOOP ====================
+
+_DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+
+@router.get("/api/analytics/learning")
+def get_learning_analytics():
+    """
+    Learning loop insights:
+    - Top 5 templates by reply_rate per workspace (US + MX separately)
+    - Best days to send (grouped by day-of-week from webhook_events replies)
+    - Reply-to-interested conversion rate
+    - Avg steps to first reply
+    """
+    conn = get_db()
+
+    # --- Top templates per workspace ---
+    rows = conn.execute("""
+        SELECT et.id, et.name, et.variant, et.step_type,
+               COALESCE(c.market, 'US') AS workspace,
+               SUM(tc.times_sent)    AS sends,
+               SUM(tc.times_replied) AS replies
+        FROM template_campaigns tc
+        JOIN campaigns c ON tc.campaign_id = c.id
+        JOIN email_templates et ON tc.template_id = et.id
+        GROUP BY et.id, et.name, et.variant, et.step_type, c.market
+        HAVING SUM(tc.times_sent) >= 5
+        ORDER BY replies DESC
+    """).fetchall()
+
+    workspace_templates: dict = {"US": [], "MX": []}
+    for r in rows:
+        sends = r[5] or 0
+        replies = r[6] or 0
+        rr = round(100.0 * replies / sends, 1) if sends > 0 else 0
+        ws = (r[4] or "US").upper()
+        if ws not in workspace_templates:
+            workspace_templates[ws] = []
+        workspace_templates[ws].append({
+            "id": r[0], "name": r[1], "variant": r[2], "step_type": r[3],
+            "workspace": ws, "sends": sends, "replies": replies, "reply_rate": rr
+        })
+    for ws in workspace_templates:
+        workspace_templates[ws].sort(key=lambda x: x["reply_rate"], reverse=True)
+        workspace_templates[ws] = workspace_templates[ws][:5]
+
+    # --- Best days to send (from webhook_events replies) ---
+    if USE_POSTGRES:
+        day_rows = conn.execute("""
+            SELECT EXTRACT(DOW FROM created_at)::int AS dow, COUNT(*) AS cnt
+            FROM webhook_events
+            WHERE event_type = 'replied'
+            GROUP BY dow ORDER BY dow
+        """).fetchall()
+    else:
+        day_rows = conn.execute("""
+            SELECT CAST(strftime('%w', created_at) AS INTEGER) AS dow, COUNT(*) AS cnt
+            FROM webhook_events
+            WHERE event_type = 'replied'
+            GROUP BY dow ORDER BY dow
+        """).fetchall()
+
+    total_reply_events = sum(r[1] for r in day_rows) or 1
+    best_days = [
+        {"day": _DAY_NAMES[int(r[0])], "replies": r[1],
+         "pct": round(100.0 * r[1] / total_reply_events, 1)}
+        for r in day_rows
+    ]
+    best_days.sort(key=lambda x: x["replies"], reverse=True)
+
+    # --- Reply-to-interested conversion ---
+    reply_count = conn.execute(
+        "SELECT COUNT(*) FROM webhook_events WHERE event_type='replied'"
+    ).fetchone()[0] or 0
+    interested_count = conn.execute(
+        "SELECT COUNT(*) FROM webhook_events WHERE event_type='lead_interested'"
+    ).fetchone()[0] or 0
+    reply_to_interested = round(100.0 * interested_count / reply_count, 1) if reply_count > 0 else 0
+
+    # --- Avg steps to first reply (parsed from payload JSON) ---
+    payload_rows = conn.execute(
+        "SELECT payload FROM webhook_events WHERE event_type='replied' AND payload IS NOT NULL"
+    ).fetchall()
+    step_numbers = []
+    for row in payload_rows:
+        try:
+            p = json.loads(row[0]) if isinstance(row[0], str) else (row[0] or {})
+            sn = p.get("step_number") or p.get("step_id")
+            if sn is not None and str(sn).isdigit():
+                step_numbers.append(int(sn))
+        except Exception:
+            pass
+    avg_steps = round(sum(step_numbers) / len(step_numbers), 1) if step_numbers else None
+
+    conn.close()
+    return {
+        "top_templates": workspace_templates,
+        "best_days": best_days,
+        "reply_to_interested_rate": reply_to_interested,
+        "avg_steps_to_reply": avg_steps,
+        "total_replies": reply_count,
+        "total_interested": interested_count,
+    }
+
+
+@router.get("/api/analytics/ab-winners")
+def get_ab_winners():
+    """
+    For each campaign compare template variants A vs B.
+    Winner = variant with higher reply_rate AND at least 20 sends.
+    """
+    conn = get_db()
+
+    rows = conn.execute("""
+        SELECT c.id AS campaign_id, c.name AS campaign_name, et.variant,
+               SUM(tc.times_sent)    AS sends,
+               SUM(tc.times_replied) AS replies
+        FROM template_campaigns tc
+        JOIN campaigns c ON tc.campaign_id = c.id
+        JOIN email_templates et ON tc.template_id = et.id
+        WHERE et.variant IN ('A', 'B')
+        GROUP BY c.id, c.name, et.variant
+        ORDER BY c.name, et.variant
+    """).fetchall()
+
+    # Group by campaign
+    campaigns: dict = {}
+    for r in rows:
+        cid = r[0]
+        if cid not in campaigns:
+            campaigns[cid] = {"campaign_id": cid, "campaign_name": r[1], "variants": {}}
+        sends = r[3] or 0
+        replies = r[4] or 0
+        rr = round(100.0 * replies / sends, 1) if sends > 0 else 0
+        campaigns[cid]["variants"][r[2]] = {"sends": sends, "replies": replies, "reply_rate": rr}
+
+    winners = []
+    for cid, camp in campaigns.items():
+        a = camp["variants"].get("A")
+        b = camp["variants"].get("B")
+        if not a or not b:
+            continue
+        if a["sends"] < 20 and b["sends"] < 20:
+            continue
+        if a["reply_rate"] == b["reply_rate"]:
+            continue
+        winner_v, loser_v = ("A", "B") if a["reply_rate"] > b["reply_rate"] else ("B", "A")
+        winner, loser = camp["variants"][winner_v], camp["variants"][loser_v]
+        winners.append({
+            "campaign_id": cid,
+            "campaign_name": camp["campaign_name"],
+            "winner_variant": winner_v,
+            "winner_reply_rate": winner["reply_rate"],
+            "winner_sends": winner["sends"],
+            "loser_variant": loser_v,
+            "loser_reply_rate": loser["reply_rate"],
+            "loser_sends": loser["sends"],
+        })
+
+    conn.close()
+    winners.sort(key=lambda x: x["winner_reply_rate"] - x["loser_reply_rate"], reverse=True)
+    return {"winners": winners}
+
+
+@router.get("/api/analytics/workspace-compare")
+def get_workspace_compare():
+    """US vs MX side-by-side: sent, open_rate, reply_rate, interested_count, meetings_booked."""
+    conn = get_db()
+
+    camp_rows = conn.execute("""
+        SELECT COALESCE(market, 'US') AS workspace,
+               COUNT(*)               AS campaign_count,
+               COALESCE(SUM(emails_sent), 0)     AS sent,
+               COALESCE(SUM(emails_opened), 0)   AS opened,
+               COALESCE(SUM(emails_replied), 0)  AS replied,
+               COALESCE(SUM(opportunities), 0)   AS interested,
+               COALESCE(SUM(meetings_booked), 0) AS meetings
+        FROM campaigns
+        GROUP BY workspace
+    """).fetchall()
+
+    result = {}
+    for r in camp_rows:
+        ws = r[0].upper()
+        sent = r[2] or 0
+        result[ws] = {
+            "workspace": ws,
+            "campaign_count": r[1],
+            "sent": sent,
+            "opened": r[3],
+            "replied": r[4],
+            "interested": r[5],
+            "meetings": r[6],
+            "open_rate": round(100.0 * r[3] / sent, 1) if sent > 0 else 0,
+            "reply_rate": round(100.0 * r[4] / sent, 1) if sent > 0 else 0,
+            "interested_rate": round(100.0 * r[5] / max(r[4], 1), 1),
+        }
+
+    # Ensure both workspaces are present even if empty
+    for ws in ("US", "MX"):
+        if ws not in result:
+            result[ws] = {
+                "workspace": ws, "campaign_count": 0, "sent": 0,
+                "opened": 0, "replied": 0, "interested": 0, "meetings": 0,
+                "open_rate": 0, "reply_rate": 0, "interested_rate": 0,
+            }
+
+    conn.close()
+    return {"workspaces": result}

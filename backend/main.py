@@ -256,6 +256,33 @@ def init_db():
     except Exception:
         pass
 
+    # Migration 008: Two-stage pipeline staging table
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS lead_gen_contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT REFERENCES lead_gen_jobs(id),
+            company_id INTEGER REFERENCES lead_gen_companies(id),
+            first_name TEXT, last_name TEXT, email TEXT, title TEXT,
+            linkedin_url TEXT, company_name TEXT, company_domain TEXT,
+            workspace TEXT DEFAULT 'US',
+            status TEXT DEFAULT 'pending',
+            contact_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lgc_job ON lead_gen_contacts(job_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lgc_status ON lead_gen_contacts(status)")
+    except Exception:
+        pass
+
+    for col in [
+        "ALTER TABLE lead_gen_jobs ADD COLUMN approval_status TEXT DEFAULT 'pending'",
+        "ALTER TABLE lead_gen_jobs ADD COLUMN approved_at TIMESTAMP",
+        "ALTER TABLE lead_gen_jobs ADD COLUMN approved_by INTEGER",
+    ]:
+        try:
+            conn.execute(col)
+        except Exception:
+            pass
+
     result = conn.execute("SELECT COUNT(*) FROM users").fetchone()
     if result[0] == 0:
         token = secrets.token_urlsafe(32)
