@@ -138,3 +138,8 @@ class ReachInboxPushRequest(BaseModel):
     workspace: str = "US"        # "US" or "MX"
     deduply_campaign_id: Optional[int] = None
     email_status_filter: Optional[List[str]] = None  # e.g. ["Valid"] - skip others
+
+
+class PushCampaignContactsRequest(BaseModel):
+    deduply_campaign_id: int
+    email_status_filter: Optional[List[str]] = None  # default ["Valid"]

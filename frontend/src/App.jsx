@@ -728,6 +728,7 @@ const ContactsPage = () => {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [riCampaignId, setRiCampaignId] = useState('');
   const [riWorkspace, setRiWorkspace] = useState('US');
+  const [riCampaignOptions, setRiCampaignOptions] = useState([]);
   const { data: filterOptions } = useData('/filters');
   const columnsRef = useRef(null);
   const [savedViews, setSavedViews] = useState(() => {
@@ -846,6 +847,13 @@ const ContactsPage = () => {
   }, [page, pageSize, search, filters, sortBy, sortOrder, addToast]);
 
   useEffect(() => { fetchContacts(); }, [fetchContacts]);
+
+  useEffect(() => {
+    if (bulkField !== 'reachinbox_push') { setRiCampaignOptions([]); return; }
+    api.get(`/reachinbox/campaigns?workspace=${riWorkspace}`)
+      .then(res => setRiCampaignOptions(res.campaigns || []))
+      .catch(() => setRiCampaignOptions([]));
+  }, [bulkField, riWorkspace]);
 
   const toggleSelect = (id) => { const n = new Set(selected); n.has(id) ? n.delete(id) : n.add(id); setSelected(n); };
   const toggleSelectAll = () => { if (selectAll) { setSelected(new Set()); setSelectAll(false); } else { setSelected(new Set(contacts.map(c => c.id))); setSelectAll(true); } };
@@ -1285,14 +1293,21 @@ const ContactsPage = () => {
           )}
           {selectedBulkField && selectedBulkField.type === 'reachinbox' && (
             <div className="ri-push-inputs">
-              <input
-                type="number"
-                value={riCampaignId}
-                onChange={e => setRiCampaignId(e.target.value)}
-                placeholder="ReachInbox Campaign ID"
-                className="ri-campaign-input"
-                min="1"
-              />
+              {riCampaignOptions.length > 0 ? (
+                <select value={riCampaignId} onChange={e => setRiCampaignId(e.target.value)} className="ri-campaign-input">
+                  <option value="">— Select RI Campaign —</option>
+                  {riCampaignOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              ) : (
+                <input
+                  type="number"
+                  value={riCampaignId}
+                  onChange={e => setRiCampaignId(e.target.value)}
+                  placeholder="ReachInbox Campaign ID"
+                  className="ri-campaign-input"
+                  min="1"
+                />
+              )}
               <select value={riWorkspace} onChange={e => setRiWorkspace(e.target.value)} className="ri-workspace-select">
                 <option value="US">US Workspace</option>
                 <option value="MX">MX Workspace</option>
@@ -2276,6 +2291,12 @@ const CampaignsPage = () => {
   const [filterStatuses, setFilterStatuses] = useState([]);
   const [filterCountries, setFilterCountries] = useState([]);
   const [editingSettings, setEditingSettings] = useState(null);
+  const [riPushModal, setRiPushModal] = useState(null);
+  const [riCampaignsList, setRiCampaignsList] = useState([]);
+  const [riCampaignsLoading, setRiCampaignsLoading] = useState(false);
+  const [riCampaignsFallback, setRiCampaignsFallback] = useState(false);
+  const [riSelectedId, setRiSelectedId] = useState('');
+  const [riPushing, setRiPushing] = useState(false);
 
   const statusOptions = [
     { id: 'Active', name: 'Active' },
@@ -2318,6 +2339,41 @@ const CampaignsPage = () => {
   const handleUpdate = async (id) => { try { await api.put(`/campaigns/${id}`, editData); addToast('Campaign updated!', 'success'); setEditingId(null); fetchCampaigns(); if (expandedCampaign === id) fetchCampaignDetails(id); } catch (e) { addToast(e.message, 'error'); } };
   const handleUpdateSettings = async (data) => { try { await api.put(`/campaigns/${editingSettings.id}`, data); addToast('Campaign updated!', 'success'); setEditingSettings(null); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
   const handleDelete = async (id) => { if (!window.confirm('Delete this campaign?')) return; try { await api.delete(`/campaigns/${id}`); addToast('Campaign deleted', 'success'); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
+
+  const openRiPushModal = async (camp) => {
+    setRiPushModal(camp);
+    setRiSelectedId('');
+    setRiCampaignsList([]);
+    setRiCampaignsFallback(false);
+    setRiCampaignsLoading(true);
+    try {
+      const res = await api.get(`/reachinbox/campaigns?workspace=${camp.market || 'US'}`);
+      if (res.campaigns && res.campaigns.length > 0) {
+        setRiCampaignsList(res.campaigns);
+      } else {
+        setRiCampaignsFallback(true);
+      }
+    } catch (e) {
+      setRiCampaignsFallback(true);
+    }
+    setRiCampaignsLoading(false);
+  };
+
+  const executeRiPush = async () => {
+    if (!riSelectedId) { addToast('Select a ReachInbox campaign', 'error'); return; }
+    setRiPushing(true);
+    try {
+      const res = await api.post(`/reachinbox/campaigns/${parseInt(riSelectedId)}/push-contacts`, {
+        deduply_campaign_id: riPushModal.id
+      });
+      const s = res.stats || {};
+      addToast(`Pushed: ${s.pushed || 0} contacts (${s.skipped_already_pushed || 0} already pushed, ${s.failed || 0} failed)`, s.failed > 0 ? 'warning' : 'success');
+      setRiPushModal(null);
+    } catch (e) {
+      addToast(e.message || 'Push failed', 'error');
+    }
+    setRiPushing(false);
+  };
 
   const filteredCampaigns = campaigns.filter(c => {
     if (filterStatuses.length > 0 && !filterStatuses.includes(c.status)) return false;
@@ -2473,6 +2529,11 @@ const CampaignsPage = () => {
                     <p>Go to Templates and assign this campaign to a template to see performance data here.</p>
                   </div>
                 )}
+                <div className="campaign-push-bar">
+                  <button className="btn btn-secondary btn-sm" onClick={e => { e.stopPropagation(); openRiPushModal(camp); }}>
+                    <Send size={14} /> Push to ReachInbox
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -2480,6 +2541,36 @@ const CampaignsPage = () => {
       </div>
     )}
 
+    <Modal isOpen={!!riPushModal} onClose={() => setRiPushModal(null)} title="Push to ReachInbox">
+      {riPushModal && (
+        <div className="ri-push-modal-body">
+          <p className="ri-push-info">Workspace: <strong>{riPushModal.market || 'US'}</strong> · Campaign: <strong>{riPushModal.name}</strong></p>
+          {riCampaignsLoading ? (
+            <div className="ri-loading"><Loader2 size={16} className="spin" /> Loading ReachInbox campaigns...</div>
+          ) : riCampaignsList.length > 0 ? (
+            <div className="form-group">
+              <label>ReachInbox Campaign</label>
+              <select className="form-control" value={riSelectedId} onChange={e => setRiSelectedId(e.target.value)}>
+                <option value="">— Select campaign —</option>
+                {riCampaignsList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          ) : (
+            <div className="form-group">
+              <label>ReachInbox Campaign ID</label>
+              <p className="help-text" style={{marginBottom: 6}}>API unavailable — enter the campaign ID manually.</p>
+              <input type="number" className="form-control" value={riSelectedId} onChange={e => setRiSelectedId(e.target.value)} placeholder="e.g. 12345" min="1" />
+            </div>
+          )}
+          <div className="modal-actions">
+            <button className="btn btn-secondary" onClick={() => setRiPushModal(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={executeRiPush} disabled={!riSelectedId || riPushing}>
+              {riPushing ? <><Loader2 size={16} className="spin" /> Pushing...</> : <><Send size={14} /> Push Contacts</>}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
     <Modal isOpen={editingId} onClose={() => setEditingId(null)} title="Edit Campaign Metrics" size="lg">
       <div className="metrics-edit-form">
         <div className="form-row">
@@ -3735,6 +3826,7 @@ const SettingsPage = () => {
   // ReachInbox API key state
   const [riKeys, setRiKeys] = useState({ US: { configured: false, value: '' }, MX: { configured: false, value: '' } });
   const [savingRiKey, setSavingRiKey] = useState({ US: false, MX: false });
+  const [riTestResults, setRiTestResults] = useState({ US: null, MX: null });
 
   // Load API key status on mount
   useEffect(() => {
@@ -3759,6 +3851,21 @@ const SettingsPage = () => {
     loadApiKeyStatus();
     loadRiStatus();
   }, []);
+
+  const testRiConnection = async (ws) => {
+    try {
+      const res = await api.get(`/reachinbox/campaigns?workspace=${ws}`);
+      if (res.campaigns && res.campaigns.length > 0) {
+        addToast(`${ws} workspace: ${res.campaigns.length} campaigns found`, 'success');
+        setRiTestResults(prev => ({ ...prev, [ws]: `${res.campaigns.length} campaigns` }));
+      } else {
+        addToast(`${ws} workspace connected (0 campaigns)`, 'success');
+        setRiTestResults(prev => ({ ...prev, [ws]: 'Connected' }));
+      }
+    } catch (e) {
+      addToast(`${ws} connection test failed`, 'error');
+    }
+  };
 
   const saveRiKey = async (workspace) => {
     const val = riKeys[workspace].value.trim();
@@ -3951,7 +4058,18 @@ const SettingsPage = () => {
                   >
                     {savingRiKey[ws] ? <><Loader2 size={14} className="spin" /> Saving...</> : 'Save'}
                   </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => testRiConnection(ws)}
+                    disabled={!riKeys[ws].configured}
+                    title="Test connection and list campaigns"
+                  >
+                    Test
+                  </button>
                 </div>
+                {riTestResults[ws] && (
+                  <div className="ri-test-result"><Check size={13} /> {riTestResults[ws]}</div>
+                )}
               </div>
             ))}
           </div>

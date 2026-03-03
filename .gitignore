@@ -45,3 +45,9 @@ htmlcov/
 CLAUDE.local.md
 .claude/settings.local.json
 .claude/*.local.*
+
+# Root-level plan/scratch docs (keep essential ones tracked)
+/*.md
+!README.md
+!DEPLOYMENT.md
+!CLAUDE.md
