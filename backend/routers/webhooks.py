@@ -180,7 +180,7 @@ async def reachinbox_webhook(request: Request):
                     )
                 elif normalized_event == 'lead_interested':
                     conn.execute(
-                        "UPDATE contacts SET status='Interested', opportunities=opportunities+1, updated_at=? WHERE id=?",
+                        "UPDATE contacts SET status='Interested', opportunities=opportunities+1, hubspot_queued=1, updated_at=? WHERE id=?",
                         (datetime.now().isoformat(), contact_id)
                     )
                 elif normalized_event == 'lead_not_interested':
@@ -190,7 +190,7 @@ async def reachinbox_webhook(request: Request):
                     )
                 elif normalized_event == 'meeting_booked':
                     conn.execute(
-                        "UPDATE contacts SET status='Scheduled', opportunities=opportunities+1, meetings_booked=meetings_booked+1, updated_at=? WHERE id=?",
+                        "UPDATE contacts SET status='Scheduled', opportunities=opportunities+1, meetings_booked=meetings_booked+1, hubspot_queued=1, updated_at=? WHERE id=?",
                         (datetime.now().isoformat(), contact_id)
                     )
         conn.commit()

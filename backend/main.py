@@ -182,6 +182,8 @@ def init_db():
         "ALTER TABLE contacts ADD COLUMN email_is_role_account BOOLEAN DEFAULT 0",
         "ALTER TABLE contacts ADD COLUMN email_suggested TEXT",
         "ALTER TABLE email_templates ADD COLUMN country TEXT",
+        "ALTER TABLE contacts ADD COLUMN hubspot_queued BOOLEAN DEFAULT 0",
+        "ALTER TABLE contacts ADD COLUMN hubspot_synced_at TIMESTAMP",
     ]:
         try:
             conn.execute(col)
