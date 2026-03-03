@@ -6653,3 +6653,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 
 /* btn-sm utility */
 .btn-sm { font-size: 13px; padding: 5px 10px; }
+
+/* Learning tab */
+.empty-hint { color: var(--text-3); font-size: 13px; font-style: italic; padding: 12px 0; }
