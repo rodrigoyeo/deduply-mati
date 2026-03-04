@@ -1806,8 +1806,16 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
     workspace = (req.workspace or "US").upper()
 
     # Get parent job's list/campaign assignments
-    parent_job = conn.execute(f"SELECT lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id FROM lead_gen_jobs WHERE id={ph}", (req.job_id,)).fetchone()
-    parent_job = dict(parent_job) if parent_job else {}
+    parent_row = conn.execute(f"SELECT lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id FROM lead_gen_jobs WHERE id={ph}", (req.job_id,)).fetchone()
+    if parent_row:
+        parent_job = {
+            "lead_list_id": parent_row[0],
+            "lead_list_name": parent_row[1],
+            "target_campaign_id": parent_row[2],
+            "target_ri_campaign_id": parent_row[3],
+        }
+    else:
+        parent_job = {}
     
     # Use request values if set, otherwise inherit from parent job
     lead_list_id = None

@@ -59,7 +59,7 @@ class DatabaseConnection:
                 query = query.rstrip(";") + " ON CONFLICT DO NOTHING"
             # Handle boolean differences - only for known boolean columns
             # Replace boolean column comparisons (is_duplicate=0, is_active=1, etc.)
-            bool_cols = r'(is_duplicate|is_active|is_winner|processed|email_is_disposable|email_is_free_service|email_is_role_account)'
+            bool_cols = r'(is_duplicate|is_active|is_winner|processed|imported|hubspot_queued|email_is_disposable|email_is_free_service|email_is_role_account)'
             query = re.sub(bool_cols + r'=0', r'\1=FALSE', query)
             query = re.sub(bool_cols + r'=1', r'\1=TRUE', query)
             query = re.sub(bool_cols + r' = 0', r'\1 = FALSE', query)
