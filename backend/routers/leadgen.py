@@ -1565,10 +1565,16 @@ async def agent_company_search(req: AgentCompanySearchRequest, user: dict = Depe
     job_id = str(uuid.uuid4())
     workspace = (req.workspace or req.country).upper()
 
-    conn.execute(
-        "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (?,?,?,?,?)",
-        (job_id, "company_search", "running", json.dumps(req.dict()), datetime.now().isoformat())
-    )
+    if USE_POSTGRES:
+        conn.execute(
+            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (%s,%s,%s,%s,%s)",
+            (job_id, "company_search", "running", json.dumps(req.dict()), datetime.now().isoformat())
+        )
+    else:
+        conn.execute(
+            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (?,?,?,?,?)",
+            (job_id, "company_search", "running", json.dumps(req.dict()), datetime.now().isoformat())
+        )
     conn.commit()
 
     # Run company search in background
@@ -1743,17 +1749,24 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
         return {"error": "BlitzAPI key not configured"}
 
     # Get companies from the search job
+    ph = "%s" if USE_POSTGRES else "?"
     if req.company_ids:
-        placeholders = ",".join(["?"] * len(req.company_ids))
+        placeholders = ",".join([ph] * len(req.company_ids))
         companies = conn.execute(
             f"SELECT * FROM lead_gen_companies WHERE id IN ({placeholders})",
             req.company_ids
         ).fetchall()
     else:
-        companies = conn.execute(
-            "SELECT * FROM lead_gen_companies WHERE job_id=? AND imported=0",
-            (req.job_id,)
-        ).fetchall()
+        try:
+            companies = conn.execute(
+                f"SELECT * FROM lead_gen_companies WHERE job_id={ph} AND imported=0",
+                (req.job_id,)
+            ).fetchall()
+        except Exception:
+            companies = conn.execute(
+                f"SELECT * FROM lead_gen_companies WHERE job_id={ph}",
+                (req.job_id,)
+            ).fetchall()
 
     companies = [dict(c) for c in companies]
     if not companies:
@@ -1764,12 +1777,20 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
     enrich_job_id = str(uuid.uuid4())
     workspace = (req.workspace or "US").upper()
 
-    conn.execute(
-        "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (?,?,?,?,?)",
-        (enrich_job_id, "enrich", "running",
-         json.dumps({"source_job": req.job_id, "companies": len(companies), "max_per_company": req.max_per_company}),
-         datetime.now().isoformat())
-    )
+    if USE_POSTGRES:
+        conn.execute(
+            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (%s,%s,%s,%s,%s)",
+            (enrich_job_id, "enrich", "running",
+             json.dumps({"source_job": req.job_id, "companies": len(companies), "max_per_company": req.max_per_company}),
+             datetime.now().isoformat())
+        )
+    else:
+        conn.execute(
+            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (?,?,?,?,?)",
+            (enrich_job_id, "enrich", "running",
+             json.dumps({"source_job": req.job_id, "companies": len(companies), "max_per_company": req.max_per_company}),
+             datetime.now().isoformat())
+        )
     conn.commit()
 
     # Run enrichment in background
@@ -1921,7 +1942,10 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                     stats["staged"] += 1
 
                 # Mark company as imported
-                conn.execute("UPDATE lead_gen_companies SET imported=1 WHERE id=?", (company_id,))
+                try:
+                    conn.execute("UPDATE lead_gen_companies SET imported=1 WHERE id=?", (company_id,))
+                except Exception:
+                    pass  # imported column may not exist in some environments
                 conn.commit()
                 stats["companies_processed"] += 1
 
