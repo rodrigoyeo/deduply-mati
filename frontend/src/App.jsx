@@ -350,8 +350,7 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
     <div className="sidebar-footer">
       {user && (<div className="user-info"><div className="user-avatar">{user.name?.[0] || user.email[0]}</div>{!collapsed && <div className="user-details"><span className="user-name">{user.name || user.email}</span><span className="user-role">{user.role}</span></div>}{!collapsed && <button className="logout-btn" onClick={onLogout} title="Logout"><LogOut size={18} /></button>}</div>)}
       {!collapsed && <div className="sidebar-brand">
-        <span className="brand-powered">Powered by</span>
-        <span className="brand-arkode">Arkode</span>
+        <img src="/arkode-logo.png" alt="Arkode" style={{height: '18px', opacity: 0.7}} />
       </div>}
     </div>
   </aside>);

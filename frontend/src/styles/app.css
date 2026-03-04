@@ -1,56 +1,85 @@
 /* Deduply v5.1 - Arkode Brand Theme */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/style.css');
 
 :root {
-  --navy: #001C43;
+  /* Arkode DNA — Primary */
   --coral: #FF6C5D;
-  --coral-light: rgba(255, 108, 93, 0.1);
-  --coral-hover: #ff8577;
+  --coral-hover: #E85A4B;
+  --coral-light: #FFF0EE;
+  --coral-glow: rgba(255, 108, 93, 0.15);
+
+  /* Foundation */
+  --navy: #001C43;
+  --navy-light: #002D6B;
+  --navy-deep: #000F24;
   --bone: #F6EFE4;
-  --green: #05E2C1;
-  --green-light: rgba(5, 226, 193, 0.1);
-  
+  --green: #10B981;
+  --green-light: rgba(16, 185, 129, 0.1);
+
+  /* Surface */
   --bg-0: #FFFFFF;
-  --bg-1: #F8FAFF;
+  --bg-1: #F8F9FA;
   --bg-2: #FFFFFF;
-  --bg-3: #F4F6FA;
-  --bg-hover: #EEF1F7;
-  
-  --border: #E4E7EE;
-  --border-light: #EDEFF5;
-  
-  --text-0: #001C43;
-  --text-1: #19213D;
-  --text-2: #6D758F;
-  --text-3: #A1A7BB;
-  
+  --bg-3: #F1F3F5;
+  --bg-hover: #F8F9FA;
+
+  /* Borders */
+  --border: #E9ECEF;
+  --border-light: #F1F3F5;
+
+  /* Text */
+  --text-0: #120E12;
+  --text-1: #1D1C1D;
+  --text-2: #6B7280;
+  --text-3: #9CA3AF;
+
+  /* Accent aliases */
   --accent: #FF6C5D;
-  --accent-hover: #ff8577;
+  --accent-hover: #E85A4B;
   --accent-light: rgba(255, 108, 93, 0.1);
-  
-  --success: #05E2C1;
-  --success-light: rgba(5, 226, 193, 0.1);
+
+  /* Status */
+  --success: #10B981;
+  --success-light: rgba(16, 185, 129, 0.1);
   --warning: #F59E0B;
   --error: #EF4444;
   --error-light: rgba(239, 68, 68, 0.1);
-  
+  --info: #3B82F6;
+
+  /* Radius */
   --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 28, 67, 0.05);
   --shadow-md: 0 4px 12px rgba(0, 28, 67, 0.08);
-  --shadow-lg: 0 8px 24px rgba(0, 28, 67, 0.12);
-  
-  --sidebar-width: 260px;
+  --shadow-lg: 0 8px 30px rgba(0, 28, 67, 0.12);
+  --shadow-coral: 0 4px 20px rgba(255, 108, 93, 0.25);
+
+  /* Motion */
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+
+  /* Layout */
+  --sidebar-width: 240px;
+
+  /* Typography */
+  --font-headline: 'Newsreader', Georgia, serif;
+  --font-body: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'GeistMono', 'SF Mono', monospace;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #root { height: 100%; }
 
 body {
-  font-family: 'Geist', 'Inter', -apple-system, sans-serif;
+  font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-1);
@@ -65,7 +94,7 @@ body {
 .loading-screen { display: flex; align-items: center; justify-content: center; height: 100vh; background: var(--bg-1); color: var(--navy); }
 
 /* Sidebar with Arkode Branding */
-.sidebar { width: var(--sidebar-width); background: var(--bg-2); border-right: 1px solid var(--border); position: fixed; top: 0; left: 0; bottom: 0; display: flex; flex-direction: column; z-index: 100; }
+.sidebar { width: var(--sidebar-width); background: var(--bg-2); border-right: 1px solid var(--border); position: fixed; top: 0; left: 0; bottom: 0; display: flex; flex-direction: column; z-index: 100; transition: width var(--duration-normal) var(--ease-smooth); }
 .sidebar-header { padding: 24px 20px; border-bottom: 1px solid var(--border); }
 .logo { display: flex; align-items: center; gap: 14px; }
 .logo-icon { width: 40px; height: 40px; background: linear-gradient(135deg, var(--coral), #ff8577); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800; color: white; letter-spacing: -1px; }
@@ -77,7 +106,7 @@ body {
 .brand-arkode { font-size: 14px; font-weight: 700; color: var(--coral); letter-spacing: -0.3px; }
 .nav-badge.danger { background: var(--error-light); color: var(--error); }
 .sidebar-nav { padding: 16px 12px; flex: 1; }
-.nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; margin-bottom: 4px; border-radius: var(--radius-md); color: var(--text-2); background: transparent; border: none; width: 100%; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.15s; }
+.nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; margin-bottom: 2px; border-radius: var(--radius-md); color: var(--text-2); background: transparent; border: none; width: 100%; cursor: pointer; font-size: 13px; font-weight: 500; font-family: var(--font-body); transition: all var(--duration-fast) var(--ease-smooth); letter-spacing: -0.01em; }
 .nav-item:hover { background: var(--bg-3); color: var(--text-1); }
 .nav-item.active { background: var(--coral-light); color: var(--coral); }
 .nav-item.active svg { color: var(--coral); }
@@ -7022,9 +7051,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 }
 
 .page-header h1 {
-  font-size: 22px;
+  font-family: var(--font-headline);
+  font-size: 24px;
   font-weight: 600;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.015em;
+  color: var(--text-0);
 }
 
 .page-header .subtitle,
@@ -7054,11 +7085,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   background: var(--coral);
   color: white;
   border-color: var(--coral);
+  font-family: var(--font-body);
 }
 
 .btn-primary:hover {
   background: var(--coral-hover);
   border-color: var(--coral-hover);
+  box-shadow: var(--shadow-coral);
+  transform: translateY(-1px);
 }
 
 .btn-secondary {
@@ -7130,4 +7164,66 @@ select:focus {
   border: 1px solid var(--border);
   background: var(--bg-2);
   box-shadow: none;
+  transition: all var(--duration-normal) var(--ease-smooth);
+}
+
+.card:hover {
+  border-color: var(--coral-light);
+  box-shadow: var(--shadow-md);
+}
+
+
+/* ============================================================
+   ARKODE DNA — ANIMATIONS
+   ============================================================ */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.page-container {
+  animation: fadeInUp 0.35s var(--ease-smooth) both;
+}
+
+.page-container > * {
+  animation: fadeInUp 0.4s var(--ease-smooth) both;
+}
+
+/* Skeleton shimmer for loading states */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-3) 25%, var(--bg-1) 50%, var(--bg-3) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* Stat cards with coral top accent */
+.stat-card {
+  border-top: 3px solid var(--coral);
+  border-radius: var(--radius-lg);
+}
+
+/* Logo text uses headline font */
+.logo-text {
+  font-family: var(--font-headline) !important;
+}
+
+/* Table header uses body font uppercase */
+.data-table thead th {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+}
+
+/* Tab buttons use body font */
+.tab-btn, .nav-item, .btn {
+  font-family: var(--font-body);
 }
