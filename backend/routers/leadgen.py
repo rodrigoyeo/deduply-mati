@@ -1182,21 +1182,33 @@ VERTICAL_PRESETS = {
                              "distributor", "software", "recruiting", "staffing", "manufacturer",
                              "magazine", "association", "expo", "university", "college", "franchise",
                              "advertising", "chemical", "supply", "materials"],
+        "industry_include": ["construction", "building materials", "facilities services"],
+        "industry_exclude": ["software development", "financial services", "food & beverages",
+                             "information technology", "staffing and recruiting"],
     },
     "hvac": {
         "keywords_include": ["hvac", "heating and cooling", "air conditioning contractor", "hvac services"],
         "keywords_exclude": ["parts", "wholesale", "distributor", "manufacturer", "association",
                              "magazine", "software", "saas", "technology", "staffing"],
+        "industry_include": ["construction", "facilities services", "building materials", "mechanical or industrial engineering"],
+        "industry_exclude": ["software development", "financial services", "education", "publishing", "food & beverages",
+                             "information technology", "staffing and recruiting", "wholesale"],
     },
     "plumbing": {
         "keywords_include": ["plumbing", "plumbing contractor", "plumbing services", "plumber"],
         "keywords_exclude": ["parts", "wholesale", "distributor", "manufacturer", "association",
                              "software", "saas", "technology", "staffing", "magazine"],
+        "industry_include": ["construction", "facilities services", "building materials"],
+        "industry_exclude": ["software development", "financial services", "publishing",
+                             "information technology", "wholesale"],
     },
     "landscaping": {
         "keywords_include": ["landscaping", "lawn care", "landscape contractor", "landscaping services"],
         "keywords_exclude": ["wholesale", "distributor", "manufacturer", "association",
                              "software", "saas", "technology", "staffing", "magazine", "design school"],
+        "industry_include": ["facilities services", "construction", "environmental services"],
+        "industry_exclude": ["software development", "financial services", "information technology",
+                             "staffing and recruiting"],
     },
 }
 
@@ -1545,7 +1557,7 @@ async def agent_company_search(req: AgentCompanySearchRequest, user: dict = Depe
     Returns job_id — companies are stored in lead_gen_companies.
     """
     conn = get_db()
-    api_key = _get_blitz_key(conn)
+    api_key = _get_blitzapi_key(conn)
     if not api_key:
         conn.close()
         return {"error": "BlitzAPI key not configured"}
@@ -1554,7 +1566,7 @@ async def agent_company_search(req: AgentCompanySearchRequest, user: dict = Depe
     workspace = (req.workspace or req.country).upper()
 
     conn.execute(
-        "INSERT INTO lead_gen_jobs (id, type, status, parameters, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (?,?,?,?,?)",
         (job_id, "company_search", "running", json.dumps(req.dict()), datetime.now().isoformat())
     )
     conn.commit()
@@ -1597,17 +1609,22 @@ def _run_company_search_only(job_id: str, api_key: str, req_data: dict):
         all_companies = []
         page = 1
 
+        cursor = None
         while len(all_companies) < max_companies:
             try:
                 search_body = {
-                    "keywords": kw_include,
-                    "country": country,
-                    "employee_range": req_data.get("employee_range", ["11-50", "51-200"]),
-                    "page": page,
+                    "company": {
+                        "keywords": {"include": kw_include, "exclude": kw_exclude},
+                        "hq": {"country_code": [country]},
+                        "employee_range": req_data.get("employee_range", ["11-50", "51-200"]),
+                    },
                     "max_results": min(50, max_companies - len(all_companies)),
                 }
-                data = _blitzapi_request_sync("POST", "/v2/search/company-search", api_key, search_body)
+                if cursor:
+                    search_body["cursor"] = cursor
+                data = _blitzapi_request_sync("POST", "/v2/search/companies", api_key, search_body)
                 results = data.get("results", [])
+                cursor = data.get("cursor")
                 if not results:
                     break
 
@@ -1720,7 +1737,7 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
     Uses the updated 4-tier cascade. Can be re-run with different configs.
     """
     conn = get_db()
-    api_key = _get_blitz_key(conn)
+    api_key = _get_blitzapi_key(conn)
     if not api_key:
         conn.close()
         return {"error": "BlitzAPI key not configured"}
@@ -1748,7 +1765,7 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
     workspace = (req.workspace or "US").upper()
 
     conn.execute(
-        "INSERT INTO lead_gen_jobs (id, type, status, parameters, created_at) VALUES (?,?,?,?,?)",
+        "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (?,?,?,?,?)",
         (enrich_job_id, "enrich", "running",
          json.dumps({"source_job": req.job_id, "companies": len(companies), "max_per_company": req.max_per_company}),
          datetime.now().isoformat())
