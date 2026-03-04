@@ -6850,3 +6850,284 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 .leadgen-table .nowrap { white-space: nowrap; }
 .leadgen-table tr:hover { background: var(--bg-hover); }
 .leadgen-table tr.selected { background: var(--bg-selected, rgba(37,99,235,0.07)); }
+
+/* ============================================================
+   COLLAPSIBLE SIDEBAR — Clay-style
+   ============================================================ */
+.sidebar {
+  transition: width 0.2s ease;
+  overflow: hidden;
+}
+
+.sidebar-collapsed {
+  width: 64px !important;
+}
+
+.sidebar-collapsed .sidebar-header {
+  padding: 16px 12px;
+  display: flex;
+  justify-content: center;
+}
+
+.sidebar-collapsed .logo {
+  justify-content: center;
+}
+
+.sidebar-collapsed .logo-icon {
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+}
+
+.sidebar-collapsed .sidebar-nav {
+  padding: 12px 8px;
+}
+
+.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 10px;
+  margin-bottom: 2px;
+}
+
+.sidebar-collapsed .nav-item span {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-import-progress,
+.sidebar-collapsed .sidebar-import-progress.completed {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-footer {
+  padding: 12px 8px;
+}
+
+.sidebar-collapsed .user-info {
+  justify-content: center;
+}
+
+.sidebar-collapsed .user-avatar {
+  margin: 0;
+}
+
+.sidebar-collapsed + .main-content,
+.sidebar-collapsed ~ .main-content {
+  margin-left: 64px !important;
+}
+
+/* ============================================================
+   RESPONSIVE BREAKPOINTS
+   ============================================================ */
+@media (max-width: 1024px) {
+  .sidebar {
+    width: 64px;
+  }
+  .sidebar .logo-content,
+  .sidebar .nav-item span,
+  .sidebar .nav-badge,
+  .sidebar .sidebar-brand,
+  .sidebar .user-details,
+  .sidebar .logout-btn,
+  .sidebar .sidebar-import-progress {
+    display: none !important;
+  }
+  .sidebar .nav-item {
+    justify-content: center;
+    padding: 10px;
+  }
+  .sidebar .sidebar-header {
+    padding: 16px 12px;
+    display: flex;
+    justify-content: center;
+  }
+  .main-content {
+    margin-left: 64px !important;
+  }
+  .page {
+    padding: 24px 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    width: 260px;
+    transform: translateX(-260px);
+    transition: transform 0.25s ease;
+    z-index: 1000;
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar:hover,
+  .sidebar:focus-within {
+    transform: translateX(0);
+  }
+  .sidebar .logo-content,
+  .sidebar .nav-item span,
+  .sidebar .nav-badge,
+  .sidebar .sidebar-brand,
+  .sidebar .user-details {
+    display: flex !important;
+  }
+  .main-content {
+    margin-left: 0 !important;
+  }
+  .page {
+    padding: 16px 12px;
+  }
+}
+
+/* ============================================================
+   CLEANER TABLE STYLING
+   ============================================================ */
+.data-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.data-table thead th {
+  background: var(--bg-1) !important;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-2);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  border-top: none;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.data-table tbody tr {
+  transition: background 0.1s;
+}
+
+.data-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.data-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+/* ============================================================
+   CLEANER PAGE HEADERS
+   ============================================================ */
+.page-header {
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.page-header .subtitle,
+.page-header .page-subtitle {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+/* ============================================================
+   BUTTON REFINEMENT
+   ============================================================ */
+.btn {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btn-primary {
+  background: var(--coral);
+  color: white;
+  border-color: var(--coral);
+}
+
+.btn-primary:hover {
+  background: var(--coral-hover);
+  border-color: var(--coral-hover);
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-1);
+  border-color: var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-3);
+}
+
+.btn-sm {
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+/* ============================================================
+   MODAL REFINEMENT
+   ============================================================ */
+.modal-overlay {
+  background: rgba(0, 28, 67, 0.3) !important;
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+  max-width: 520px;
+  animation: modalFadeIn 0.2s ease;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; transform: translateY(-10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ============================================================
+   FORM INPUT REFINEMENT
+   ============================================================ */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+textarea,
+select {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 13px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 3px var(--coral-light);
+}
+
+/* ============================================================
+   CARD REFINEMENT
+   ============================================================ */
+.card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  box-shadow: none;
+}

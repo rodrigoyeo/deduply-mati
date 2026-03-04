@@ -232,7 +232,7 @@ const MultiSelect = ({ options, value = [], onChange, placeholder = "Select...",
 // Sidebar with Arkode Branding
 
 // Workspace Toggle — shown in sidebar
-const WorkspaceToggle = () => {
+const WorkspaceToggle = ({ collapsed }) => {
   const { workspace, setWorkspace } = useWorkspace();
   return (
     <div style={{
@@ -276,6 +276,14 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
   const { data: stats } = useData('/stats');
   const { importJob, clearImportJob } = useImportJob();
   const { addToast } = useToast();
+  const [collapsed, setCollapsed] = useState(() => {
+    return localStorage.getItem('deduply_sidebar_collapsed') === 'true';
+  });
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    localStorage.setItem('deduply_sidebar_collapsed', String(next));
+    setCollapsed(next);
+  };
   const nav = [{ id: 'inbox', label: 'Inbox', icon: MessageCircle }, { id: 'pipeline', label: 'Pipeline', icon: Target }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'reports', label: 'Reports', icon: TrendingUp }, { id: 'settings', label: 'Settings', icon: Settings }];
 
   // Show toast when import completes
@@ -289,20 +297,20 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
 
   const progress = importJob?.total_rows > 0 ? Math.round((importJob.processed_count / importJob.total_rows) * 100) : 0;
 
-  return (<aside className="sidebar">
+  return (<aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
     <div className="sidebar-header">
       <div className="logo">
-        <div className="logo-icon">D</div>
-        <div className="logo-content">
+        <div className="logo-icon" onClick={toggleCollapsed} style={{cursor:'pointer'}} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>D</div>
+        {!collapsed && <div className="logo-content">
           <span className="logo-text">Deduply</span>
           <span className="logo-tagline">by Arkode</span>
-        </div>
+        </div>}
       </div>
     </div>
     {/* Workspace Toggle */}
-    <WorkspaceToggle />
+    <WorkspaceToggle collapsed={collapsed} />
 
-    <nav className="sidebar-nav">{nav.map(item => (<button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}><item.icon size={20} /><span>{item.label}</span>{item.id === 'contacts' && stats && <span className="nav-badge">{stats.unique_contacts?.toLocaleString()}</span>}{item.id === 'duplicates' && stats?.duplicates > 0 && <span className="nav-badge danger">{stats.duplicates}</span>}{item.id === 'campaigns' && stats && <span className="nav-badge">{stats.total_campaigns}</span>}</button>))}</nav>
+    <nav className="sidebar-nav">{nav.map(item => (<button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)} title={item.label}><item.icon size={20} />{!collapsed && <span>{item.label}</span>}{!collapsed && item.id === 'contacts' && stats && <span className="nav-badge">{stats.unique_contacts?.toLocaleString()}</span>}{!collapsed && item.id === 'campaigns' && stats && <span className="nav-badge">{stats.total_campaigns}</span>}</button>))}</nav>
 
     {/* Import Progress Indicator */}
     {importJob && (importJob.status === 'pending' || importJob.status === 'running') && (
@@ -340,11 +348,11 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
     )}
 
     <div className="sidebar-footer">
-      {user && (<div className="user-info"><div className="user-avatar">{user.name?.[0] || user.email[0]}</div><div className="user-details"><span className="user-name">{user.name || user.email}</span><span className="user-role">{user.role}</span></div><button className="logout-btn" onClick={onLogout} title="Logout"><LogOut size={18} /></button></div>)}
-      <div className="sidebar-brand">
+      {user && (<div className="user-info"><div className="user-avatar">{user.name?.[0] || user.email[0]}</div>{!collapsed && <div className="user-details"><span className="user-name">{user.name || user.email}</span><span className="user-role">{user.role}</span></div>}{!collapsed && <button className="logout-btn" onClick={onLogout} title="Logout"><LogOut size={18} /></button>}</div>)}
+      {!collapsed && <div className="sidebar-brand">
         <span className="brand-powered">Powered by</span>
         <span className="brand-arkode">Arkode</span>
-      </div>
+      </div>}
     </div>
   </aside>);
 };
@@ -5495,7 +5503,7 @@ function App() {
   if (loading) return <div className="loading-screen"><Loader2 className="spin" size={32} /></div>;
   if (!user) return <ToastProvider><LoginPage onLogin={setUser} /></ToastProvider>;
 
-  return (<ToastProvider><WorkspaceProvider><ImportJobProvider><div className="app"><Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} /><main className="main-content">
+  return (<ToastProvider><WorkspaceProvider><ImportJobProvider><div className="app"><Sidebar page={page} setPage={setPage} user={user} onLogout={handleLogout} /><main className="main-content" id="main-content">
     {page === 'inbox' && <InboxPage setPage={setPage} />}
     {page === 'pipeline' && <PipelinePage />}
     {page === 'contacts' && <ContactsPage />}
