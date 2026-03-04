@@ -32,7 +32,10 @@ if USE_POSTGRES:
     import psycopg2
     import psycopg2.extras
     from psycopg2.extras import DictCursor
+    # Force IPv4 globally — Railway doesn't support IPv6 outbound
+    socket.getaddrinfo = ipv4_only_getaddrinfo
     print("[DB CONFIG] psycopg2 imported successfully")
+    print("[DB CONFIG] IPv4-only mode enabled for Railway")
 
 class DatabaseConnection:
     """Wrapper to provide consistent interface for both SQLite and PostgreSQL"""
@@ -100,15 +103,9 @@ class DatabaseConnection:
 def get_db():
     """Get a database connection (SQLite for local, PostgreSQL for production)"""
     if USE_POSTGRES:
-        # Force IPv4 for Railway (doesn't support IPv6 outbound connections)
-        socket.getaddrinfo = ipv4_only_getaddrinfo
-        try:
-            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
-            conn.autocommit = False
-            return DatabaseConnection(conn, is_postgres=True)
-        finally:
-            # Restore original getaddrinfo
-            socket.getaddrinfo = original_getaddrinfo
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        conn.autocommit = False
+        return DatabaseConnection(conn, is_postgres=True)
     else:
         # Local SQLite
         db_path = os.getenv("DATABASE_PATH", "deduply.db")
@@ -120,7 +117,14 @@ def get_db():
 
 def init_db():
     """Initialize database tables"""
-    db = get_db()
+    try:
+        db = get_db()
+    except Exception as e:
+        print(f"[DB INIT] Connection failed: {e}")
+        if USE_POSTGRES:
+            print("[DB INIT] Will retry connections on first request")
+            return
+        raise
 
     if USE_POSTGRES:
         # For PostgreSQL, verify connection and create default admin if needed
