@@ -119,8 +119,12 @@ def create_campaign(campaign: CampaignCreate):
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO campaigns (name, description, country, status, market) VALUES (?, ?, ?, ?, ?)",
-            (campaign.name, campaign.description, campaign.country, campaign.status, campaign.market)
+            """INSERT INTO campaigns (name, description, country, status, market,
+               strategy_brief, target_vertical, target_icp, hypothesis, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (campaign.name, campaign.description, campaign.country, campaign.status, campaign.market,
+             campaign.strategy_brief, campaign.target_vertical, campaign.target_icp, campaign.hypothesis,
+             campaign.created_by)
         )
         cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()

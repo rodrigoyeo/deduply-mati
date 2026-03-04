@@ -112,6 +112,9 @@ def init_db():
         emails_replied INTEGER DEFAULT 0, emails_bounced INTEGER DEFAULT 0,
         opportunities INTEGER DEFAULT 0, meetings_booked INTEGER DEFAULT 0,
         open_rate REAL DEFAULT 0, click_rate REAL DEFAULT 0, reply_rate REAL DEFAULT 0,
+        strategy_brief TEXT, target_vertical TEXT, target_icp TEXT, hypothesis TEXT,
+        created_by TEXT DEFAULT 'human', approved_by TEXT, approved_at TIMESTAMP,
+        ri_campaign_id INTEGER, market TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
     conn.execute("""CREATE TABLE IF NOT EXISTS email_templates (

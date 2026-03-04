@@ -67,6 +67,11 @@ class CampaignCreate(BaseModel):
     country: Optional[str] = None
     status: str = "Active"
     market: str = "US"  # US or MX - determines ReachInbox workspace
+    strategy_brief: Optional[str] = None
+    target_vertical: Optional[str] = None
+    target_icp: Optional[str] = None
+    hypothesis: Optional[str] = None
+    created_by: str = "human"
 
 
 class CampaignUpdate(BaseModel):
@@ -82,6 +87,12 @@ class CampaignUpdate(BaseModel):
     emails_bounced: Optional[int] = None
     opportunities: Optional[int] = None
     meetings_booked: Optional[int] = None
+    strategy_brief: Optional[str] = None
+    target_vertical: Optional[str] = None
+    target_icp: Optional[str] = None
+    hypothesis: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
 
 
 class TemplateCreate(BaseModel):

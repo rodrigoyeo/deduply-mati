@@ -1025,3 +1025,276 @@ async def agent_get_staged_contacts(job_id: str, status: Optional[str] = None,
         "timestamp": _now_iso(),
         "next_action": "POST /agent/v1/leadgen/approve with job_id or contact_ids" if summary["pending"] > 0 else "all_approved",
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /agent/v1/campaigns/create — Agent creates campaign with strategy brief
+# ---------------------------------------------------------------------------
+
+class CampaignCreateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    strategy_brief: Optional[str] = None
+    target_vertical: Optional[str] = None
+    target_icp: Optional[str] = None
+    hypothesis: Optional[str] = None
+    workspace: str = "US"
+    status: str = "Draft"
+
+@router.post("/campaigns/create")
+def agent_create_campaign(body: CampaignCreateRequest, user: dict = Depends(get_agent_user)):
+    """
+    Create a campaign with a strategy brief for human review.
+    Hermes uses this to propose campaigns with rationale.
+    Humans approve in the UI before contacts are pushed.
+    """
+    conn = get_db()
+    market = body.workspace.upper()
+    
+    if USE_POSTGRES:
+        result = conn.execute(
+            """INSERT INTO campaigns (name, description, strategy_brief, target_vertical, 
+               target_icp, hypothesis, market, status, created_by, created_at)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW()) RETURNING id""",
+            (body.name, body.description, body.strategy_brief, body.target_vertical,
+             body.target_icp, body.hypothesis, market, body.status, "hermes")
+        )
+        camp_id = result.fetchone()[0]
+    else:
+        conn.execute(
+            """INSERT INTO campaigns (name, description, strategy_brief, target_vertical,
+               target_icp, hypothesis, market, status, created_by, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))""",
+            (body.name, body.description, body.strategy_brief, body.target_vertical,
+             body.target_icp, body.hypothesis, market, body.status, "hermes")
+        )
+        camp_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    
+    conn.commit()
+    conn.close()
+    
+    return {
+        "campaign_id": camp_id,
+        "name": body.name,
+        "status": body.status,
+        "created_by": "hermes",
+        "message": f"Campaign created. Awaiting human approval before contacts can be pushed.",
+        "next_action": "Human reviews strategy_brief in Deduply UI and approves"
+    }
+
+
+# ---------------------------------------------------------------------------
+# PUT /agent/v1/campaigns/{id}/strategy — Agent updates campaign strategy
+# ---------------------------------------------------------------------------
+
+class CampaignStrategyUpdate(BaseModel):
+    strategy_brief: Optional[str] = None
+    target_vertical: Optional[str] = None
+    target_icp: Optional[str] = None
+    hypothesis: Optional[str] = None
+
+@router.put("/campaigns/{campaign_id}/strategy")
+def agent_update_strategy(campaign_id: int, body: CampaignStrategyUpdate, user: dict = Depends(get_agent_user)):
+    """Update a campaign's strategy brief. Used by Hermes to add context."""
+    conn = get_db()
+    updates = {}
+    if body.strategy_brief is not None: updates["strategy_brief"] = body.strategy_brief
+    if body.target_vertical is not None: updates["target_vertical"] = body.target_vertical
+    if body.target_icp is not None: updates["target_icp"] = body.target_icp
+    if body.hypothesis is not None: updates["hypothesis"] = body.hypothesis
+    
+    if not updates:
+        conn.close()
+        return {"error": "No fields to update"}
+    
+    if USE_POSTGRES:
+        set_clause = ", ".join([f"{k}=%s" for k in updates.keys()])
+        conn.execute(f"UPDATE campaigns SET {set_clause} WHERE id=%s", list(updates.values()) + [campaign_id])
+    else:
+        set_clause = ", ".join([f"{k}=?" for k in updates.keys()])
+        conn.execute(f"UPDATE campaigns SET {set_clause} WHERE id=?", list(updates.values()) + [campaign_id])
+    
+    conn.commit()
+    conn.close()
+    return {"campaign_id": campaign_id, "updated_fields": list(updates.keys()), "message": "Strategy updated"}
+
+
+# ---------------------------------------------------------------------------
+# POST /agent/v1/campaigns/{id}/push-with-dedup — Dedup + push flow
+# ---------------------------------------------------------------------------
+
+class DedupPushRequest(BaseModel):
+    contact_ids: Optional[List[int]] = None
+    job_id: Optional[str] = None
+    ri_campaign_id: int
+    workspace: str = "US"
+
+@router.post("/campaigns/{campaign_id}/push-with-dedup")
+async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: dict = Depends(get_agent_user)):
+    """
+    Full dedup-before-push flow:
+    1. Takes staged contacts (from job_id) or specific contact_ids
+    2. Checks each against master contacts DB by email
+    3. New contacts → insert into master DB
+    4. Duplicates → merge (update missing fields, skip email dupes)
+    5. All valid contacts → push to ReachInbox campaign
+    """
+    import httpx
+    conn = get_db()
+    workspace = body.workspace.upper()
+    
+    # Get the ReachInbox API key
+    ri_key_row = conn.execute("SELECT value FROM settings WHERE key=?", 
+        (f"reachinbox_api_key_{workspace.lower()}",)).fetchone()
+    if not ri_key_row:
+        conn.close()
+        return {"error": f"ReachInbox API key not configured for {workspace}"}
+    ri_api_key = ri_key_row[0]
+    
+    # Get contacts to process
+    if body.job_id:
+        staged = conn.execute(
+            "SELECT * FROM lead_gen_contacts WHERE job_id=? AND status='approved'",
+            (body.job_id,)
+        ).fetchall()
+    elif body.contact_ids:
+        placeholders = ",".join(["?"] * len(body.contact_ids))
+        staged = conn.execute(
+            f"SELECT * FROM lead_gen_contacts WHERE id IN ({placeholders})",
+            body.contact_ids
+        ).fetchall()
+    else:
+        conn.close()
+        return {"error": "Provide either job_id or contact_ids"}
+    
+    staged = [dict(r) for r in staged]
+    
+    stats = {
+        "total_input": len(staged),
+        "new_contacts": 0,
+        "merged_duplicates": 0,
+        "skipped_no_email": 0,
+        "pushed_to_ri": 0,
+        "push_failed": 0,
+    }
+    
+    contacts_to_push = []
+    
+    for contact in staged:
+        email = (contact.get("email") or "").strip().lower()
+        if not email:
+            stats["skipped_no_email"] += 1
+            continue
+        
+        # Check master DB for duplicates
+        existing = conn.execute(
+            "SELECT id, first_name, last_name, company_name, title FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
+            (email,)
+        ).fetchone()
+        
+        if existing:
+            existing = dict(existing)
+            # Merge: update missing fields on existing contact
+            merge_fields = {}
+            if not existing.get("first_name") and contact.get("first_name"):
+                merge_fields["first_name"] = contact["first_name"]
+            if not existing.get("last_name") and contact.get("last_name"):
+                merge_fields["last_name"] = contact["last_name"]
+            if not existing.get("company_name") and contact.get("company_name"):
+                merge_fields["company_name"] = contact["company_name"]
+            if not existing.get("title") and contact.get("title"):
+                merge_fields["title"] = contact["title"]
+            
+            if merge_fields:
+                set_clause = ", ".join([f"{k}=?" for k in merge_fields.keys()])
+                conn.execute(f"UPDATE contacts SET {set_clause} WHERE id=?",
+                    list(merge_fields.values()) + [existing["id"]])
+            
+            stats["merged_duplicates"] += 1
+            # Still push to campaign (they're in our DB, just already existed)
+            contacts_to_push.append({
+                "contact_id": existing["id"],
+                "email": email,
+                "firstName": existing.get("first_name") or contact.get("first_name", ""),
+                "lastName": existing.get("last_name") or contact.get("last_name", ""),
+                "companyName": existing.get("company_name") or contact.get("company_name", ""),
+            })
+        else:
+            # New contact — insert into master DB
+            now = datetime.now().isoformat()
+            fields = {
+                "first_name": contact.get("first_name"),
+                "last_name": contact.get("last_name"),
+                "email": email,
+                "title": contact.get("title"),
+                "company_name": contact.get("company_name"),
+                "company_domain": contact.get("company_domain"),
+                "linkedin_url": contact.get("blitz_person_linkedin"),
+                "reachinbox_workspace": workspace,
+                "pipeline_stage": "new",
+                "created_at": now,
+                "updated_at": now,
+            }
+            fields = {k: v for k, v in fields.items() if v is not None}
+            
+            cols = list(fields.keys())
+            vals = list(fields.values())
+            placeholders = ",".join(["?"] * len(cols))
+            conn.execute(f"INSERT INTO contacts ({','.join(cols)}) VALUES ({placeholders})", vals)
+            new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            
+            stats["new_contacts"] += 1
+            contacts_to_push.append({
+                "contact_id": new_id,
+                "email": email,
+                "firstName": contact.get("first_name", ""),
+                "lastName": contact.get("last_name", ""),
+                "companyName": contact.get("company_name", ""),
+            })
+    
+    # Link all contacts to campaign
+    for cp in contacts_to_push:
+        conn.execute("INSERT OR IGNORE INTO contact_campaigns (contact_id, campaign_id) VALUES (?,?)",
+            (cp["contact_id"], campaign_id))
+    
+    conn.commit()
+    
+    # Push to ReachInbox
+    if contacts_to_push:
+        try:
+            ri_payload = [{
+                "email": c["email"],
+                "firstName": c["firstName"],
+                "lastName": c["lastName"],
+                "companyName": c["companyName"],
+            } for c in contacts_to_push]
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"https://api.reachinbox.ai/api/v1/campaigns/{body.ri_campaign_id}/leads",
+                    headers={"Authorization": f"Bearer {ri_api_key}", "Content-Type": "application/json"},
+                    json={"leads": ri_payload}
+                )
+            
+            if resp.status_code in (200, 201):
+                stats["pushed_to_ri"] = len(contacts_to_push)
+                # Update contact statuses
+                for cp in contacts_to_push:
+                    conn.execute("UPDATE contacts SET status='Pushed to RI' WHERE id=?", (cp["contact_id"],))
+                conn.commit()
+            else:
+                stats["push_failed"] = len(contacts_to_push)
+                stats["ri_error"] = resp.text[:200]
+        except Exception as e:
+            stats["push_failed"] = len(contacts_to_push)
+            stats["ri_error"] = str(e)
+    
+    conn.close()
+    
+    return {
+        "campaign_id": campaign_id,
+        "ri_campaign_id": body.ri_campaign_id,
+        "stats": stats,
+        "message": f"{stats['new_contacts']} new + {stats['merged_duplicates']} merged = {len(contacts_to_push)} pushed to ReachInbox",
+        "next_action": "monitor_campaign" if stats["pushed_to_ri"] > 0 else "check_errors"
+    }

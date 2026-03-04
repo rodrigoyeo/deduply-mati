@@ -2542,6 +2542,22 @@ const CampaignsPage = () => {
   const [riCampaignsFallback, setRiCampaignsFallback] = useState(false);
   const [riSelectedId, setRiSelectedId] = useState('');
   const [riPushing, setRiPushing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const syncReachInbox = async () => {
+    setSyncing(true);
+    try {
+      // Sync campaign stats
+      await api.post(`/reachinbox/sync-campaigns?workspace=${workspace}`);
+      // Sync analytics (step + variant data)
+      await api.post(`/reachinbox/sync-analytics?workspace=${workspace}`);
+      addToast('ReachInbox synced! Campaigns updated with latest stats.', 'success');
+      fetchCampaigns();
+    } catch (e) {
+      addToast(e.message || 'Sync failed', 'error');
+    }
+    setSyncing(false);
+  };
 
   const statusOptions = [
     { id: 'Active', name: 'Active' },
@@ -2642,6 +2658,9 @@ const CampaignsPage = () => {
       </div>
       <div className="header-actions">
         {mainTab === 'campaigns' && <>
+          <button className="sync-now-btn" onClick={syncReachInbox} disabled={syncing}>
+            {syncing ? <><Loader2 size={14} className="spin" /> Syncing...</> : <><RefreshCw size={14} /> Sync ReachInbox</>}
+          </button>
           <button className="btn btn-secondary" onClick={fetchCampaigns}><RefreshCw size={16} /> Refresh</button>
           <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={16} /> New Campaign</button>
         </>}
@@ -2763,6 +2782,8 @@ const CampaignsPage = () => {
                     <h3>{camp.name}</h3>
                     {camp.country && <span className={`country-badge country-${camp.country?.toLowerCase().replace(/ /g, '-')}`}>{camp.country}</span>}
                     <span className={`campaign-status-badge ${camp.status?.toLowerCase()}`}>{camp.status}</span>
+                    {camp.created_by === 'hermes' && <span className="agent-badge" style={{fontSize:10, padding:'2px 8px'}}>Agent</span>}
+                    {camp.created_by === 'hermes' && !camp.approved_by && <span className="campaign-status-badge" style={{background:'#fff3cd', color:'#856404', border:'1px solid #ffc107'}}>Needs Approval</span>}
                   </div>
                   {camp.description && <p className="campaign-desc">{camp.description}</p>}
                 </div>
@@ -2784,6 +2805,58 @@ const CampaignsPage = () => {
 
             {expandedCampaign === camp.id && (
               <div className="campaign-expanded-content">
+                {/* Strategy Brief Section */}
+                {(camp.strategy_brief || camp.target_vertical || camp.hypothesis || camp.created_by === 'hermes') && (
+                  <div className="strategy-brief-section">
+                    <div className="strategy-header">
+                      <div className="strategy-title-row">
+                        <h4 className="strategy-title">Campaign Strategy</h4>
+                        {camp.created_by === 'hermes' && <span className="agent-badge">Created by Hermes</span>}
+                        {camp.approved_by && <span className="approved-badge">Approved by {camp.approved_by}</span>}
+                        {camp.created_by === 'hermes' && !camp.approved_by && (
+                          <button className="btn btn-v2 btn-v2-primary btn-sm" onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              await api.put(`/campaigns/${camp.id}`, { approved_by: 'rodrigo', approved_at: new Date().toISOString() });
+                              addToast('Campaign approved!', 'success');
+                              fetchCampaigns();
+                            } catch(err) { addToast(err.message, 'error'); }
+                          }}>
+                            <Check size={14} /> Approve Campaign
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="strategy-cards">
+                      {camp.target_vertical && (
+                        <div className="strategy-card">
+                          <div className="strategy-card-label">Target Vertical</div>
+                          <div className="strategy-card-value">{camp.target_vertical}</div>
+                        </div>
+                      )}
+                      {camp.target_icp && (
+                        <div className="strategy-card">
+                          <div className="strategy-card-label">Ideal Customer Profile</div>
+                          <div className="strategy-card-value">{camp.target_icp}</div>
+                        </div>
+                      )}
+                    </div>
+                    {camp.strategy_brief && (
+                      <div className="strategy-brief-body">
+                        <div className="strategy-card-label" style={{marginBottom:6}}>Strategy Brief</div>
+                        <p className="strategy-text">{camp.strategy_brief}</p>
+                      </div>
+                    )}
+                    {camp.hypothesis && (
+                      <div className="hypothesis-box">
+                        <div className="strategy-card-label" style={{marginBottom:4}}>Hypothesis</div>
+                        <p className="hypothesis-text">{camp.hypothesis}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Templates Section */}
                 {loadingDetails ? (
                   <div className="loading-state" style={{padding: 40}}><Loader2 className="spin" size={24} /><span>Loading templates...</span></div>
                 ) : campaignDetails?.template_breakdown && campaignDetails.template_breakdown.length > 0 ? (
@@ -3131,14 +3204,27 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
 };
 
 const CampaignForm = ({ onSubmit, onCancel, initial = {} }) => {
-  const [data, setData] = useState({ name: '', description: '', country: '', status: 'Active', ...initial });
+  const [data, setData] = useState({ name: '', description: '', country: '', status: 'Active', strategy_brief: '', target_vertical: '', target_icp: '', hypothesis: '', ...initial });
   const countries = ['Mexico', 'United States', 'Germany', 'Spain'];
-  return (<form onSubmit={e => { e.preventDefault(); onSubmit(data); }}>
-    <div className="form-group"><label>Campaign Name *</label><input type="text" value={data.name} onChange={e => setData({ ...data, name: e.target.value })} required placeholder="E.g., SaaS Outreach - Q1" /></div>
+  return (<form onSubmit={e => { e.preventDefault(); onSubmit(data); }} className="campaign-form-v2">
+    <div className="form-group"><label>Campaign Name *</label><input type="text" value={data.name} onChange={e => setData({ ...data, name: e.target.value })} required placeholder="E.g., CE-SL: Roofing Companies 002 - US - ARKODE" /></div>
     <div className="form-group"><label>Description</label><textarea value={data.description || ''} onChange={e => setData({ ...data, description: e.target.value })} rows={2} placeholder="Brief description of this campaign..." /></div>
     <div className="form-row">
+      <div className="form-group"><label>Target Vertical</label><input type="text" value={data.target_vertical || ''} onChange={e => setData({ ...data, target_vertical: e.target.value })} placeholder="E.g., Roofing, HVAC, Manufacturing" /></div>
+      <div className="form-group"><label>Target ICP</label><input type="text" value={data.target_icp || ''} onChange={e => setData({ ...data, target_icp: e.target.value })} placeholder="E.g., Owners of 25-200 employee companies" /></div>
+    </div>
+    <div className="form-group">
+      <label>Strategy Brief</label>
+      <p className="form-hint">What are we testing? Why this audience? What messaging angle?</p>
+      <textarea value={data.strategy_brief || ''} onChange={e => setData({ ...data, strategy_brief: e.target.value })} rows={4} placeholder="Describe the campaign strategy, messaging approach, and what you're trying to learn..." style={{fontFamily:'var(--font-body)', lineHeight:1.6}} />
+    </div>
+    <div className="form-group">
+      <label>Hypothesis</label>
+      <textarea value={data.hypothesis || ''} onChange={e => setData({ ...data, hypothesis: e.target.value })} rows={2} placeholder="E.g., Roofing company owners respond better to cost-savings messaging than growth messaging" />
+    </div>
+    <div className="form-row">
       <div className="form-group"><label>Workspace</label><select value={data.country || ''} onChange={e => setData({ ...data, country: e.target.value })}><option value="">Select country...</option>{countries.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-      <div className="form-group"><label>Status</label><select value={data.status} onChange={e => setData({ ...data, status: e.target.value })}><option>Active</option><option>Paused</option><option>Completed</option></select></div>
+      <div className="form-group"><label>Status</label><select value={data.status} onChange={e => setData({ ...data, status: e.target.value })}><option>Draft</option><option>Active</option><option>Paused</option><option>Completed</option></select></div>
     </div>
     <div className="modal-actions"><button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button><button type="submit" className="btn btn-primary">{initial.id ? 'Save Changes' : 'Create Campaign'}</button></div>
   </form>);
