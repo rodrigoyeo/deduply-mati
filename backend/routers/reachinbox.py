@@ -294,6 +294,191 @@ async def sync_reachinbox_campaigns(
         conn.close()
         return {"error": str(e)}
 
+
+
+@router.post("/api/reachinbox/sync-analytics")
+async def sync_reachinbox_analytics(
+    workspace: str = "US",
+    user: dict = Depends(get_current_user)
+):
+    """Sync step-level and variant-level analytics from ReachInbox for all campaigns."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    workspace = workspace.upper()
+    conn = get_db()
+    api_key = _get_reachinbox_key(workspace, conn)
+    if not api_key:
+        conn.close()
+        return {"error": "ReachInbox API key not configured", "workspace": workspace}
+
+    try:
+        # Get all campaigns from ReachInbox
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{REACHINBOX_API_BASE}/campaigns/all",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            )
+        if resp.status_code != 200:
+            conn.close()
+            return {"error": f"Failed to fetch campaigns: {resp.status_code}"}
+
+        ri_camps = resp.json().get("data", {}).get("rows", [])
+        total_steps = 0
+        total_variants = 0
+
+        for camp in ri_camps:
+            ri_id = camp["id"]
+            camp_name = camp.get("name", "")
+
+            # Get analytics for this campaign
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                a_resp = await client.post(
+                    f"{REACHINBOX_API_BASE}/analytics?startDate=2024-01-01&endDate=2026-12-31",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={
+                        "campaignId": ri_id,
+                        "campaignAnalyticsRequired": True,
+                        "includeSubsequenceIds": [],
+                        "excludeSubsequenceIds": [],
+                        "filter": "none"
+                    }
+                )
+
+            if a_resp.status_code != 200:
+                continue
+
+            adata = a_resp.json().get("data", {})
+            steps = adata.get("campaignStepAnalyticsResult", [])
+
+            # Match to our campaign
+            if USE_POSTGRES:
+                our_camp = conn.execute("SELECT id FROM campaigns WHERE name = %s", (camp_name,)).fetchone()
+            else:
+                our_camp = conn.execute("SELECT id FROM campaigns WHERE name = ?", (camp_name,)).fetchone()
+            
+            our_camp_id = our_camp[0] if our_camp else None
+
+            # Clear old sequence data for this campaign
+            if our_camp_id:
+                if USE_POSTGRES:
+                    conn.execute("DELETE FROM campaign_sequences WHERE ri_campaign_id = %s", (ri_id,))
+                else:
+                    conn.execute("DELETE FROM campaign_sequences WHERE ri_campaign_id = ?", (ri_id,))
+
+            for step_idx, step in enumerate(steps):
+                step_num = step.get("stepNumber", step_idx + 1)
+                step_sent = step.get("sent", 0)
+                step_type = "initial" if step_idx == 0 else "follow-up"
+
+                variants = step.get("variants", step.get("variantAnalytics", []))
+                if not variants:
+                    variants = [{"variant": 0, "sent": step_sent}]
+
+                for v in variants:
+                    v_idx = v.get("variant", 0)
+                    v_sent = v.get("sent", 0)
+                    v_opened = v.get("opened", 0)
+                    v_replied = v.get("replied", 0)
+                    v_bounced = v.get("bounced", 0)
+
+                    if our_camp_id:
+                        if USE_POSTGRES:
+                            conn.execute("""INSERT INTO campaign_sequences 
+                                (campaign_id, campaign_name, ri_campaign_id, workspace, step_number, step_type,
+                                 variant_index, sent, opened, replied, bounced, synced_at)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
+                                (our_camp_id, camp_name, ri_id, workspace, step_num, step_type,
+                                 v_idx, v_sent, v_opened, v_replied, v_bounced))
+                        else:
+                            conn.execute("""INSERT INTO campaign_sequences 
+                                (campaign_id, campaign_name, ri_campaign_id, workspace, step_number, step_type,
+                                 variant_index, sent, opened, replied, bounced, synced_at)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))""",
+                                (our_camp_id, camp_name, ri_id, workspace, step_num, step_type,
+                                 v_idx, v_sent, v_opened, v_replied, v_bounced))
+                        total_variants += 1
+                    total_steps += 1
+
+            # Also update campaign-level stats
+            if our_camp_id:
+                camp_update = {
+                    "emails_sent": adata.get("leadsContacted", camp.get("totalEmailSent", 0)),
+                    "emails_opened": adata.get("opened", 0),
+                    "emails_replied": adata.get("replied", 0),
+                    "emails_bounced": adata.get("bounced", 0),
+                }
+                sent = camp_update["emails_sent"] or 1
+                camp_update["open_rate"] = round(100 * camp_update["emails_opened"] / sent, 1)
+                camp_update["reply_rate"] = round(100 * camp_update["emails_replied"] / sent, 1)
+
+                if USE_POSTGRES:
+                    conn.execute("""UPDATE campaigns SET 
+                        emails_sent=%s, emails_opened=%s, emails_replied=%s, emails_bounced=%s,
+                        open_rate=%s, reply_rate=%s WHERE id=%s""",
+                        (*camp_update.values(), our_camp_id))
+                else:
+                    conn.execute("""UPDATE campaigns SET 
+                        emails_sent=?, emails_opened=?, emails_replied=?, emails_bounced=?,
+                        open_rate=?, reply_rate=? WHERE id=?""",
+                        (*camp_update.values(), our_camp_id))
+
+        conn.commit()
+        conn.close()
+        return {
+            "workspace": workspace,
+            "campaigns_synced": len(ri_camps),
+            "total_steps": total_steps,
+            "total_variants": total_variants,
+            "message": f"Synced {len(ri_camps)} campaigns with {total_variants} sequence variants"
+        }
+    except Exception as e:
+        conn.close()
+        import traceback
+        return {"error": str(e), "trace": traceback.format_exc()}
+
+
+@router.get("/api/reachinbox/campaign-sequences")
+async def get_campaign_sequences(
+    workspace: str = "US",
+    campaign_id: Optional[int] = None,
+    user: dict = Depends(get_current_user)
+):
+    """Get synced sequence/variant data for campaigns."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    conn = get_db()
+    where = ["workspace=?"]
+    params = [workspace.upper()]
+    if campaign_id:
+        where.append("campaign_id=?")
+        params.append(campaign_id)
+
+    rows = conn.execute(f"""
+        SELECT * FROM campaign_sequences 
+        WHERE {' AND '.join(where)}
+        ORDER BY campaign_name, step_number, variant_index
+    """, params).fetchall()
+    conn.close()
+
+    result = {}
+    for r in rows:
+        r = dict(r)
+        key = r["campaign_name"]
+        if key not in result:
+            result[key] = {"campaign_id": r["campaign_id"], "ri_campaign_id": r["ri_campaign_id"], "steps": {}}
+        step = r["step_number"]
+        if step not in result[key]["steps"]:
+            result[key]["steps"][step] = {"type": r["step_type"], "variants": []}
+        result[key]["steps"][step]["variants"].append({
+            "variant": r["variant_index"],
+            "sent": r["sent"],
+            "opened": r["opened"],
+            "replied": r["replied"],
+            "bounced": r["bounced"],
+        })
+
+    return {"workspace": workspace, "campaigns": result}
+
 @router.post("/api/reachinbox/campaigns/{ri_campaign_id}/push-contacts")
 async def push_campaign_contacts(
     ri_campaign_id: int,
