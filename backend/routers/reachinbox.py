@@ -185,24 +185,114 @@ async def list_reachinbox_campaigns(
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                f"{REACHINBOX_API_BASE}/campaign",
+                f"{REACHINBOX_API_BASE}/campaigns/all",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             )
         if resp.status_code >= 500:
             return {"campaigns": [], "fallback": "manual_id", "reason": f"api_error_{resp.status_code}"}
         if resp.status_code in (200, 201):
             body = resp.json()
-            raw = body.get("data", body) if isinstance(body, dict) else body
+            # ReachInbox /campaigns/all returns {data: {rows: [...]}}
+            raw_data = body.get("data", body) if isinstance(body, dict) else body
+            raw = raw_data.get("rows", raw_data) if isinstance(raw_data, dict) else raw_data
             if isinstance(raw, list):
                 campaigns = [
-                    {"id": c.get("id"), "name": c.get("name") or c.get("campaign_name") or f"Campaign {c.get('id')}"}
+                    {
+                        "id": c.get("id"),
+                        "name": c.get("name") or c.get("campaign_name") or f"Campaign {c.get('id')}",
+                        "status": c.get("status"),
+                        "leads": c.get("leadAddedCount", 0),
+                        "sent": c.get("totalEmailSent", 0),
+                        "opened": c.get("totalEmailOpened", 0),
+                        "replied": c.get("totalEmailReplied", 0),
+                        "bounced": c.get("totalEmailBounced", 0),
+                    }
                     for c in raw if c.get("id")
                 ]
-                return {"campaigns": campaigns, "workspace": workspace}
+                return {"campaigns": campaigns, "workspace": workspace, "count": len(campaigns)}
         return {"campaigns": [], "fallback": "manual_id", "reason": f"unexpected_{resp.status_code}"}
     except Exception:
         return {"campaigns": [], "fallback": "manual_id", "reason": "connection_error"}
 
+
+
+
+@router.post("/api/reachinbox/sync-campaigns")
+async def sync_reachinbox_campaigns(
+    workspace: str = "US",
+    user: dict = Depends(get_current_user)
+):
+    """Sync campaign stats from ReachInbox into our database."""
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    workspace = workspace.upper()
+    conn = get_db()
+    api_key = _get_reachinbox_key(workspace, conn)
+    if not api_key:
+        conn.close()
+        return {"error": "ReachInbox API key not configured", "workspace": workspace}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{REACHINBOX_API_BASE}/campaigns/all",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            )
+        if resp.status_code != 200:
+            conn.close()
+            return {"error": f"ReachInbox API returned {resp.status_code}"}
+
+        body = resp.json()
+        raw_data = body.get("data", body) if isinstance(body, dict) else body
+        rows = raw_data.get("rows", raw_data) if isinstance(raw_data, dict) else raw_data
+
+        synced = 0
+        for ri_camp in rows:
+            name = ri_camp.get("name", "")
+            # Try to match by name to our campaigns
+            if USE_POSTGRES:
+                existing = conn.execute("SELECT id FROM campaigns WHERE name = %s", (name,)).fetchone()
+            else:
+                existing = conn.execute("SELECT id FROM campaigns WHERE name = ?", (name,)).fetchone()
+
+            stats = {
+                "total_leads": ri_camp.get("leadAddedCount", 0),
+                "emails_sent": ri_camp.get("totalEmailSent", 0),
+                "emails_opened": ri_camp.get("totalEmailOpened", 0) or ri_camp.get("totalUniqueEmailOpened", 0),
+                "emails_replied": ri_camp.get("totalEmailReplied", 0),
+                "emails_bounced": ri_camp.get("totalEmailBounced", 0),
+                "emails_clicked": ri_camp.get("totalLinkClicked", 0),
+            }
+            sent = stats["emails_sent"]
+            stats["open_rate"] = round(100 * stats["emails_opened"] / sent, 1) if sent else 0
+            stats["reply_rate"] = round(100 * stats["emails_replied"] / sent, 1) if sent else 0
+            stats["click_rate"] = round(100 * stats["emails_clicked"] / sent, 1) if sent else 0
+
+            ri_status = ri_camp.get("status", "")
+            if ri_status == "Active":
+                stats["status"] = "Active"
+            elif ri_status == "Completed":
+                stats["status"] = "Completed"
+            elif ri_status == "Draft":
+                stats["status"] = "Draft"
+
+            if existing:
+                # Update existing campaign
+                set_clause = ", ".join([f"{k}={'%s' if USE_POSTGRES else '?'}" for k in stats.keys()])
+                if USE_POSTGRES:
+                    conn.execute(f"UPDATE campaigns SET {set_clause} WHERE id=%s",
+                        list(stats.values()) + [existing[0]])
+                else:
+                    conn.execute(f"UPDATE campaigns SET {set_clause} WHERE id=?",
+                        list(stats.values()) + [existing[0]])
+                synced += 1
+
+        conn.commit()
+        conn.close()
+        return {"synced": synced, "total_ri_campaigns": len(rows), "workspace": workspace}
+    except Exception as e:
+        conn.close()
+        return {"error": str(e)}
 
 @router.post("/api/reachinbox/campaigns/{ri_campaign_id}/push-contacts")
 async def push_campaign_contacts(
