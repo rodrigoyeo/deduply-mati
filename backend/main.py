@@ -76,29 +76,7 @@ def init_db():
                     "INSERT INTO users (email, password_hash, name, role, api_token) VALUES (?, ?, ?, ?, ?)",
                     ("admin@deduply.io", pwd_hash, "Admin", "admin", token)
                 )
-                conn.execute("""CREATE TABLE IF NOT EXISTS campaign_sequences (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        campaign_id INTEGER NOT NULL,
-        campaign_name TEXT,
-        ri_campaign_id INTEGER,
-        workspace TEXT DEFAULT 'US',
-        step_number INTEGER NOT NULL,
-        step_type TEXT DEFAULT 'initial',
-        delay_days INTEGER DEFAULT 0,
-        variant_index INTEGER DEFAULT 0,
-        variant_subject TEXT,
-        variant_body TEXT,
-        sent INTEGER DEFAULT 0,
-        opened INTEGER DEFAULT 0,
-        replied INTEGER DEFAULT 0,
-        bounced INTEGER DEFAULT 0,
-        open_rate REAL DEFAULT 0,
-        reply_rate REAL DEFAULT 0,
-        synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )""")
-
-    conn.commit()
+                conn.commit()
                 print(f"Created admin: admin@deduply.io / admin123")
         except Exception as e:
             print(f"[DB] PostgreSQL error: {e}")
@@ -314,6 +292,29 @@ def init_db():
             ("admin@deduply.io", pwd_hash, "Admin", "admin", token)
         )
         print(f"Created admin: admin@deduply.io / admin123")
+
+    
+    conn.execute("""CREATE TABLE IF NOT EXISTS campaign_sequences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        campaign_id INTEGER NOT NULL,
+        campaign_name TEXT,
+        ri_campaign_id INTEGER,
+        workspace TEXT DEFAULT 'US',
+        step_number INTEGER NOT NULL,
+        step_type TEXT DEFAULT 'initial',
+        delay_days INTEGER DEFAULT 0,
+        variant_index INTEGER DEFAULT 0,
+        variant_subject TEXT,
+        variant_body TEXT,
+        sent INTEGER DEFAULT 0,
+        opened INTEGER DEFAULT 0,
+        replied INTEGER DEFAULT 0,
+        bounced INTEGER DEFAULT 0,
+        open_rate REAL DEFAULT 0,
+        reply_rate REAL DEFAULT 0,
+        synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
 
     conn.commit()
     conn.close()

@@ -7,7 +7,7 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Depends
 
-from database import get_db
+from database import get_db, USE_POSTGRES
 from models import ReachInboxPushRequest, PushCampaignContactsRequest
 from shared import get_current_user
 
