@@ -33,9 +33,9 @@ def get_campaigns(search: Optional[str] = None, status: Optional[str] = None,
         params.append(status)
     if workspace:
         if workspace.upper() == "MX":
-            where.append("(market='MX' OR country='Mexico')")
+            where.append("market='MX'")
         elif workspace.upper() == "US":
-            where.append("(market='US' OR market IS NULL OR (country != 'Mexico' OR country IS NULL))")
+            where.append("market='US'")
     rows = conn.execute(
         f"SELECT * FROM campaigns WHERE {' AND '.join(where)} ORDER BY created_at DESC", params
     ).fetchall()
@@ -171,7 +171,7 @@ def get_templates(campaign_id: Optional[int] = None, search: Optional[str] = Non
         if workspace.upper() == "MX":
             where.append("(country='Mexico' OR country='MX')")
         elif workspace.upper() == "US":
-            where.append("(country='United States' OR country='US' OR country IS NULL)")
+            where.append("(country='United States' OR country='US')")
     rows = conn.execute(
         f"SELECT * FROM email_templates WHERE {' AND '.join(where)} ORDER BY created_at DESC", params
     ).fetchall()
