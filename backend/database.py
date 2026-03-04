@@ -103,16 +103,19 @@ class DatabaseConnection:
 def get_db():
     """Get a database connection (SQLite for local, PostgreSQL for production)"""
     if USE_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
-        conn.autocommit = False
-        return DatabaseConnection(conn, is_postgres=True)
-    else:
-        # Local SQLite
-        db_path = os.getenv("DATABASE_PATH", "deduply.db")
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        return DatabaseConnection(conn, is_postgres=False)
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            conn.autocommit = False
+            return DatabaseConnection(conn, is_postgres=True)
+        except Exception as e:
+            print(f"[DB] PostgreSQL connection failed: {e}")
+            print("[DB] Falling back to SQLite")
+    # PostgreSQL failed - fall back to SQLite
+    db_path = os.getenv("DATABASE_PATH", "deduply.db")
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return DatabaseConnection(conn, is_postgres=False)
 
 
 def init_db():
