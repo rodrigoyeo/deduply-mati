@@ -32,6 +32,18 @@ from routers.hubspot import router as hubspot_router
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Deduply API", version="5.2")
+
+# Global exception handler — returns traceback for debugging
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    import traceback
+    from starlette.responses import JSONResponse
+    tb = traceback.format_exc()
+    print(f"[UNHANDLED ERROR] {request.url}: {exc}\n{tb}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": str(exc), "path": str(request.url), "trace": tb}
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
