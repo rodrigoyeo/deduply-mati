@@ -1150,6 +1150,8 @@ class BulkRunRequest(BaseModel):
     workspace: Optional[str] = None            # override auto-detection
     keywords_include: Optional[List[str]] = None  # override preset includes
     keywords_exclude: Optional[List[str]] = None  # override preset excludes
+    industry_include: Optional[List[str]] = None  # post-fetch filter: only keep companies with these industries
+    industry_exclude: Optional[List[str]] = None  # post-fetch filter: drop companies with these industries
 
 # Preset verticals from Hermes research
 VERTICAL_PRESETS = {
@@ -1201,6 +1203,11 @@ def _run_bulk_pipeline(job_id: str, api_key: str, req_data: dict):
 
         now = datetime.now().isoformat()
 
+        # Load industry filters
+        industry_include = req_data.get("industry_include") or preset.get("industry_include")
+        industry_exclude = req_data.get("industry_exclude") or preset.get("industry_exclude")
+        skipped_irrelevant = 0
+
         # Phase 1: Paginate company search
         cursor = None
         all_companies = []
@@ -1227,6 +1234,30 @@ def _run_bulk_pipeline(job_id: str, api_key: str, req_data: dict):
                 break
 
             for company in results:
+                # Post-fetch industry relevance filter
+                company_industry = (company.get("industry") or "").lower()
+                company_name = (company.get("name") or "").lower()
+                company_about = (company.get("about") or "").lower()
+                
+                if industry_include:
+                    if not any(ind.lower() in company_industry for ind in industry_include):
+                        skipped_irrelevant += 1
+                        continue
+                
+                if industry_exclude:
+                    if any(ind.lower() in company_industry for ind in industry_exclude):
+                        skipped_irrelevant += 1
+                        continue
+                
+                # Name-based noise filter: skip if company name contains AI/tech buzzwords
+                noise_names = ["ai", "software", "tech", "digital", "cloud", "data", "cyber",
+                               "analytics", "saas", "app", "platform", "labs", "ventures"]
+                if any(f" {n} " in f" {company_name} " or company_name.endswith(f" {n}") 
+                       or company_name.startswith(f"{n} ") for n in noise_names):
+                    if not any(v in company_about for v in [vertical.lower()]):
+                        skipped_irrelevant += 1
+                        continue
+
                 hq = company.get("hq") or {}
                 workspace = workspace_override or _workspace_for_company(
                     {"hq_country": hq.get("country_code", "")}, None
