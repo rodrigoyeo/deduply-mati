@@ -2729,7 +2729,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 }
 
 .c-stat-info { display: flex; flex-direction: column; }
-.c-stat-value { font-size: 28px; font-weight: 700; color: var(--navy); line-height: 1.2; }
+.c-stat-value { font-size: 28px; font-weight: 700; color: var(--navy); line-height: 1.2; font-family: var(--font-headline); }
 .c-stat-label { font-size: 13px; color: var(--text-2); font-weight: 500; }
 
 .campaign-stat-card.highlight {
@@ -2817,7 +2817,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
 
 .campaign-info { flex: 1; min-width: 0; }
 .campaign-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.campaign-title-row h3 { font-size: 16px; font-weight: 700; color: var(--navy); margin: 0; }
+.campaign-title-row h3 { font-size: 16px; font-weight: 600; color: var(--navy); margin: 0; font-family: var(--font-headline); }
 .campaign-desc { font-size: 13px; color: var(--text-2); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .campaign-stats-row {
@@ -2840,7 +2840,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   background: var(--bg-3);
 }
 
-.c-metric-value { font-size: 18px; font-weight: 700; color: var(--navy); }
+.c-metric-value { font-size: 18px; font-weight: 700; color: var(--navy); font-family: var(--font-headline); }
 .c-metric-label { font-size: 10px; color: var(--text-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
 
 .c-metric.highlight {
@@ -8182,4 +8182,119 @@ select:focus {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+}
+
+/* ===== Sequence Analytics ===== */
+.sequence-analytics {
+  margin-top: 16px;
+  padding: 20px 24px;
+  background: #fff;
+  border: 1px solid rgba(0,28,67,0.06);
+  border-radius: 12px;
+}
+
+.sequence-title {
+  font-family: var(--font-headline);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--navy);
+  margin: 0 0 16px;
+}
+
+.sequence-steps {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+}
+
+.sequence-step {
+  flex: 1;
+  min-width: 200px;
+  background: linear-gradient(135deg, rgba(0,28,67,0.02) 0%, rgba(255,108,93,0.03) 100%);
+  border: 1px solid rgba(0,28,67,0.06);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.step-badge {
+  display: inline-flex;
+  padding: 3px 10px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+.step-sent {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+
+.step-variants-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+.variant-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.variant-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.variant-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 22px;
+  font-family: var(--font-body);
+}
+
+.variant-bar-track {
+  flex: 1;
+  height: 8px;
+  background: rgba(0,28,67,0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.variant-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--coral) 0%, #ff8a7a 100%);
+  border-radius: 4px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  min-width: 2px;
+}
+
+.variant-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 45px;
+  text-align: right;
+  font-family: var(--font-body);
+}
+
+/* Step connector arrows */
+.sequence-step:not(:last-child)::after {
+  content: '';
+  display: none; /* Hidden for now, enable for flow arrows */
 }

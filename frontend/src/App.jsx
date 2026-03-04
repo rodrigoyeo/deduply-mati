@@ -2868,6 +2868,9 @@ const CampaignsPage = () => {
                     <p>Go to Templates and assign this campaign to a template to see performance data here.</p>
                   </div>
                 )}
+                {/* Sequence Analytics */}
+                <SequenceAnalytics campaignName={camp.name} workspace={workspace} addToast={addToast} />
+
                 <div className="campaign-push-bar">
                   <button className="btn btn-secondary btn-sm" onClick={e => { e.stopPropagation(); openRiPushModal(camp); }}>
                     <Send size={14} /> Push to ReachInbox
@@ -3199,6 +3202,65 @@ const CampaignTemplateBreakdown = ({ breakdown, campaignId, onUpdate, addToast }
           </div>
         );
       })}
+    </div>
+  );
+};
+
+
+// Sequence Analytics — step + variant performance view
+const SequenceAnalytics = ({ campaignName, workspace, addToast }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchSequences = async () => {
+      try {
+        const res = await api.get(`/reachinbox/campaign-sequences?workspace=${workspace}`);
+        if (res.campaigns && res.campaigns[campaignName]) {
+          setData(res.campaigns[campaignName]);
+        }
+      } catch (e) { console.error(e); }
+      setLoading(false);
+    };
+    fetchSequences();
+  }, [campaignName, workspace]);
+
+  if (loading) return <div className="loading-state" style={{padding:20}}><Loader2 className="spin" size={16} /><span style={{fontSize:13}}>Loading sequences...</span></div>;
+  if (!data || !data.steps || Object.keys(data.steps).length === 0) return null;
+
+  const steps = Object.entries(data.steps).sort(([a],[b]) => Number(a) - Number(b));
+
+  return (
+    <div className="sequence-analytics">
+      <h4 className="sequence-title">Sequence Performance</h4>
+      <div className="sequence-steps">
+        {steps.map(([stepNum, step]) => {
+          const totalSent = step.variants.reduce((s, v) => s + (v.sent || 0), 0);
+          return (
+            <div key={stepNum} className="sequence-step">
+              <div className="step-header">
+                <span className="step-badge">{step.type === 'initial' ? 'Initial' : `Follow-up ${stepNum - 1}`}</span>
+                <span className="step-sent">{totalSent.toLocaleString()} sent</span>
+                <span className="step-variants-count">{step.variants.length} variant{step.variants.length !== 1 ? 's' : ''}</span>
+              </div>
+              <div className="variant-bars">
+                {step.variants.map((v, vi) => {
+                  const pct = totalSent > 0 ? Math.round(100 * v.sent / totalSent) : 0;
+                  return (
+                    <div key={vi} className="variant-row">
+                      <span className="variant-label">V{vi + 1}</span>
+                      <div className="variant-bar-track">
+                        <div className="variant-bar-fill" style={{width: `${pct}%`}} />
+                      </div>
+                      <span className="variant-count">{v.sent.toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
