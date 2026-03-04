@@ -124,12 +124,9 @@ def init_db():
         db = get_db()
     except Exception as e:
         print(f"[DB INIT] Connection failed: {e}")
-        if USE_POSTGRES:
-            print("[DB INIT] Will retry connections on first request")
-            return
         raise
 
-    if USE_POSTGRES:
+    if db.is_postgres:
         # For PostgreSQL, verify connection and create default admin if needed
         try:
             db.execute("SELECT 1")
