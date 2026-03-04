@@ -234,40 +234,27 @@ const MultiSelect = ({ options, value = [], onChange, placeholder = "Select...",
 // Workspace Toggle — shown in sidebar
 const WorkspaceToggle = ({ collapsed }) => {
   const { workspace, setWorkspace } = useWorkspace();
-  return (
-    <div style={{
-      margin: '8px 12px 4px',
-      display: 'flex',
-      background: 'var(--bg-secondary)',
-      borderRadius: 8,
-      padding: 3,
-      gap: 2,
-    }}>
-      {[{id:'US', flag:'🇺🇸', label:'United States'}, {id:'MX', flag:'🇲🇽', label:'Mexico'}].map(ws => (
-        <button
-          key={ws.id}
-          onClick={() => setWorkspace(ws.id)}
-          title={ws.label}
-          style={{
-            flex: 1,
-            padding: '5px 8px',
-            border: 'none',
-            borderRadius: 6,
-            cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: workspace === ws.id ? 700 : 400,
-            background: workspace === ws.id ? 'var(--coral)' : 'transparent',
-            color: workspace === ws.id ? '#fff' : 'var(--text-secondary)',
-            transition: 'all 0.15s',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 4,
-          }}
-        >
-          {ws.flag} {ws.id}
+  if (collapsed) {
+    return (
+      <div className="ws-toggle-collapsed">
+        <button onClick={() => setWorkspace(workspace === 'US' ? 'MX' : 'US')} className="ws-toggle-icon" title={`Switch to ${workspace === 'US' ? 'MX' : 'US'}`}>
+          {workspace === 'US' ? '🇺🇸' : '🇲🇽'}
         </button>
-      ))}
+      </div>
+    );
+  }
+  return (
+    <div className="ws-toggle">
+      <div className="ws-toggle-label">WORKSPACE</div>
+      <div className="ws-toggle-buttons">
+        {[{id:'US', flag:'🇺🇸', label:'US'}, {id:'MX', flag:'🇲🇽', label:'MX'}].map(ws => (
+          <button key={ws.id} onClick={() => setWorkspace(ws.id)}
+            className={`ws-btn ${workspace === ws.id ? 'ws-btn-active' : ''}`}>
+            <span className="ws-flag">{ws.flag}</span>
+            <span className="ws-label">{ws.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 };
@@ -299,18 +286,20 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
 
   return (<aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
     <div className="sidebar-header">
-      <div className="logo">
-        <div className="logo-icon" onClick={toggleCollapsed} style={{cursor:'pointer'}} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>D</div>
-        {!collapsed && <div className="logo-content">
-          <span className="logo-text">Deduply</span>
-          <span className="logo-tagline">by Arkode</span>
-        </div>}
+      <div className="sidebar-top-row">
+        <div className="logo" style={{cursor:'pointer'}} onClick={() => setPage('inbox')}>
+          {!collapsed && <span className="logo-text">Deduply</span>}
+          {collapsed && <span className="logo-mark">D</span>}
+        </div>
+        <button className="sidebar-collapse-btn" onClick={toggleCollapsed} title={collapsed ? 'Expand' : 'Collapse'}>
+          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
       </div>
     </div>
-    {/* Workspace Toggle */}
+
     <WorkspaceToggle collapsed={collapsed} />
 
-    <nav className="sidebar-nav">{nav.map(item => (<button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)} title={item.label}><item.icon size={20} />{!collapsed && <span>{item.label}</span>}{!collapsed && item.id === 'contacts' && stats && <span className="nav-badge">{stats.unique_contacts?.toLocaleString()}</span>}{!collapsed && item.id === 'campaigns' && stats && <span className="nav-badge">{stats.total_campaigns}</span>}</button>))}</nav>
+    <nav className="sidebar-nav">{nav.map(item => (<button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)} title={item.label}><item.icon size={18} />{!collapsed && <span>{item.label}</span>}{!collapsed && item.id === 'contacts' && stats && <span className="nav-badge">{stats.unique_contacts?.toLocaleString()}</span>}{!collapsed && item.id === 'campaigns' && stats && <span className="nav-badge">{stats.total_campaigns}</span>}</button>))}</nav>
 
     {/* Import Progress Indicator */}
     {importJob && (importJob.status === 'pending' || importJob.status === 'running') && (
@@ -348,10 +337,7 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
     )}
 
     <div className="sidebar-footer">
-      {user && (<div className="user-info"><div className="user-avatar">{user.name?.[0] || user.email[0]}</div>{!collapsed && <div className="user-details"><span className="user-name">{user.name || user.email}</span><span className="user-role">{user.role}</span></div>}{!collapsed && <button className="logout-btn" onClick={onLogout} title="Logout"><LogOut size={18} /></button>}</div>)}
-      {!collapsed && <div className="sidebar-brand">
-        <img src="/arkode-logo.png" alt="Arkode" style={{height: '18px', opacity: 0.7}} />
-      </div>}
+      {user && (<div className="user-info"><div className="user-avatar">{user.name?.[0] || user.email[0]}</div>{!collapsed && <><div className="user-details"><span className="user-name">{user.name || user.email}</span><span className="user-role">{user.role}</span></div><button className="logout-btn" onClick={onLogout} title="Logout"><LogOut size={16} /></button></>}</div>)}
     </div>
   </aside>);
 };
@@ -2597,7 +2583,7 @@ const CampaignsPage = () => {
     else { setExpandedCampaign(id); fetchCampaignDetails(id); }
   };
 
-  const handleCreate = async (data) => { try { await api.post('/campaigns', data); addToast('Campaign created!', 'success'); setShowCreate(false); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
+  const handleCreate = async (data) => { try { await api.post('/campaigns', { ...data, market: workspace }); addToast('Campaign created!', 'success'); setShowCreate(false); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
   const handleUpdate = async (id) => { try { await api.put(`/campaigns/${id}`, editData); addToast('Campaign updated!', 'success'); setEditingId(null); fetchCampaigns(); if (expandedCampaign === id) fetchCampaignDetails(id); } catch (e) { addToast(e.message, 'error'); } };
   const handleUpdateSettings = async (data) => { try { await api.put(`/campaigns/${editingSettings.id}`, data); addToast('Campaign updated!', 'success'); setEditingSettings(null); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };
   const handleDelete = async (id) => { if (!window.confirm('Delete this campaign?')) return; try { await api.delete(`/campaigns/${id}`); addToast('Campaign deleted', 'success'); fetchCampaigns(); } catch (e) { addToast(e.message, 'error'); } };

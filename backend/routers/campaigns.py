@@ -160,12 +160,18 @@ def delete_campaign(campaign_id: int):
 # ==================== TEMPLATES ====================
 
 @router.get("/api/templates")
-def get_templates(campaign_id: Optional[int] = None, search: Optional[str] = None):
+def get_templates(campaign_id: Optional[int] = None, search: Optional[str] = None,
+                  workspace: Optional[str] = None):
     conn = get_db()
     where, params = ["1=1"], []
     if search:
         where.append("(name LIKE ? OR subject LIKE ?)")
         params.extend([f"%{search}%"] * 2)
+    if workspace:
+        if workspace.upper() == "MX":
+            where.append("(country='Mexico' OR country='MX')")
+        elif workspace.upper() == "US":
+            where.append("(country='United States' OR country='US' OR country IS NULL)")
     rows = conn.execute(
         f"SELECT * FROM email_templates WHERE {' AND '.join(where)} ORDER BY created_at DESC", params
     ).fetchall()
