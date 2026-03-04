@@ -136,6 +136,87 @@ POST /agent/v1/leadgen/approve
 
 ---
 
+
+
+## 1b. Split Pipeline (Company Search → Enrich Separately)
+
+For faster iteration: search companies first, save LinkedIn URLs, then enrich with the latest cascade config. If you need to change the cascade, re-run Phase 2 without re-searching companies.
+
+### Phase 1: Company Search Only (fast, ~60 companies/sec)
+```
+POST /agent/v1/leadgen/company-search
+```
+
+**Body:**
+```json
+{
+  "vertical": "roofing",
+  "country": "US",
+  "max_companies": 500,
+  "employee_range": ["11-50", "51-200"],
+  "keywords_include": ["roofing", "roofing contractor"],
+  "keywords_exclude": ["saas", "agency", "software"],
+  "industry_include": ["construction", "building materials"],
+  "industry_exclude": ["software", "financial services"]
+}
+```
+
+**Response:**
+```json
+{
+  "job_id": "abc123",
+  "type": "company_search",
+  "status": "running",
+  "next_action": "POST /agent/v1/leadgen/enrich-companies with job_id=abc123"
+}
+```
+
+Job status goes: `running` → `companies_ready`
+
+### Phase 2: Enrich Companies (Waterfall ICP + Email)
+```
+POST /agent/v1/leadgen/enrich-companies
+```
+
+**Body:**
+```json
+{
+  "job_id": "abc123",
+  "max_per_company": 20,
+  "workspace": "US"
+}
+```
+
+Or enrich specific companies only:
+```json
+{
+  "job_id": "abc123",
+  "company_ids": [1, 5, 12],
+  "max_per_company": 20
+}
+```
+
+**Response:**
+```json
+{
+  "job_id": "enrich-xyz",
+  "source_job": "abc123",
+  "type": "enrich",
+  "companies_to_process": 450,
+  "max_per_company": 20,
+  "status": "running"
+}
+```
+
+Enrichment job status goes: `running` → `awaiting_approval`
+Then use the standard approval flow (POST /agent/v1/leadgen/approve).
+
+### Why Split?
+- Company search is fast and cheap (~60/sec, no email lookups)
+- ICP enrichment is slow and expensive (waterfall + email per person)
+- If you change the cascade config, re-run Phase 2 on the SAME companies
+- Can selectively enrich high-priority companies first
+
 ## 2. Campaign Management
 
 ### List Campaigns
