@@ -993,7 +993,9 @@ async def agent_get_staged_contacts(job_id: str, status: Optional[str] = None,
         rows = conn.execute(f"""
             SELECT id, first_name, last_name, email, title, linkedin_url,
                    company_name, company_domain, workspace, icp_tier,
-                   blitz_company_linkedin, blitz_person_linkedin, status, created_at
+                   blitz_company_linkedin, blitz_person_linkedin,
+                   industry, company_city, company_state, employee_bucket,
+                   status, created_at
             FROM lead_gen_contacts WHERE {where}
             ORDER BY icp_tier ASC, company_name ASC
         """, params).fetchall()
@@ -1001,7 +1003,9 @@ async def agent_get_staged_contacts(job_id: str, status: Optional[str] = None,
         rows = conn.execute(f"""
             SELECT id, first_name, last_name, email, title, linkedin_url,
                    company_name, company_domain, workspace, icp_tier,
-                   blitz_company_linkedin, blitz_person_linkedin, status, created_at
+                   blitz_company_linkedin, blitz_person_linkedin,
+                   industry, company_city, company_state, employee_bucket,
+                   status, created_at
             FROM lead_gen_contacts WHERE {where}
             ORDER BY icp_tier ASC, company_name ASC
         """, params).fetchall()

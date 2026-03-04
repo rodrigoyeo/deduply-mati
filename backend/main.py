@@ -280,6 +280,13 @@ def init_db():
         "ALTER TABLE lead_gen_jobs ADD COLUMN approval_status TEXT DEFAULT 'pending'",
         "ALTER TABLE lead_gen_jobs ADD COLUMN approved_at TIMESTAMP",
         "ALTER TABLE lead_gen_jobs ADD COLUMN approved_by INTEGER",
+        "ALTER TABLE lead_gen_contacts ADD COLUMN industry TEXT",
+        "ALTER TABLE lead_gen_contacts ADD COLUMN company_city TEXT",
+        "ALTER TABLE lead_gen_contacts ADD COLUMN company_state TEXT",
+        "ALTER TABLE lead_gen_contacts ADD COLUMN employee_bucket TEXT",
+        "ALTER TABLE lead_gen_contacts ADD COLUMN icp_tier INTEGER",
+        "ALTER TABLE lead_gen_contacts ADD COLUMN blitz_company_linkedin TEXT",
+        "ALTER TABLE lead_gen_contacts ADD COLUMN blitz_person_linkedin TEXT",
     ]:
         try:
             conn.execute(col)

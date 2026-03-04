@@ -317,7 +317,7 @@ def _run_import_companies(job_id: str, api_key: str, company_ids: List[int], wor
 
         for company_id in company_ids:
             company_row_raw = conn.execute(
-                "SELECT id, name, domain, linkedin_url, hq_country, workspace FROM lead_gen_companies WHERE id=?",
+                "SELECT id, name, domain, linkedin_url, hq_country, hq_city, industry, size, workspace FROM lead_gen_companies WHERE id=?",
                 (company_id,)
             ).fetchone()
             if not company_row_raw:
@@ -854,20 +854,27 @@ def _run_find_contacts(job_id: str, api_key: str, companies: list, job_levels: l
                         except Exception as e:
                             print(f"[LEADGEN] Email enrichment failed for {person_linkedin}: {e}")
 
+                    company_industry = company_row.get("industry", "")
+                    company_city = company_row.get("hq_city", "")
+                    company_state = ""  # BlitzAPI uses hq_city, state parsed from it if needed
+                    employee_bucket = company_row.get("size", "")
+
                     if USE_POSTGRES:
                         conn.execute("""
                             INSERT INTO lead_gen_contacts
                             (job_id, company_id, first_name, last_name, email, title,
                              linkedin_url, company_name, company_domain, workspace,
                              icp_tier, blitz_company_linkedin, blitz_person_linkedin,
+                             industry, company_city, company_state, employee_bucket,
                              blitz_enriched_at, status, created_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
                         """, (
                             job_id, company_id,
                             person.get("first_name"), person.get("last_name"),
                             email, person.get("title") or person.get("headline"),
                             person_linkedin, company_name, company_domain, workspace,
                             icp_tier, linkedin_url, person_linkedin,
+                            company_industry, company_city, company_state, employee_bucket,
                             now, now
                         ))
                     else:
@@ -876,14 +883,16 @@ def _run_find_contacts(job_id: str, api_key: str, companies: list, job_levels: l
                             (job_id, company_id, first_name, last_name, email, title,
                              linkedin_url, company_name, company_domain, workspace,
                              icp_tier, blitz_company_linkedin, blitz_person_linkedin,
+                             industry, company_city, company_state, employee_bucket,
                              blitz_enriched_at, status, created_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
                         """, (
                             job_id, company_id,
                             person.get("first_name"), person.get("last_name"),
                             email, person.get("title") or person.get("headline"),
                             person_linkedin, company_name, company_domain, workspace,
                             icp_tier, linkedin_url, person_linkedin,
+                            company_industry, company_city, company_state, employee_bucket,
                             now, now
                         ))
                     conn.commit()
@@ -1354,29 +1363,42 @@ def _run_bulk_pipeline(job_id: str, api_key: str, req_data: dict):
                             stats["dupes_skipped"] += 1
                             continue
 
-                    # Stage in lead_gen_contacts
+                    # Stage in lead_gen_contacts (with company metadata)
+                    c_industry = company.get("industry", "")
+                    c_city = company.get("hq_city", "")
+                    c_state = ""
+                    c_employees = company.get("size", "")
+
                     if USE_POSTGRES:
                         conn.execute("""
                             INSERT INTO lead_gen_contacts
                             (job_id, company_id, first_name, last_name, email, title, linkedin_url,
                              company_name, company_domain, workspace, icp_tier,
-                             blitz_company_linkedin, blitz_person_linkedin, blitz_enriched_at, status, created_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                             blitz_company_linkedin, blitz_person_linkedin,
+                             industry, company_city, company_state, employee_bucket,
+                             blitz_enriched_at, status, created_at)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
                         """, (job_id, company["id"], person.get("first_name"), person.get("last_name"),
                               email, person.get("title") or person.get("headline"), person_li,
                               company.get("name"), company.get("domain"), company.get("workspace"),
-                              icp_tier, linkedin_url, person_li, now, now))
+                              icp_tier, linkedin_url, person_li,
+                              c_industry, c_city, c_state, c_employees,
+                              now, now))
                     else:
                         conn.execute("""
                             INSERT INTO lead_gen_contacts
                             (job_id, company_id, first_name, last_name, email, title, linkedin_url,
                              company_name, company_domain, workspace, icp_tier,
-                             blitz_company_linkedin, blitz_person_linkedin, blitz_enriched_at, status, created_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
+                             blitz_company_linkedin, blitz_person_linkedin,
+                             industry, company_city, company_state, employee_bucket,
+                             blitz_enriched_at, status, created_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
                         """, (job_id, company["id"], person.get("first_name"), person.get("last_name"),
                               email, person.get("title") or person.get("headline"), person_li,
                               company.get("name"), company.get("domain"), company.get("workspace"),
-                              icp_tier, linkedin_url, person_li, now, now))
+                              icp_tier, linkedin_url, person_li,
+                              c_industry, c_city, c_state, c_employees,
+                              now, now))
                     conn.commit()
                     stats["staged"] += 1
 
