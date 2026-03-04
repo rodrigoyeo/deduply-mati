@@ -100,10 +100,9 @@ def get_contacts(
 
     if workspace:
         if workspace.upper() == "MX":
-            where.append("c.reachinbox_workspace='MX'")
+            where.append("(c.reachinbox_workspace='MX' OR (c.reachinbox_workspace IS NULL AND c.country_strategy='Mexico'))")
         elif workspace.upper() == "US":
-            # US includes explicitly set US as well as NULL (legacy contacts)
-            where.append("(c.reachinbox_workspace='US' OR c.reachinbox_workspace IS NULL)")
+            where.append("(c.reachinbox_workspace='US' OR (c.reachinbox_workspace IS NULL AND (c.country_strategy='United States' OR c.country_strategy IS NULL)))")
 
     if campaigns:
         camp_list = [c.strip() for c in campaigns.split(',') if c.strip()]
