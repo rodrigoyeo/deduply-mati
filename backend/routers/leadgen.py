@@ -1148,6 +1148,8 @@ class BulkRunRequest(BaseModel):
     max_companies: int = 500                   # safety cap
     max_per_company: int = 1                   # usually 1 — the best ICP per company
     workspace: Optional[str] = None            # override auto-detection
+    keywords_include: Optional[List[str]] = None  # override preset includes
+    keywords_exclude: Optional[List[str]] = None  # override preset excludes
 
 # Preset verticals from Hermes research
 VERTICAL_PRESETS = {
@@ -1194,8 +1196,8 @@ def _run_bulk_pipeline(job_id: str, api_key: str, req_data: dict):
         workspace_override = req_data.get("workspace")
 
         preset = VERTICAL_PRESETS.get(vertical.lower(), {})
-        keywords_include = preset.get("keywords_include", [vertical])
-        keywords_exclude = preset.get("keywords_exclude", [])
+        keywords_include = req_data.get("keywords_include") or preset.get("keywords_include", [vertical])
+        keywords_exclude = req_data.get("keywords_exclude") or preset.get("keywords_exclude", [])
 
         now = datetime.now().isoformat()
 

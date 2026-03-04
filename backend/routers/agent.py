@@ -976,3 +976,52 @@ async def agent_approve_contacts(req: ApproveContactsRequest, user: dict = Depen
     result = await approve_contacts(req, user)
     result["next_action"] = "POST /agent/v1/reachinbox/push to push approved contacts to ReachInbox"
     return result
+
+
+@router.get("/leadgen/jobs/{job_id}/contacts")
+async def agent_get_staged_contacts(job_id: str, status: Optional[str] = None,
+                                     user: dict = Depends(get_agent_user)):
+    """Get staged contacts for a specific job. Use status=pending to see what needs approval."""
+    conn = get_db()
+    where = "job_id=?"
+    params = [job_id]
+    if status:
+        where += " AND status=?"
+        params.append(status)
+
+    if USE_POSTGRES:
+        rows = conn.execute(f"""
+            SELECT id, first_name, last_name, email, title, linkedin_url,
+                   company_name, company_domain, workspace, icp_tier,
+                   blitz_company_linkedin, blitz_person_linkedin, status, created_at
+            FROM lead_gen_contacts WHERE {where}
+            ORDER BY icp_tier ASC, company_name ASC
+        """, params).fetchall()
+    else:
+        rows = conn.execute(f"""
+            SELECT id, first_name, last_name, email, title, linkedin_url,
+                   company_name, company_domain, workspace, icp_tier,
+                   blitz_company_linkedin, blitz_person_linkedin, status, created_at
+            FROM lead_gen_contacts WHERE {where}
+            ORDER BY icp_tier ASC, company_name ASC
+        """, params).fetchall()
+    conn.close()
+
+    contacts = [dict(r) for r in rows]
+    summary = {
+        "total": len(contacts),
+        "pending": sum(1 for c in contacts if c.get("status") == "pending"),
+        "approved": sum(1 for c in contacts if c.get("status") == "approved"),
+        "with_email": sum(1 for c in contacts if c.get("email")),
+        "tier_1": sum(1 for c in contacts if c.get("icp_tier") == 1),
+        "tier_2": sum(1 for c in contacts if c.get("icp_tier") == 2),
+        "tier_3": sum(1 for c in contacts if c.get("icp_tier") == 3),
+    }
+
+    return {
+        "job_id": job_id,
+        "summary": summary,
+        "contacts": contacts,
+        "timestamp": _now_iso(),
+        "next_action": "POST /agent/v1/leadgen/approve with job_id or contact_ids" if summary["pending"] > 0 else "all_approved",
+    }
