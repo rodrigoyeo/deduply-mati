@@ -794,23 +794,35 @@ def _run_find_contacts(job_id: str, api_key: str, companies: list, job_levels: l
         total_found = 0
         now = datetime.now().isoformat()
 
-        # Standard cascade for home services SMBs (from Hermes research)
+        # Proven 4-tier cascade for SMBs (Hermes + Rodrigo config, Mar 2026)
         waterfall_cascade = [
             {
-                "include_title": ["owner", "CEO", "founder", "chief executive", "co-founder", "co-owner"],
-                "exclude_title": ["assistant", "intern", "junior", "associate"],
-                "location": ["WORLD"],
-                "include_headline_search": True
-            },
-            {
-                "include_title": ["president", "general manager", "managing director", "principal"],
-                "exclude_title": ["assistant", "intern"],
+                "include_title": ["Owner", "President", "CEO", "Founder", "Co-Founder",
+                                  "Proprietor", "Partner", "Co-Owner"],
+                "exclude_title": ["Assistant", "Intern", "Junior", "Coordinator", "Technician",
+                                  "Installer", "Apprentice", "Helper", "Receptionist"],
                 "location": ["WORLD"],
                 "include_headline_search": False
             },
             {
-                "include_title": ["operations manager", "COO", "director of operations", "VP operations"],
-                "exclude_title": ["assistant", "intern"],
+                "include_title": ["General Manager", "Managing Director", "COO",
+                                  "Chief Operating Officer", "Director of Operations",
+                                  "Operations Director", "VP Operations"],
+                "exclude_title": ["Assistant", "Coordinator", "Technician"],
+                "location": ["WORLD"],
+                "include_headline_search": False
+            },
+            {
+                "include_title": ["Operations Manager", "Service Manager", "Production Manager",
+                                  "Branch Manager", "Field Manager", "Construction Manager"],
+                "exclude_title": ["Assistant", "Junior", "Technician"],
+                "location": ["WORLD"],
+                "include_headline_search": False
+            },
+            {
+                "include_title": ["CFO", "Controller", "Finance Director",
+                                  "Finance Manager", "VP Finance"],
+                "exclude_title": ["Assistant", "Clerk", "Junior"],
                 "location": ["WORLD"],
                 "include_headline_search": False
             }
@@ -1155,7 +1167,7 @@ class BulkRunRequest(BaseModel):
     country: str = "US"
     employee_range: Optional[List[str]] = ["11-50", "51-200"]
     max_companies: int = 500                   # safety cap
-    max_per_company: int = 1                   # usually 1 — the best ICP per company
+    max_per_company: int = 20                  # get ALL decision-makers per company (was 1)
     workspace: Optional[str] = None            # override auto-detection
     keywords_include: Optional[List[str]] = None  # override preset includes
     keywords_exclude: Optional[List[str]] = None  # override preset excludes
@@ -1319,13 +1331,38 @@ def _run_bulk_pipeline(job_id: str, api_key: str, req_data: dict):
         print(f"[BULK RUN] {job_id}: Found {stats['companies_searched']} companies, starting ICP search...")
 
         # Phase 2: Waterfall ICP + email per company (sequential for now)
+        # Proven 4-tier cascade for SMBs (Hermes + Rodrigo config, Mar 2026)
         waterfall_cascade = [
-            {"include_title": ["owner", "CEO", "founder", "chief executive", "co-founder", "co-owner"],
-             "exclude_title": ["assistant", "intern", "junior"], "location": ["WORLD"], "include_headline_search": True},
-            {"include_title": ["president", "general manager", "managing director", "principal"],
-             "exclude_title": ["assistant", "intern"], "location": ["WORLD"], "include_headline_search": False},
-            {"include_title": ["operations manager", "COO", "director of operations"],
-             "exclude_title": ["assistant", "intern"], "location": ["WORLD"], "include_headline_search": False},
+            {
+                "include_title": ["Owner", "President", "CEO", "Founder", "Co-Founder",
+                                  "Proprietor", "Partner", "Co-Owner"],
+                "exclude_title": ["Assistant", "Intern", "Junior", "Coordinator", "Technician",
+                                  "Installer", "Apprentice", "Helper", "Receptionist"],
+                "location": ["WORLD"],
+                "include_headline_search": False
+            },
+            {
+                "include_title": ["General Manager", "Managing Director", "COO",
+                                  "Chief Operating Officer", "Director of Operations",
+                                  "Operations Director", "VP Operations"],
+                "exclude_title": ["Assistant", "Coordinator", "Technician"],
+                "location": ["WORLD"],
+                "include_headline_search": False
+            },
+            {
+                "include_title": ["Operations Manager", "Service Manager", "Production Manager",
+                                  "Branch Manager", "Field Manager", "Construction Manager"],
+                "exclude_title": ["Assistant", "Junior", "Technician"],
+                "location": ["WORLD"],
+                "include_headline_search": False
+            },
+            {
+                "include_title": ["CFO", "Controller", "Finance Director",
+                                  "Finance Manager", "VP Finance"],
+                "exclude_title": ["Assistant", "Clerk", "Junior"],
+                "location": ["WORLD"],
+                "include_headline_search": False
+            }
         ]
 
         for company in all_companies:

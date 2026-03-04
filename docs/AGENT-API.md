@@ -581,16 +581,21 @@ All US campaigns follow a **3-step sequence**:
 
 Contacts are scored by ICP (Ideal Customer Profile) tier from BlitzAPI waterfall:
 
-| Tier | Label | Job Levels | Priority |
-|------|-------|------------|----------|
-| T1 | Owner | C-Team, Owner, President | Highest — decision maker |
-| T2 | GM | Director, VP, General Manager | High — influencer |
-| T3 | Ops | Manager, Operations | Medium — implementer |
+| Tier | Label | Titles | Priority |
+|------|-------|--------|----------|
+| T1 | Owner | Owner, President, CEO, Founder, Co-Founder, Proprietor, Partner, Co-Owner | Highest — decision maker |
+| T2 | GM | General Manager, Managing Director, COO, Director of Operations, VP Operations | High — influencer |
+| T3 | Ops | Operations Manager, Service Manager, Production Manager, Branch Manager, Field Manager | Medium — implementer |
+| T4 | Finance | CFO, Controller, Finance Director, Finance Manager, VP Finance | Budget holder |
 
 **Template selection by tier:**
-- T1 → Direct, business-outcome focused messaging
-- T2 → ROI/efficiency focused messaging
-- T3 → Pain-point/process focused messaging
+- T1 → Direct, business-outcome focused messaging (Owner/CEO)
+- T2 → ROI/efficiency focused messaging (GM/COO)
+- T3 → Pain-point/process focused messaging (Ops/Service Managers)
+- T4 → Cost-savings/budget focused messaging (CFO/Controller)
+
+**max_results: 20** — gets ALL decision-makers per company, not just one.
+Excludes: Technician, Installer, Apprentice, Helper, Receptionist, Intern, Coordinator.
 
 ---
 
