@@ -494,19 +494,32 @@ async def search_companies(req: CompanySearchRequest, user: dict = Depends(get_c
 
 
 @router.get("/api/leadgen/jobs")
-def list_jobs(user: dict = Depends(get_current_user)):
+def list_jobs(workspace: Optional[str] = None, user: dict = Depends(get_current_user)):
     """List all lead generation jobs ordered by creation date."""
     if not user:
         raise HTTPException(401, "Not authenticated")
 
     conn = get_db()
-    rows = conn.execute("""
-        SELECT id, job_type, status, results_count, imported_count, credits_used,
-               workspace, created_at, completed_at, error
-        FROM lead_gen_jobs
-        ORDER BY created_at DESC
-        LIMIT 100
-    """).fetchall()
+    where = "1=1"
+    params = []
+    if workspace:
+        where = "workspace=?"
+        params.append(workspace.upper())
+
+    if USE_POSTGRES:
+        rows = conn.execute(f"""
+            SELECT id, job_type, status, results_count, imported_count, credits_used,
+                   workspace, created_at, completed_at, error, parameters, approval_status
+            FROM lead_gen_jobs WHERE {where}
+            ORDER BY created_at DESC LIMIT 100
+        """, params).fetchall()
+    else:
+        rows = conn.execute(f"""
+            SELECT id, job_type, status, results_count, imported_count, credits_used,
+                   workspace, created_at, completed_at, error, parameters, approval_status
+            FROM lead_gen_jobs WHERE {where}
+            ORDER BY created_at DESC LIMIT 100
+        """, params).fetchall()
     conn.close()
     return {"data": [dict(r) for r in rows]}
 
