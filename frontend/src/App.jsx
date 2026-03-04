@@ -5725,9 +5725,8 @@ const InboxPage = ({ setPage }) => {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { fetchJobs(); }, [workspace]);
-
   const { workspace } = useWorkspace();
+
   const fetchJobs = async () => {
     setLoading(true);
     try {
@@ -5832,8 +5831,6 @@ const PipelinePage = () => {
   const [loading, setLoading] = useState(true);
   const [approveLoading, setApproveLoading] = useState(false);
 
-  useEffect(() => { fetchJobs(); }, [workspace]);
-
   const { workspace } = useWorkspace();
   const fetchJobs = async () => {
     setLoading(true);
@@ -5843,6 +5840,8 @@ const PipelinePage = () => {
     } catch (e) { addToast(e.message, 'error'); }
     setLoading(false);
   };
+
+  useEffect(() => { fetchJobs(); }, [workspace]);
 
   const selectJob = async (job) => {
     setSelectedJob(job);
