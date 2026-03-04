@@ -1132,6 +1132,7 @@ class DedupPushRequest(BaseModel):
     job_id: Optional[str] = None
     ri_campaign_id: int
     workspace: str = "US"
+    lead_list_id: Optional[int] = None  # Assign contacts to this outreach list
 
 @router.post("/campaigns/{campaign_id}/push-with-dedup")
 async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: dict = Depends(get_agent_user)):
@@ -1215,6 +1216,11 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                     list(merge_fields.values()) + [existing["id"]])
             
             stats["merged_duplicates"] += 1
+            # Assign to outreach list even if merged
+            list_id = body.lead_list_id or contact.get("lead_list_id")
+            if list_id:
+                conn.execute("INSERT INTO contact_lists (contact_id, list_id) VALUES (?,?) ON CONFLICT DO NOTHING",
+                    (existing["id"], list_id))
             # Still push to campaign (they're in our DB, just already existed)
             contacts_to_push.append({
                 "contact_id": existing["id"],
@@ -1255,6 +1261,11 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 "lastName": contact.get("last_name", ""),
                 "companyName": contact.get("company_name", ""),
             })
+            # Assign to outreach list if specified
+            list_id = body.lead_list_id or contact.get("lead_list_id")
+            if list_id:
+                conn.execute("INSERT INTO contact_lists (contact_id, list_id) VALUES (?,?) ON CONFLICT DO NOTHING",
+                    (new_id, list_id))
     
     # Link all contacts to campaign
     for cp in contacts_to_push:

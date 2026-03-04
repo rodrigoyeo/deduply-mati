@@ -1547,6 +1547,9 @@ class AgentCompanySearchRequest(BaseModel):
     keywords_exclude: Optional[List[str]] = None
     industry_include: Optional[List[str]] = None
     industry_exclude: Optional[List[str]] = None
+    lead_list_name: Optional[str] = None       # e.g. "HVAC US - B2" — auto-creates if new
+    target_campaign_id: Optional[int] = None   # Deduply campaign ID to assign contacts to
+    target_ri_campaign_id: Optional[int] = None # ReachInbox campaign ID for push
 
 
 @router.post("/agent/v1/leadgen/company-search")
@@ -1565,15 +1568,34 @@ async def agent_company_search(req: AgentCompanySearchRequest, user: dict = Depe
     job_id = str(uuid.uuid4())
     workspace = (req.workspace or req.country).upper()
 
+    # Auto-create lead list if name provided but no ID
+    lead_list_id = None
+    if req.lead_list_name:
+        if USE_POSTGRES:
+            existing_list = conn.execute("SELECT id FROM outreach_lists WHERE name=%s", (req.lead_list_name,)).fetchone()
+        else:
+            existing_list = conn.execute("SELECT id FROM outreach_lists WHERE name=?", (req.lead_list_name,)).fetchone()
+        if existing_list:
+            lead_list_id = existing_list[0]
+        else:
+            if USE_POSTGRES:
+                conn.execute("INSERT INTO outreach_lists (name, description, contact_count, created_at) VALUES (%s,%s,%s,%s)",
+                    (req.lead_list_name, f"Auto-created for {req.vertical} pipeline", 0, datetime.now().isoformat()))
+                lead_list_id = conn.execute("SELECT currval(pg_get_serial_sequence('outreach_lists','id'))").fetchone()[0]
+            else:
+                conn.execute("INSERT INTO outreach_lists (name, description, contact_count, created_at) VALUES (?,?,?,?)",
+                    (req.lead_list_name, f"Auto-created for {req.vertical} pipeline", 0, datetime.now().isoformat()))
+                lead_list_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
     if USE_POSTGRES:
         conn.execute(
-            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (%s,%s,%s,%s,%s)",
-            (job_id, "company_search", "running", json.dumps(req.dict()), datetime.now().isoformat())
+            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (job_id, "company_search", "running", json.dumps(req.dict()), lead_list_id, req.lead_list_name, req.target_campaign_id, req.target_ri_campaign_id, datetime.now().isoformat())
         )
     else:
         conn.execute(
-            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (?,?,?,?,?)",
-            (job_id, "company_search", "running", json.dumps(req.dict()), datetime.now().isoformat())
+            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (job_id, "company_search", "running", json.dumps(req.dict()), lead_list_id, req.lead_list_name, req.target_campaign_id, req.target_ri_campaign_id, datetime.now().isoformat())
         )
     conn.commit()
 
@@ -1586,6 +1608,9 @@ async def agent_company_search(req: AgentCompanySearchRequest, user: dict = Depe
     return {
         "job_id": job_id,
         "type": "company_search",
+        "lead_list_id": lead_list_id,
+        "lead_list_name": req.lead_list_name,
+        "target_campaign_id": req.target_campaign_id,
         "status": "running",
         "message": "Company search started. Use GET /agent/v1/leadgen/jobs/{job_id} to check progress.",
         "next_action": f"POST /agent/v1/leadgen/enrich-companies with job_id={job_id}"
@@ -1734,6 +1759,9 @@ class EnrichCompaniesRequest(BaseModel):
     max_per_company: int = 20                  # decision-makers per company
     company_ids: Optional[List[int]] = None    # optional: enrich specific companies only
     workspace: Optional[str] = None
+    lead_list_name: Optional[str] = None       # overrides job-level list if set
+    target_campaign_id: Optional[int] = None   # overrides job-level campaign if set
+    target_ri_campaign_id: Optional[int] = None
 
 
 @router.post("/agent/v1/leadgen/enrich-companies")
@@ -1773,22 +1801,49 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
         conn.close()
         return {"error": "No companies found for this job", "job_id": req.job_id}
 
-    # Create enrichment job
+    # Create enrichment job — inherit lead_list & campaign from parent job if not overridden
     enrich_job_id = str(uuid.uuid4())
     workspace = (req.workspace or "US").upper()
 
+    # Get parent job's list/campaign assignments
+    parent_job = conn.execute(f"SELECT lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id FROM lead_gen_jobs WHERE id={ph}", (req.job_id,)).fetchone()
+    parent_job = dict(parent_job) if parent_job else {}
+    
+    # Use request values if set, otherwise inherit from parent job
+    lead_list_id = None
+    lead_list_name = req.lead_list_name or parent_job.get("lead_list_name")
+    target_campaign_id = req.target_campaign_id or parent_job.get("target_campaign_id")
+    target_ri_campaign_id = req.target_ri_campaign_id or parent_job.get("target_ri_campaign_id")
+
+    # Resolve lead_list_id from name if needed
+    if lead_list_name:
+        existing_list = conn.execute(f"SELECT id FROM outreach_lists WHERE name={ph}", (lead_list_name,)).fetchone()
+        if existing_list:
+            lead_list_id = existing_list[0]
+        else:
+            conn.execute(f"INSERT INTO outreach_lists (name, description, contact_count, created_at) VALUES ({ph},{ph},{ph},{ph})",
+                (lead_list_name, f"Auto-created for enrichment pipeline", 0, datetime.now().isoformat()))
+            if USE_POSTGRES:
+                lead_list_id = conn.execute("SELECT currval(pg_get_serial_sequence('outreach_lists','id'))").fetchone()[0]
+            else:
+                lead_list_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    else:
+        lead_list_id = parent_job.get("lead_list_id")
+
     if USE_POSTGRES:
         conn.execute(
-            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (%s,%s,%s,%s,%s)",
+            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (enrich_job_id, "enrich", "running",
              json.dumps({"source_job": req.job_id, "companies": len(companies), "max_per_company": req.max_per_company}),
+             lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id,
              datetime.now().isoformat())
         )
     else:
         conn.execute(
-            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, created_at) VALUES (?,?,?,?,?)",
+            "INSERT INTO lead_gen_jobs (id, job_type, status, parameters, lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
             (enrich_job_id, "enrich", "running",
              json.dumps({"source_job": req.job_id, "companies": len(companies), "max_per_company": req.max_per_company}),
+             lead_list_id, lead_list_name, target_campaign_id, target_ri_campaign_id,
              datetime.now().isoformat())
         )
     conn.commit()
@@ -1797,7 +1852,7 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
     import threading
     t = threading.Thread(
         target=_run_enrich_only,
-        args=(enrich_job_id, req.job_id, api_key, companies, req.max_per_company, workspace),
+        args=(enrich_job_id, req.job_id, api_key, companies, req.max_per_company, workspace, lead_list_id, target_campaign_id),
         daemon=True
     )
     t.start()
@@ -1816,7 +1871,8 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
 
 
 def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
-                     companies: list, max_per_company: int, workspace: str):
+                     companies: list, max_per_company: int, workspace: str,
+                     lead_list_id: int = None, target_campaign_id: int = None):
     """Background: Waterfall ICP + email enrichment on pre-searched companies."""
     conn = None
     stats = {"companies_processed": 0, "icp_found": 0, "emails_found": 0, "dupes_skipped": 0, "staged": 0}
@@ -1913,14 +1969,16 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                              company_name, company_domain, workspace, icp_tier,
                              blitz_company_linkedin, blitz_person_linkedin,
                              industry, company_city, employee_bucket,
+                             lead_list_id, target_campaign_id,
                              blitz_enriched_at, status, created_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
                         """, (enrich_job_id, company_id,
                               person.get("first_name"), person.get("last_name"),
                               email, person.get("title") or person.get("headline"), person_li,
                               company_name, company_domain, workspace, icp_tier,
                               linkedin_url, person_li,
                               c_industry, c_city, c_employees,
+                              lead_list_id, target_campaign_id,
                               now, now))
                     else:
                         conn.execute("""
@@ -1929,14 +1987,16 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                              company_name, company_domain, workspace, icp_tier,
                              blitz_company_linkedin, blitz_person_linkedin,
                              industry, company_city, employee_bucket,
+                             lead_list_id, target_campaign_id,
                              blitz_enriched_at, status, created_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
                         """, (enrich_job_id, company_id,
                               person.get("first_name"), person.get("last_name"),
                               email, person.get("title") or person.get("headline"), person_li,
                               company_name, company_domain, workspace, icp_tier,
                               linkedin_url, person_li,
                               c_industry, c_city, c_employees,
+                              lead_list_id, target_campaign_id,
                               now, now))
                     conn.commit()
                     stats["staged"] += 1
