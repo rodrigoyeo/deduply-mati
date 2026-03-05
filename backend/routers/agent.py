@@ -1200,6 +1200,19 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
     
     contacts_to_push = []
     
+    # Pre-fetch company data for all staged contacts (for extra field mapping)
+    company_cache = {}
+    company_ids_in_staged = set(c.get("company_id") for c in staged if c.get("company_id"))
+    if company_ids_in_staged:
+        ph = "%s" if conn.is_postgres else "?"
+        for cid in company_ids_in_staged:
+            try:
+                row = conn.execute(f"SELECT about, founded_year, employees_on_linkedin, domain FROM lead_gen_companies WHERE id={ph}", (cid,)).fetchone()
+                if row:
+                    company_cache[cid] = dict(row)
+            except Exception:
+                pass
+
     for contact in staged:
         email = (contact.get("email") or "").strip().lower()
         if not email:
@@ -1208,7 +1221,7 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
         
         # Check master DB for duplicates
         existing = conn.execute(
-            "SELECT id, first_name, last_name, company, title, company_city, company_state, industry, employee_bucket, icp_tier, seniority, company_linkedin_url, person_linkedin_url, company_country, country FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
+            "SELECT id, first_name, last_name, company, title, company_city, company_state, industry, employee_bucket, icp_tier, seniority, company_linkedin_url, person_linkedin_url, company_country, country, city, state, employees, company_description, company_founded_year, website, keywords, source_file, enrichment_source, country_strategy FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
             (email,)
         ).fetchone()
         
@@ -1217,6 +1230,11 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
             ICP_TO_SENIORITY = {1: "C-Suite", 2: "Vp", 3: "Director", 4: "Manager"}
             icp_tier = contact.get("icp_tier")
             country_val = "United States" if workspace == "US" else "Mexico"
+            
+            # Get company-level data for merge
+            comp = company_cache.get(contact.get("company_id"), {})
+            comp_domain = contact.get("company_domain") or comp.get("domain") or ""
+            comp_about = (comp.get("about") or "")[:500]
 
             # Merge: update missing fields on existing contact
             merge_fields = {}
@@ -1228,26 +1246,53 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 merge_fields["company"] = contact["company_name"]
             if not existing.get("title") and contact.get("title"):
                 merge_fields["title"] = contact["title"]
+            # Person location = company location
+            if not existing.get("city") and contact.get("company_city"):
+                merge_fields["city"] = contact["company_city"]
+            if not existing.get("state") and contact.get("company_state"):
+                merge_fields["state"] = contact["company_state"]
+            if not existing.get("country"):
+                merge_fields["country"] = country_val
+            # Company location
             if not existing.get("company_city") and contact.get("company_city"):
                 merge_fields["company_city"] = contact["company_city"]
             if not existing.get("company_state") and contact.get("company_state"):
                 merge_fields["company_state"] = contact["company_state"]
+            if not existing.get("company_country"):
+                merge_fields["company_country"] = country_val
+            # Industry & sizing
             if not existing.get("industry") and contact.get("industry"):
                 merge_fields["industry"] = contact["industry"]
             if not existing.get("employee_bucket") and contact.get("employee_bucket"):
                 merge_fields["employee_bucket"] = contact["employee_bucket"]
+            if not existing.get("employees") and comp.get("employees_on_linkedin"):
+                merge_fields["employees"] = comp["employees_on_linkedin"]
+            # ICP
             if not existing.get("icp_tier") and icp_tier:
                 merge_fields["icp_tier"] = icp_tier
             if not existing.get("seniority") and icp_tier:
                 merge_fields["seniority"] = ICP_TO_SENIORITY.get(icp_tier, "")
+            # LinkedIn URLs
             if not existing.get("company_linkedin_url") and contact.get("blitz_company_linkedin"):
                 merge_fields["company_linkedin_url"] = contact["blitz_company_linkedin"]
             if not existing.get("person_linkedin_url") and contact.get("blitz_person_linkedin"):
                 merge_fields["person_linkedin_url"] = contact["blitz_person_linkedin"]
-            if not existing.get("company_country"):
-                merge_fields["company_country"] = country_val
-            if not existing.get("country"):
-                merge_fields["country"] = country_val
+            # Company enrichment
+            if not existing.get("company_description") and comp_about:
+                merge_fields["company_description"] = comp_about
+            if not existing.get("company_founded_year") and comp.get("founded_year"):
+                merge_fields["company_founded_year"] = comp["founded_year"]
+            if not existing.get("website") and comp_domain:
+                merge_fields["website"] = f"https://{comp_domain}"
+            if not existing.get("keywords") and comp_about:
+                merge_fields["keywords"] = comp_about
+            # Source tracking
+            if not existing.get("source_file"):
+                merge_fields["source_file"] = "BlitzAPI hybrid enrichment March 2026"
+            if not existing.get("country_strategy"):
+                merge_fields["country_strategy"] = country_val
+            if not existing.get("enrichment_source"):
+                merge_fields["enrichment_source"] = "blitzapi"
             
             if merge_fields:
                 merge_fields["updated_at"] = datetime.now().isoformat()
@@ -1270,28 +1315,51 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 "companyName": existing.get("company") or contact.get("company_name", ""),
             })
         else:
-            # New contact — insert into master DB
+            # New contact — insert into master DB with full field mapping
             now = datetime.now().isoformat()
             ICP_TO_SENIORITY = {1: "C-Suite", 2: "Vp", 3: "Director", 4: "Manager"}
             icp_tier = contact.get("icp_tier")
             country_val = "United States" if workspace == "US" else "Mexico"
+            
+            # Get company-level data
+            comp = company_cache.get(contact.get("company_id"), {})
+            comp_domain = contact.get("company_domain") or comp.get("domain") or ""
+            comp_about = (comp.get("about") or "")[:500]
+            
             fields = {
                 "first_name": contact.get("first_name"),
                 "last_name": contact.get("last_name"),
                 "email": email,
                 "title": contact.get("title"),
                 "company": contact.get("company_name"),
-                "company_domain": contact.get("company_domain"),
+                "company_domain": comp_domain,
                 "person_linkedin_url": contact.get("blitz_person_linkedin"),
                 "company_linkedin_url": contact.get("blitz_company_linkedin"),
+                # Person location = company location
+                "city": contact.get("company_city"),
+                "state": contact.get("company_state"),
+                "country": country_val,
+                # Company location
                 "company_city": contact.get("company_city"),
                 "company_state": contact.get("company_state"),
                 "company_country": country_val,
-                "country": country_val,
+                # Industry & sizing
                 "industry": contact.get("industry"),
                 "employee_bucket": contact.get("employee_bucket"),
+                "employees": comp.get("employees_on_linkedin"),
+                # ICP
                 "icp_tier": icp_tier,
                 "seniority": ICP_TO_SENIORITY.get(icp_tier, "") if icp_tier else None,
+                # Company enrichment from lead_gen_companies
+                "company_description": comp_about if comp_about else None,
+                "company_founded_year": comp.get("founded_year"),
+                "website": f"https://{comp_domain}" if comp_domain else None,
+                "keywords": comp_about if comp_about else None,
+                # Source tracking
+                "source_file": "BlitzAPI hybrid enrichment March 2026",
+                "country_strategy": country_val,
+                "enrichment_source": "blitzapi",
+                # Timestamps
                 "blitz_enriched_at": contact.get("blitz_enriched_at"),
                 "reachinbox_workspace": workspace,
                 "pipeline_stage": "new",
