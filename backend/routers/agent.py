@@ -434,18 +434,33 @@ def agent_ingest_contacts(body: ContactIngestRequest, user: dict = Depends(get_a
             data = {k: v for k, v in item.dict().items() if v is not None}
             email = data.get("email", "").strip().lower() if data.get("email") else None
 
-            # Dedup by email
+            # Dedup by email — merge missing fields, assign to list/campaign
             if email:
                 existing = conn.execute(
-                    "SELECT id FROM contacts WHERE LOWER(email)=? AND is_duplicate=0", (email,)
+                    "SELECT id, first_name, last_name, company, title FROM contacts WHERE LOWER(email)=? AND is_duplicate=0", (email,)
                 ).fetchone()
                 if existing:
-                    skipped += 1
-                    # Still link to list/campaign if provided
+                    ex_id = existing[0]
+                    # Merge: fill missing fields from new data
+                    merge_updates = {}
+                    if not existing[1] and data.get("first_name"):
+                        merge_updates["first_name"] = data["first_name"]
+                    if not existing[2] and data.get("last_name"):
+                        merge_updates["last_name"] = data["last_name"]
+                    if not existing[3] and (data.get("company") or data.get("company_name")):
+                        merge_updates["company"] = data.get("company") or data.get("company_name")
+                    if not existing[4] and data.get("title"):
+                        merge_updates["title"] = data["title"]
+                    if merge_updates:
+                        set_clause = ", ".join([f"{k}=?" for k in merge_updates.keys()])
+                        conn.execute(f"UPDATE contacts SET {set_clause}, updated_at=? WHERE id=?",
+                            list(merge_updates.values()) + [now, ex_id])
+                    skipped += 1  # still counted as "duplicate" in stats
+                    # Link to list/campaign
                     if list_id:
-                        conn.execute("INSERT OR IGNORE INTO contact_lists (contact_id, list_id) VALUES (?,?)", (existing[0], list_id))
+                        conn.execute("INSERT OR IGNORE INTO contact_lists (contact_id, list_id) VALUES (?,?)", (ex_id, list_id))
                     if campaign_id:
-                        conn.execute("INSERT OR IGNORE INTO contact_campaigns (contact_id, campaign_id) VALUES (?,?)", (existing[0], campaign_id))
+                        conn.execute("INSERT OR IGNORE INTO contact_campaigns (contact_id, campaign_id) VALUES (?,?)", (ex_id, campaign_id))
                     continue
 
             # Set workspace
@@ -1193,7 +1208,7 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
         
         # Check master DB for duplicates
         existing = conn.execute(
-            "SELECT id, first_name, last_name, company_name, title FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
+            "SELECT id, first_name, last_name, company, title FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
             (email,)
         ).fetchone()
         
@@ -1205,8 +1220,8 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 merge_fields["first_name"] = contact["first_name"]
             if not existing.get("last_name") and contact.get("last_name"):
                 merge_fields["last_name"] = contact["last_name"]
-            if not existing.get("company_name") and contact.get("company_name"):
-                merge_fields["company_name"] = contact["company_name"]
+            if not existing.get("company") and contact.get("company_name"):
+                merge_fields["company"] = contact["company_name"]
             if not existing.get("title") and contact.get("title"):
                 merge_fields["title"] = contact["title"]
             
@@ -1227,7 +1242,7 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 "email": email,
                 "firstName": existing.get("first_name") or contact.get("first_name", ""),
                 "lastName": existing.get("last_name") or contact.get("last_name", ""),
-                "companyName": existing.get("company_name") or contact.get("company_name", ""),
+                "companyName": existing.get("company") or contact.get("company_name", ""),
             })
         else:
             # New contact — insert into master DB
@@ -1237,7 +1252,7 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 "last_name": contact.get("last_name"),
                 "email": email,
                 "title": contact.get("title"),
-                "company_name": contact.get("company_name"),
+                "company": contact.get("company_name"),
                 "company_domain": contact.get("company_domain"),
                 "linkedin_url": contact.get("blitz_person_linkedin"),
                 "reachinbox_workspace": workspace,
