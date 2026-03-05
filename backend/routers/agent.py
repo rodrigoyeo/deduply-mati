@@ -1208,12 +1208,16 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
         
         # Check master DB for duplicates
         existing = conn.execute(
-            "SELECT id, first_name, last_name, company, title FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
+            "SELECT id, first_name, last_name, company, title, company_city, company_state, industry, employee_bucket, icp_tier, seniority, company_linkedin_url, person_linkedin_url, company_country, country FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
             (email,)
         ).fetchone()
         
         if existing:
             existing = dict(existing)
+            ICP_TO_SENIORITY = {1: "C-Suite", 2: "Vp", 3: "Director", 4: "Manager"}
+            icp_tier = contact.get("icp_tier")
+            country_val = "United States" if workspace == "US" else "Mexico"
+
             # Merge: update missing fields on existing contact
             merge_fields = {}
             if not existing.get("first_name") and contact.get("first_name"):
@@ -1224,8 +1228,29 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 merge_fields["company"] = contact["company_name"]
             if not existing.get("title") and contact.get("title"):
                 merge_fields["title"] = contact["title"]
+            if not existing.get("company_city") and contact.get("company_city"):
+                merge_fields["company_city"] = contact["company_city"]
+            if not existing.get("company_state") and contact.get("company_state"):
+                merge_fields["company_state"] = contact["company_state"]
+            if not existing.get("industry") and contact.get("industry"):
+                merge_fields["industry"] = contact["industry"]
+            if not existing.get("employee_bucket") and contact.get("employee_bucket"):
+                merge_fields["employee_bucket"] = contact["employee_bucket"]
+            if not existing.get("icp_tier") and icp_tier:
+                merge_fields["icp_tier"] = icp_tier
+            if not existing.get("seniority") and icp_tier:
+                merge_fields["seniority"] = ICP_TO_SENIORITY.get(icp_tier, "")
+            if not existing.get("company_linkedin_url") and contact.get("blitz_company_linkedin"):
+                merge_fields["company_linkedin_url"] = contact["blitz_company_linkedin"]
+            if not existing.get("person_linkedin_url") and contact.get("blitz_person_linkedin"):
+                merge_fields["person_linkedin_url"] = contact["blitz_person_linkedin"]
+            if not existing.get("company_country"):
+                merge_fields["company_country"] = country_val
+            if not existing.get("country"):
+                merge_fields["country"] = country_val
             
             if merge_fields:
+                merge_fields["updated_at"] = datetime.now().isoformat()
                 set_clause = ", ".join([f"{k}=?" for k in merge_fields.keys()])
                 conn.execute(f"UPDATE contacts SET {set_clause} WHERE id=?",
                     list(merge_fields.values()) + [existing["id"]])
@@ -1247,6 +1272,9 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
         else:
             # New contact — insert into master DB
             now = datetime.now().isoformat()
+            ICP_TO_SENIORITY = {1: "C-Suite", 2: "Vp", 3: "Director", 4: "Manager"}
+            icp_tier = contact.get("icp_tier")
+            country_val = "United States" if workspace == "US" else "Mexico"
             fields = {
                 "first_name": contact.get("first_name"),
                 "last_name": contact.get("last_name"),
@@ -1254,7 +1282,17 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 "title": contact.get("title"),
                 "company": contact.get("company_name"),
                 "company_domain": contact.get("company_domain"),
-                "linkedin_url": contact.get("blitz_person_linkedin"),
+                "person_linkedin_url": contact.get("blitz_person_linkedin"),
+                "company_linkedin_url": contact.get("blitz_company_linkedin"),
+                "company_city": contact.get("company_city"),
+                "company_state": contact.get("company_state"),
+                "company_country": country_val,
+                "country": country_val,
+                "industry": contact.get("industry"),
+                "employee_bucket": contact.get("employee_bucket"),
+                "icp_tier": icp_tier,
+                "seniority": ICP_TO_SENIORITY.get(icp_tier, "") if icp_tier else None,
+                "blitz_enriched_at": contact.get("blitz_enriched_at"),
                 "reachinbox_workspace": workspace,
                 "pipeline_stage": "new",
                 "created_at": now,
