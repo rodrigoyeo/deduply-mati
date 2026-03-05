@@ -271,7 +271,7 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
     localStorage.setItem('deduply_sidebar_collapsed', String(next));
     setCollapsed(next);
   };
-  const nav = [{ id: 'inbox', label: 'Inbox', icon: MessageCircle }, { id: 'pipeline', label: 'Pipeline', icon: Target }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'reports', label: 'Reports', icon: TrendingUp }, { id: 'settings', label: 'Settings', icon: Settings }];
+  const nav = [{ id: 'inbox', label: 'Inbox', icon: MessageCircle }, { id: 'pipeline', label: 'Pipeline', icon: Target }, { id: 'leadgen', label: 'Lead Gen', icon: Zap }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'reports', label: 'Reports', icon: TrendingUp }, { id: 'settings', label: 'Settings', icon: Settings }];
 
   // Show toast when import completes
   useEffect(() => {
