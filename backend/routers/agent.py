@@ -1221,7 +1221,7 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
         
         # Check master DB for duplicates
         existing = conn.execute(
-            "SELECT id, first_name, last_name, company, title, company_city, company_state, industry, employee_bucket, icp_tier, seniority, company_linkedin_url, person_linkedin_url, company_country, country, city, state, employees, company_description, company_founded_year, website, keywords, source_file, enrichment_source, country_strategy FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
+            "SELECT id, first_name, last_name, company, title, company_city, company_state, industry, employee_bucket, icp_tier, seniority, company_linkedin_url, person_linkedin_url, company_country, country, city, state, employees, company_description, company_founded_year, website, keywords, source_file, enrichment_source, country_strategy, icp_ranking FROM contacts WHERE LOWER(email)=? AND is_duplicate=0",
             (email,)
         ).fetchone()
         
@@ -1272,6 +1272,8 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 merge_fields["icp_tier"] = icp_tier
             if not existing.get("seniority") and icp_tier:
                 merge_fields["seniority"] = ICP_TO_SENIORITY.get(icp_tier, "")
+            if not existing.get("icp_ranking") and contact.get("icp_ranking"):
+                merge_fields["icp_ranking"] = contact["icp_ranking"]
             # LinkedIn URLs
             if not existing.get("company_linkedin_url") and contact.get("blitz_company_linkedin"):
                 merge_fields["company_linkedin_url"] = contact["blitz_company_linkedin"]
@@ -1349,6 +1351,7 @@ async def agent_push_with_dedup(campaign_id: int, body: DedupPushRequest, user: 
                 "employees": comp.get("employees_on_linkedin"),
                 # ICP
                 "icp_tier": icp_tier,
+                "icp_ranking": contact.get("icp_ranking"),
                 "seniority": ICP_TO_SENIORITY.get(icp_tier, "") if icp_tier else None,
                 # Company enrichment from lead_gen_companies
                 "company_description": comp_about if comp_about else None,

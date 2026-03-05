@@ -1948,10 +1948,13 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                         "job_level": ["C-Team", "Director", "Manager", "VP"],
                         "max_results": 50,
                     })
+                    # Track ranking per tier by order returned
+                    tier_counters = {}
                     for person in ef_data.get("results", []):
                         job_level = person.get("job_level") or ""
                         icp_tier = JOB_LEVEL_TO_ICP.get(job_level, 4)
-                        people_results.append({"person": person, "icp_tier": icp_tier})
+                        tier_counters[icp_tier] = tier_counters.get(icp_tier, 0) + 1
+                        people_results.append({"person": person, "icp_tier": icp_tier, "icp_ranking": tier_counters[icp_tier]})
 
                 else:
                     # ── Larger companies (51-200+): waterfall-icp-keyword ──
@@ -1961,15 +1964,23 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                         "cascade": waterfall_cascade,
                         "max_results": 30,
                     })
+                    # Track ranking per tier
+                    tier_counters = {}
                     for result in wf_data.get("results", []):
                         icp_tier = result.get("icp")
                         person = result.get("person") or {}
-                        people_results.append({"person": person, "icp_tier": icp_tier})
+                        # Use BlitzAPI ranking if available, otherwise count per tier
+                        ranking = result.get("ranking")
+                        if not ranking:
+                            tier_counters[icp_tier] = tier_counters.get(icp_tier, 0) + 1
+                            ranking = tier_counters[icp_tier]
+                        people_results.append({"person": person, "icp_tier": icp_tier, "icp_ranking": ranking})
 
                 # ── Process all people (same for both routes) ──
                 for pr in people_results:
                     person = pr["person"]
                     icp_tier = pr["icp_tier"]
+                    icp_ranking = pr.get("icp_ranking")
                     person_li = person.get("linkedin_url") or ""
                     stats["icp_found"] += 1
 
@@ -2002,16 +2013,16 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                         conn.execute("""
                             INSERT INTO lead_gen_contacts
                             (job_id, company_id, first_name, last_name, email, title, linkedin_url,
-                             company_name, company_domain, workspace, icp_tier,
+                             company_name, company_domain, workspace, icp_tier, icp_ranking,
                              blitz_company_linkedin, blitz_person_linkedin,
                              industry, company_city, employee_bucket,
                              lead_list_id, target_campaign_id,
                              blitz_enriched_at, status, created_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)
                         """, (enrich_job_id, company_id,
                               person.get("first_name"), person.get("last_name"),
                               email, person.get("title") or person.get("headline"), person_li,
-                              company_name, company_domain, workspace, icp_tier,
+                              company_name, company_domain, workspace, icp_tier, icp_ranking,
                               linkedin_url, person_li,
                               c_industry, c_city, c_employees,
                               lead_list_id, target_campaign_id,
@@ -2020,16 +2031,16 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                         conn.execute("""
                             INSERT INTO lead_gen_contacts
                             (job_id, company_id, first_name, last_name, email, title, linkedin_url,
-                             company_name, company_domain, workspace, icp_tier,
+                             company_name, company_domain, workspace, icp_tier, icp_ranking,
                              blitz_company_linkedin, blitz_person_linkedin,
                              industry, company_city, employee_bucket,
                              lead_list_id, target_campaign_id,
                              blitz_enriched_at, status, created_at)
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)
                         """, (enrich_job_id, company_id,
                               person.get("first_name"), person.get("last_name"),
                               email, person.get("title") or person.get("headline"), person_li,
-                              company_name, company_domain, workspace, icp_tier,
+                              company_name, company_domain, workspace, icp_tier, icp_ranking,
                               linkedin_url, person_li,
                               c_industry, c_city, c_employees,
                               lead_list_id, target_campaign_id,
