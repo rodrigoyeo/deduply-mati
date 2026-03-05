@@ -1859,13 +1859,21 @@ async def agent_enrich_companies(req: EnrichCompaniesRequest, user: dict = Depen
 def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                      companies: list, max_per_company: int, workspace: str,
                      lead_list_id: int = None, target_campaign_id: int = None):
-    """Background: Waterfall ICP + email enrichment on pre-searched companies."""
+    """Background: Hybrid enrichment — routes by company size.
+    
+    11-50 employees  → employee-finder (job_level filter, broader net)
+    51-200 employees → waterfall-icp-keyword (title-based cascade, precise)
+    """
     conn = None
-    stats = {"companies_processed": 0, "icp_found": 0, "emails_found": 0, "dupes_skipped": 0, "staged": 0}
+    stats = {
+        "companies_processed": 0, "icp_found": 0, "emails_found": 0,
+        "dupes_skipped": 0, "staged": 0,
+        "route_employee_finder": 0, "route_waterfall": 0,
+    }
     try:
         conn = get_db()
 
-        # Proven 4-tier cascade (Hermes + Rodrigo config, Mar 2026)
+        # ── Waterfall cascade for 51-200 companies ──
         waterfall_cascade = [
             {
                 "include_title": ["Owner", "President", "CEO", "Founder", "Co-Founder",
@@ -1873,7 +1881,7 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                 "exclude_title": ["Assistant", "Intern", "Junior", "Coordinator", "Technician",
                                   "Installer", "Apprentice", "Helper", "Receptionist"],
                 "location": ["WORLD"],
-                "include_headline_search": False
+                "include_headline_search": True
             },
             {
                 "include_title": ["General Manager", "Managing Director", "COO",
@@ -1881,23 +1889,31 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                                   "Operations Director", "VP Operations"],
                 "exclude_title": ["Assistant", "Coordinator", "Technician"],
                 "location": ["WORLD"],
-                "include_headline_search": False
+                "include_headline_search": True
             },
             {
                 "include_title": ["Operations Manager", "Service Manager", "Production Manager",
                                   "Branch Manager", "Field Manager", "Construction Manager"],
                 "exclude_title": ["Assistant", "Junior", "Technician"],
                 "location": ["WORLD"],
-                "include_headline_search": False
+                "include_headline_search": True
             },
             {
                 "include_title": ["CFO", "Controller", "Finance Director",
                                   "Finance Manager", "VP Finance"],
                 "exclude_title": ["Assistant", "Clerk", "Junior"],
                 "location": ["WORLD"],
-                "include_headline_search": False
+                "include_headline_search": True
             }
         ]
+
+        # ── ICP tier mapping for employee-finder job_level results ──
+        JOB_LEVEL_TO_ICP = {
+            "C-Team": 1, "CXO": 1,
+            "VP": 2, "Vice President": 2,
+            "Director": 3,
+            "Manager": 4,
+        }
 
         now = datetime.now().isoformat()
 
@@ -1909,17 +1925,51 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
             company_name = company.get("name") or ""
             company_domain = company.get("domain") or ""
             company_id = company.get("id")
+            company_size = str(company.get("size") or "").strip()
+
+            # ── Route by company size ──
+            use_employee_finder = False
+            if company_size:
+                # Parse size: "11-50", "1-10", "51-200", etc.
+                try:
+                    upper_bound = int(company_size.split("-")[-1])
+                    use_employee_finder = upper_bound <= 50
+                except (ValueError, IndexError):
+                    pass  # default to waterfall
 
             try:
-                wf_data = _blitzapi_request_sync("POST", "/v2/search/waterfall-icp-keyword", api_key, {
-                    "company_linkedin_url": linkedin_url,
-                    "cascade": waterfall_cascade,
-                    "max_results": max_per_company,
-                })
+                people_results = []
 
-                for result in wf_data.get("results", []):
-                    icp_tier = result.get("icp")
-                    person = result.get("person") or {}
+                if use_employee_finder:
+                    # ── Small companies (11-50): employee-finder ──
+                    stats["route_employee_finder"] += 1
+                    ef_data = _blitzapi_request_sync("POST", "/v2/search/employee-finder", api_key, {
+                        "company_linkedin_url": linkedin_url,
+                        "job_level": ["C-Team", "Director", "Manager", "VP"],
+                        "max_results": 50,
+                    })
+                    for person in ef_data.get("results", []):
+                        job_level = person.get("job_level") or ""
+                        icp_tier = JOB_LEVEL_TO_ICP.get(job_level, 4)
+                        people_results.append({"person": person, "icp_tier": icp_tier})
+
+                else:
+                    # ── Larger companies (51-200+): waterfall-icp-keyword ──
+                    stats["route_waterfall"] += 1
+                    wf_data = _blitzapi_request_sync("POST", "/v2/search/waterfall-icp-keyword", api_key, {
+                        "company_linkedin_url": linkedin_url,
+                        "cascade": waterfall_cascade,
+                        "max_results": 30,
+                    })
+                    for result in wf_data.get("results", []):
+                        icp_tier = result.get("icp")
+                        person = result.get("person") or {}
+                        people_results.append({"person": person, "icp_tier": icp_tier})
+
+                # ── Process all people (same for both routes) ──
+                for pr in people_results:
+                    person = pr["person"]
+                    icp_tier = pr["icp_tier"]
                     person_li = person.get("linkedin_url") or ""
                     stats["icp_found"] += 1
 
@@ -1945,7 +1995,7 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                     # Get company metadata
                     c_industry = company.get("industry", "")
                     c_city = company.get("hq_city", "")
-                    c_employees = company.get("size", "")
+                    c_employees = company_size
 
                     # Stage contact
                     if USE_POSTGRES:
@@ -1991,7 +2041,7 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
                 try:
                     conn.execute("UPDATE lead_gen_companies SET imported=1 WHERE id=?", (company_id,))
                 except Exception:
-                    pass  # imported column may not exist in some environments
+                    pass
                 conn.commit()
                 stats["companies_processed"] += 1
 
