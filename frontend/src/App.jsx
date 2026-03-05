@@ -1000,6 +1000,9 @@ const ContactsPage = () => {
     { id: 'company_technologies', label: 'Technologies', editable: false, default: false },
     { id: 'company_founded_year', label: 'Founded', editable: true, default: false },
     { id: 'keywords', label: 'Keywords', editable: true, default: false },
+    // ICP scoring
+    { id: 'icp_tier', label: 'ICP Tier', editable: false, default: true },
+    { id: 'icp_ranking', label: 'ICP Ranking', editable: false, default: false },
     // System fields
     { id: 'country_strategy', label: 'Strategy', editable: true, default: true, type: 'strategy' },
     { id: 'status', label: 'Status', editable: true, type: 'status', default: true },
