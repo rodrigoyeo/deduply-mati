@@ -152,18 +152,22 @@ def clean_company_name(company: Optional[str], domain: Optional[str] = None,
                 paren_clean = paren_content.lower().replace(' ', '').replace('&', '')
                 domain_clean = domain_name.lower()
 
-                # If parenthetical content matches domain exactly
-                if paren_clean == domain_clean:
-                    cleaned = paren_content
-                    reason = f"Matched domain '{domain}'"
-                # If parenthetical content is at start of domain (e.g., EDSS matches edssenergy)
-                elif domain_clean.startswith(paren_clean) and len(paren_clean) >= 2:
-                    cleaned = paren_content
-                    reason = f"Matched domain prefix '{domain}'"
-                # If domain starts with parenthetical content
-                elif paren_clean.startswith(domain_clean) and len(domain_clean) >= 3:
-                    cleaned = paren_content
-                    reason = f"Matched domain '{domain}'"
+                # Domain hint matched — always prefer the human-readable name before the
+                # parenthesis over the acronym/abbreviation inside it.
+                # e.g. "Wesco International (WESCO)" → "Wesco International", NOT "WESCO"
+                # e.g. "Temperature Control Inc (TCI)" → "Temperature Control Inc", NOT "TCI"
+                # The only exception: content before paren is empty (acronym IS the name)
+                if paren_clean == domain_clean or \
+                   domain_clean.startswith(paren_clean) and len(paren_clean) >= 2 or \
+                   paren_clean.startswith(domain_clean) and len(domain_clean) >= 3:
+                    if before_paren:
+                        # Always use the full name, just strip the parenthetical
+                        cleaned = before_paren
+                        reason = "Removed parenthetical abbreviation (domain matched)"
+                    else:
+                        # No text before paren — acronym is the only name, keep as-is
+                        cleaned = paren_content
+                        reason = f"Matched domain '{domain}'"
                 # Otherwise just remove the parenthetical part
                 elif before_paren:
                     cleaned = before_paren
