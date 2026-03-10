@@ -10,7 +10,9 @@ Pydantic models live in backend/models.py
 
 import hashlib
 import secrets
+import bcrypt
 
+from pydantic import BaseModel
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
