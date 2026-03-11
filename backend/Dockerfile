@@ -9,7 +9,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
+# Copy application - ADD a build arg to bust cache
+ARG CACHEBUST=1
 COPY . .
 
 # Expose port (Railway will set PORT env var)
