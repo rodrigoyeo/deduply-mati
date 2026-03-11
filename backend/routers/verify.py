@@ -174,9 +174,9 @@ def run_verification_job_sync(job_id: int):
     print(f"[VERIFY THREAD] Starting job {job_id}")
     conn = None
 
-    REQUEST_DELAY = 2.5
-    RATE_LIMIT_PAUSE = 300  # pause on rate limit before retry
-    MAX_CONSECUTIVE_ERRORS = 50  # only true API errors (not timeouts) count
+    REQUEST_DELAY = 5.0  # slow down to avoid rate limits (was 2.5s)
+    RATE_LIMIT_PAUSE = 300  # keep for logging, but we skip immediately now
+    MAX_CONSECUTIVE_ERRORS = 50
 
     try:
         conn = get_db()
@@ -254,20 +254,23 @@ def run_verification_job_sync(job_id: int):
                 error_msg = result.get("error", "").lower()
                 api_errors += 1
 
-                # Rate limit → pause 5 min, retry once
+                # Rate limit → skip immediately, don't pause (BEC is rate limiting on every request now)
                 if "rate" in error_msg or "limit" in error_msg or "too many" in error_msg:
-                    print(f"[VERIFY THREAD] Rate limit! Pausing {RATE_LIMIT_PAUSE}s...")
+                    print(f"[VERIFY THREAD] Rate limit for {email}, skipping immediately")
+                    # Mark as Unknown so we don't keep trying this contact
                     conn.execute(
-                        "UPDATE verification_jobs SET current_email=? WHERE id=?",
-                        (f"Rate limited - pausing {RATE_LIMIT_PAUSE}s...", job_id)
+                        "UPDATE contacts SET email_status='Unknown', email_verified_at=? WHERE id=?",
+                        (datetime.now().isoformat(), cid)
                     )
                     conn.commit()
-                    time.sleep(RATE_LIMIT_PAUSE)
+                    unknown += 1
+                    verified += 1
                     consecutive_errors = 0
-                    result = verify_email_sync(email, api_key)
-                    if result.get("status") == "API_ERROR":
-                        print(f"[VERIFY THREAD] Still rate-limited, skipping {email}")
-                        continue
+                    conn.execute("""UPDATE verification_jobs SET
+                        verified_count=?, valid_count=?, invalid_count=?, unknown_count=?, skipped_count=?
+                        WHERE id=?""", (verified, valid, invalid, unknown, skipped, job_id))
+                    conn.commit()
+                    continue
 
                 # Timeout/network → mark as Unknown immediately, move on (no pause, no retry)
                 elif ("timeout" in error_msg or "timed out" in error_msg
