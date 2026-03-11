@@ -105,7 +105,7 @@ def update_contact_verification(conn, contact_id: int, result: dict):
 def verify_email_sync(email: str, api_key: str) -> dict:
     """Synchronous email verification using httpx (for thread)."""
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=30.0) as client:
             response = client.get(
                 BULKEMAILCHECKER_API_URL,
                 params={"key": api_key, "email": email}
@@ -174,7 +174,7 @@ def run_verification_job_sync(job_id: int):
     print(f"[VERIFY THREAD] Starting job {job_id}")
     conn = None
 
-    REQUEST_DELAY = 5.0  # slow down to avoid rate limits (was 2.5s)
+    REQUEST_DELAY = 2.5
     RATE_LIMIT_PAUSE = 300  # keep for logging, but we skip immediately now
     MAX_CONSECUTIVE_ERRORS = 50
 
@@ -222,17 +222,17 @@ def run_verification_job_sync(job_id: int):
                 break
 
             contact = conn.execute(
-                "SELECT email, email_status, email_verified_at FROM contacts WHERE id=? AND email IS NOT NULL AND email != ''",
+                "SELECT email, email_status FROM contacts WHERE id=? AND email IS NOT NULL AND email != ''",
                 (cid,)
             ).fetchone()
 
             if not contact:
                 continue
 
-            email, current_status, verified_at = contact[0], contact[1], contact[2]
+            email, current_status = contact[0], contact[1]
 
-            # Skip final states: Valid/Invalid, or Unknown that was already attempted (has verified_at)
-            if current_status in ['Valid', 'Invalid'] or (current_status == 'Unknown' and verified_at):
+            # Skip final states only: Valid or Invalid (Unknown gets retried)
+            if current_status in ['Valid', 'Invalid']:
                 skipped += 1
                 conn.execute(
                     "UPDATE verification_jobs SET skipped_count=?, current_email=? WHERE id=?",
@@ -254,42 +254,26 @@ def run_verification_job_sync(job_id: int):
                 error_msg = result.get("error", "").lower()
                 api_errors += 1
 
-                # Rate limit → skip immediately, don't pause (BEC is rate limiting on every request now)
+                # Rate limit → pause 60s (shorter than before) then retry once, else skip
                 if "rate" in error_msg or "limit" in error_msg or "too many" in error_msg:
-                    print(f"[VERIFY THREAD] Rate limit for {email}, skipping immediately")
-                    # Mark as Unknown so we don't keep trying this contact
-                    conn.execute(
-                        "UPDATE contacts SET email_status='Unknown', email_verified_at=? WHERE id=?",
-                        (datetime.now().isoformat(), cid)
-                    )
+                    print(f"[VERIFY THREAD] Rate limit for {email}, pausing 60s then retry...")
+                    conn.execute("UPDATE verification_jobs SET current_email=? WHERE id=?",
+                                 (f"Rate limited - pausing 60s...", job_id))
                     conn.commit()
-                    unknown += 1
-                    verified += 1
+                    time.sleep(60)
                     consecutive_errors = 0
-                    conn.execute("""UPDATE verification_jobs SET
-                        verified_count=?, valid_count=?, invalid_count=?, unknown_count=?, skipped_count=?
-                        WHERE id=?""", (verified, valid, invalid, unknown, skipped, job_id))
-                    conn.commit()
-                    continue
+                    result = verify_email_sync(email, api_key)
+                    if result.get("status") == "API_ERROR":
+                        print(f"[VERIFY THREAD] Still rate-limited after pause, skipping {email}")
+                        continue
 
-                # Timeout/network → mark as Unknown immediately, move on (no pause, no retry)
+                # Timeout/network → skip this email in current run, leave status unchanged
+                # (keep it as Not Verified so next job will retry it — don't corrupt the data)
                 elif ("timeout" in error_msg or "timed out" in error_msg
                       or "read operation" in error_msg or "connect" in error_msg
                       or "network" in error_msg or "connection" in error_msg):
-                    print(f"[VERIFY THREAD] Timeout for {email}, marking Unknown and moving on")
-                    # Save Unknown with verified_at so it won't be re-queued
-                    conn.execute(
-                        "UPDATE contacts SET email_status='Unknown', email_verified_at=? WHERE id=?",
-                        (datetime.now().isoformat(), cid)
-                    )
-                    conn.commit()
-                    unknown += 1
-                    verified += 1
+                    print(f"[VERIFY THREAD] Timeout for {email}, skipping (keeping Not Verified for next run)")
                     consecutive_errors = 0
-                    conn.execute("""UPDATE verification_jobs SET
-                        verified_count=?, valid_count=?, invalid_count=?, unknown_count=?, skipped_count=?
-                        WHERE id=?""", (verified, valid, invalid, unknown, skipped, job_id))
-                    conn.commit()
                     continue
 
                 # Other errors → skip, count consecutive, only kill on true API failures
