@@ -105,7 +105,7 @@ def update_contact_verification(conn, contact_id: int, result: dict):
 def verify_email_sync(email: str, api_key: str) -> dict:
     """Synchronous email verification using httpx (for thread)."""
     try:
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=10.0) as client:
             response = client.get(
                 BULKEMAILCHECKER_API_URL,
                 params={"key": api_key, "email": email}
@@ -175,8 +175,7 @@ def run_verification_job_sync(job_id: int):
     conn = None
 
     REQUEST_DELAY = 2.5
-    RATE_LIMIT_PAUSE = 300
-    TIMEOUT_PAUSE = 60      # pause on timeout before retry
+    RATE_LIMIT_PAUSE = 300  # pause on rate limit before retry
     MAX_CONSECUTIVE_ERRORS = 50  # only true API errors (not timeouts) count
 
     try:
@@ -269,22 +268,25 @@ def run_verification_job_sync(job_id: int):
                         print(f"[VERIFY THREAD] Still rate-limited, skipping {email}")
                         continue
 
-                # Timeout/network → pause 60s, retry once, then skip — NEVER kill the job
+                # Timeout/network → mark as Unknown immediately, move on (no pause, no retry)
                 elif ("timeout" in error_msg or "timed out" in error_msg
                       or "read operation" in error_msg or "connect" in error_msg
                       or "network" in error_msg or "connection" in error_msg):
-                    print(f"[VERIFY THREAD] Timeout for {email}, pausing {TIMEOUT_PAUSE}s then retry...")
+                    print(f"[VERIFY THREAD] Timeout for {email}, marking Unknown and moving on")
+                    # Save Unknown so it won't be re-queued as unverified
                     conn.execute(
-                        "UPDATE verification_jobs SET current_email=? WHERE id=?",
-                        (f"Timeout - pausing {TIMEOUT_PAUSE}s...", job_id)
+                        "UPDATE contacts SET email_status='Unknown', verified_at=? WHERE id=?",
+                        (datetime.now().isoformat(), cid)
                     )
                     conn.commit()
-                    time.sleep(TIMEOUT_PAUSE)
+                    unknown += 1
+                    verified += 1
                     consecutive_errors = 0
-                    result = verify_email_sync(email, api_key)
-                    if result.get("status") == "API_ERROR":
-                        print(f"[VERIFY THREAD] Still timing out, skipping {email}")
-                        continue
+                    conn.execute("""UPDATE verification_jobs SET
+                        verified_count=?, valid_count=?, invalid_count=?, unknown_count=?, skipped_count=?
+                        WHERE id=?""", (verified, valid, invalid, unknown, skipped, job_id))
+                    conn.commit()
+                    continue
 
                 # Other errors → skip, count consecutive, only kill on true API failures
                 else:
