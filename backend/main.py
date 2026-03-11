@@ -3155,10 +3155,11 @@ def run_verification_job_sync(job_id: int):
             # Verify email with retry logic
             result = verify_email_sync(email, api_key)
 
-            # Handle API errors (rate limit, timeouts, etc.)
+            # Handle API errors (rate limit, timeouts, etc.) - NEW CODE v4
             if result.get("status") == "API_ERROR":
                 error_msg = result.get("error", "").lower()
                 api_errors += 1
+                print(f"[VERIFY THREAD] DEBUG v4: got error_msg='{error_msg}'")
 
                 # Rate limit → pause 5 min, retry once
                 if "rate" in error_msg or "limit" in error_msg or "too many" in error_msg:
@@ -3173,11 +3174,11 @@ def run_verification_job_sync(job_id: int):
                         print(f"[VERIFY THREAD] Still rate-limited after pause, skipping {email}")
                         continue
 
-                # Timeout → pause 60s, retry once, then skip (never kill the job)
+                # Timeout → pause 60s, retry once, then skip (never kill the job) - NEW v4
                 elif ("timeout" in error_msg or "timed out" in error_msg
                       or "read operation" in error_msg or "connect" in error_msg
                       or "network" in error_msg or "connection" in error_msg):
-                    print(f"[VERIFY THREAD] Timeout/network error for {email}: {error_msg}. Pausing {TIMEOUT_PAUSE}s...")
+                    print(f"[VERIFY THREAD] NEW v4 TIMEOUT HANDLER: pausing {TIMEOUT_PAUSE}s for {email}...")
                     conn.execute("UPDATE verification_jobs SET current_email=? WHERE id=?",
                                 (f"Timeout - pausing {TIMEOUT_PAUSE}s...", job_id))
                     conn.commit()
