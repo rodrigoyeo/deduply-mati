@@ -176,7 +176,8 @@ def run_verification_job_sync(job_id: int):
 
     REQUEST_DELAY = 2.5
     RATE_LIMIT_PAUSE = 300
-    MAX_CONSECUTIVE_ERRORS = 10
+    TIMEOUT_PAUSE = 60      # pause on timeout before retry
+    MAX_CONSECUTIVE_ERRORS = 50  # only true API errors (not timeouts) count
 
     try:
         conn = get_db()
@@ -251,11 +252,11 @@ def run_verification_job_sync(job_id: int):
 
             if result.get("status") == "API_ERROR":
                 error_msg = result.get("error", "").lower()
-                consecutive_errors += 1
                 api_errors += 1
 
+                # Rate limit → pause 5 min, retry once
                 if "rate" in error_msg or "limit" in error_msg or "too many" in error_msg:
-                    print(f"[VERIFY THREAD] Rate limit detected! Pausing for {RATE_LIMIT_PAUSE} seconds...")
+                    print(f"[VERIFY THREAD] Rate limit! Pausing {RATE_LIMIT_PAUSE}s...")
                     conn.execute(
                         "UPDATE verification_jobs SET current_email=? WHERE id=?",
                         (f"Rate limited - pausing {RATE_LIMIT_PAUSE}s...", job_id)
@@ -265,18 +266,38 @@ def run_verification_job_sync(job_id: int):
                     consecutive_errors = 0
                     result = verify_email_sync(email, api_key)
                     if result.get("status") == "API_ERROR":
-                        print(f"[VERIFY THREAD] Still getting error after pause, skipping {email}")
+                        print(f"[VERIFY THREAD] Still rate-limited, skipping {email}")
                         continue
-                elif consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                    print(f"[VERIFY THREAD] Too many consecutive errors ({consecutive_errors}), stopping job")
+
+                # Timeout/network → pause 60s, retry once, then skip — NEVER kill the job
+                elif ("timeout" in error_msg or "timed out" in error_msg
+                      or "read operation" in error_msg or "connect" in error_msg
+                      or "network" in error_msg or "connection" in error_msg):
+                    print(f"[VERIFY THREAD] Timeout for {email}, pausing {TIMEOUT_PAUSE}s then retry...")
                     conn.execute(
-                        "UPDATE verification_jobs SET status='failed', error_message=? WHERE id=?",
-                        (f"Too many consecutive API errors. Last error: {error_msg}", job_id)
+                        "UPDATE verification_jobs SET current_email=? WHERE id=?",
+                        (f"Timeout - pausing {TIMEOUT_PAUSE}s...", job_id)
                     )
                     conn.commit()
-                    return
+                    time.sleep(TIMEOUT_PAUSE)
+                    consecutive_errors = 0
+                    result = verify_email_sync(email, api_key)
+                    if result.get("status") == "API_ERROR":
+                        print(f"[VERIFY THREAD] Still timing out, skipping {email}")
+                        continue
+
+                # Other errors → skip, count consecutive, only kill on true API failures
                 else:
-                    print(f"[VERIFY THREAD] API error for {email}, skipping: {error_msg}")
+                    consecutive_errors += 1
+                    print(f"[VERIFY THREAD] API error ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}) for {email}: {error_msg}")
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                        print(f"[VERIFY THREAD] Too many consecutive API errors, stopping job")
+                        conn.execute(
+                            "UPDATE verification_jobs SET status='failed', error_message=? WHERE id=?",
+                            (f"Too many consecutive API errors. Last error: {error_msg}", job_id)
+                        )
+                        conn.commit()
+                        return
                     continue
             else:
                 consecutive_errors = 0
