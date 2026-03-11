@@ -222,16 +222,17 @@ def run_verification_job_sync(job_id: int):
                 break
 
             contact = conn.execute(
-                "SELECT email, email_status FROM contacts WHERE id=? AND email IS NOT NULL AND email != ''",
+                "SELECT email, email_status, email_verified_at FROM contacts WHERE id=? AND email IS NOT NULL AND email != ''",
                 (cid,)
             ).fetchone()
 
             if not contact:
                 continue
 
-            email, current_status = contact[0], contact[1]
+            email, current_status, verified_at = contact[0], contact[1], contact[2]
 
-            if current_status in ['Valid', 'Invalid']:
+            # Skip final states: Valid/Invalid, or Unknown that was already attempted (has verified_at)
+            if current_status in ['Valid', 'Invalid'] or (current_status == 'Unknown' and verified_at):
                 skipped += 1
                 conn.execute(
                     "UPDATE verification_jobs SET skipped_count=?, current_email=? WHERE id=?",
@@ -273,9 +274,9 @@ def run_verification_job_sync(job_id: int):
                       or "read operation" in error_msg or "connect" in error_msg
                       or "network" in error_msg or "connection" in error_msg):
                     print(f"[VERIFY THREAD] Timeout for {email}, marking Unknown and moving on")
-                    # Save Unknown so it won't be re-queued as unverified
+                    # Save Unknown with verified_at so it won't be re-queued
                     conn.execute(
-                        "UPDATE contacts SET email_status='Unknown', verified_at=? WHERE id=?",
+                        "UPDATE contacts SET email_status='Unknown', email_verified_at=? WHERE id=?",
                         (datetime.now().isoformat(), cid)
                     )
                     conn.commit()
