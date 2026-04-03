@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from database import get_db, USE_POSTGRES
 from models import ContactCreate, ContactUpdate, BulkUpdateRequest, MergeRequest
 from workspace_routing import detect_workspace
-from shared import (
+from shared import (  # noqa: E402 (import block continues below)
     get_contact_campaigns, get_contact_lists, get_contact_technologies,
     set_contact_campaigns, set_contact_lists,
     add_contact_campaign, add_contact_list, add_contact_technology,
@@ -26,6 +26,26 @@ from shared import (
 )
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# GUARDRAIL: email_status is immutable once set to Valid or Invalid.
+# Only BEC verification jobs and webhook bounce events may change those values.
+# CSV imports and agent ingests must NEVER overwrite a verified status.
+# ---------------------------------------------------------------------------
+PROTECTED_EMAIL_STATUSES = {'Valid', 'Invalid'}
+
+def guard_email_status(new_status: str, existing_status: str = None) -> str:
+    """
+    Prevents import/ingest from overwriting a verified email status.
+    - If existing is Valid or Invalid → return existing unchanged, always.
+    - If new_status would downgrade to Not Verified → block it unless existing is None/Not Verified.
+    - Otherwise → allow the new value.
+    """
+    if existing_status in PROTECTED_EMAIL_STATUSES:
+        return existing_status  # never overwrite a verified result
+    if new_status == 'Not Verified' and existing_status in ('Unknown',):
+        return existing_status  # don't reset Unknown → Not Verified via import
+    return new_status
 
 
 # ==================== CONTACTS ====================
@@ -565,6 +585,11 @@ def bulk_update(req: BulkUpdateRequest):
         if field not in allowed_fields:
             conn.close()
             raise HTTPException(400, f"Field {field} cannot be bulk updated")
+        # GUARDRAIL: block bulk-resetting email_status to Not Verified
+        # (only BEC verification and webhook bounces should set that field)
+        if field == 'email_status' and value == 'Not Verified':
+            conn.close()
+            raise HTTPException(400, "Cannot bulk-set email_status to 'Not Verified'. Use the verification job to re-verify contacts.")
         placeholders = ','.join(['?'] * len(contact_ids))
         conn.execute(f"UPDATE contacts SET {field}=?, updated_at=? WHERE id IN ({placeholders})", [value, now] + contact_ids)
         updated = len(contact_ids)
@@ -1110,10 +1135,10 @@ def run_import_job_sync(job_id: int):
                                     data['email_status'] = 'Invalid'
                                 elif raw in ['unknown', 'catchall', 'catch-all', 'catch_all', 'risky', 'accept_all', 'accept-all']:
                                     data['email_status'] = 'Unknown'
-                                elif raw in ['not verified', 'not_verified', 'unverified', 'pending', '']:
-                                    data['email_status'] = 'Not Verified'
-                                else:
-                                    data['email_status'] = 'Not Verified'
+                                # GUARDRAIL: Do NOT map empty/unverified CSV values to 'Not Verified' —
+                                # that would overwrite real BEC results on existing contacts.
+                                # Skip setting email_status at all; the existing DB value is preserved.
+                                # else: do nothing — don't add email_status to data dict
                             elif tgt_col == 'status':
                                 raw = str(val).strip().lower()
                                 status_map = {
@@ -1163,6 +1188,19 @@ def run_import_job_sync(job_id: int):
                                 "UPDATE contacts SET country_strategy=?, updated_at=? WHERE id=?",
                                 (data['country_strategy'], datetime.now().isoformat(), existing_id)
                             )
+                        # GUARDRAIL: if CSV import has an email_status, check it against
+                        # existing before applying — never overwrite Valid/Invalid
+                        if data.get('email_status'):
+                            existing_row = conn.execute(
+                                "SELECT email_status FROM contacts WHERE id=?", (existing_id,)
+                            ).fetchone()
+                            existing_es = existing_row[0] if existing_row else None
+                            safe_es = guard_email_status(data['email_status'], existing_es)
+                            if safe_es != existing_es:
+                                conn.execute(
+                                    "UPDATE contacts SET email_status=?, updated_at=? WHERE id=?",
+                                    (safe_es, datetime.now().isoformat(), existing_id)
+                                )
                         stats['merged'] += 1
                 else:
                     if data:

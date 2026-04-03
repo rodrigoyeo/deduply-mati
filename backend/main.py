@@ -1670,6 +1670,8 @@ def run_import_job_sync(job_id: int):
                             elif tgt_col == 'company_technologies':
                                 csv_technologies.update(t.strip() for t in str(val).split(',') if t.strip())
                             # Normalize email_status values
+                            # GUARDRAIL: Never map blank/unknown CSV values to 'Not Verified' —
+                            # that would overwrite existing BEC-verified results on existing contacts.
                             elif tgt_col == 'email_status':
                                 raw = str(val).strip().lower()
                                 if raw in ['passed', 'valid', 'ok', 'good', 'verified', 'deliverable', 'true', '1']:
@@ -1678,10 +1680,7 @@ def run_import_job_sync(job_id: int):
                                     data['email_status'] = 'Invalid'
                                 elif raw in ['unknown', 'catchall', 'catch-all', 'catch_all', 'risky', 'accept_all', 'accept-all']:
                                     data['email_status'] = 'Unknown'
-                                elif raw in ['not verified', 'not_verified', 'unverified', 'pending', '']:
-                                    data['email_status'] = 'Not Verified'
-                                else:
-                                    data['email_status'] = 'Not Verified'
+                                # else: empty/unrecognized → do NOT set email_status at all
                             # Normalize lead status values
                             elif tgt_col == 'status':
                                 raw = str(val).strip().lower()
@@ -1733,6 +1732,19 @@ def run_import_job_sync(job_id: int):
                         if data.get('country_strategy'):
                             conn.execute("UPDATE contacts SET country_strategy=?, updated_at=? WHERE id=?",
                                        (data['country_strategy'], datetime.now().isoformat(), existing_id))
+                        # GUARDRAIL: protect email_status on merge — never overwrite Valid/Invalid
+                        if data.get('email_status'):
+                            existing_row = conn.execute(
+                                "SELECT email_status FROM contacts WHERE id=?", (existing_id,)
+                            ).fetchone()
+                            existing_es = existing_row[0] if existing_row else None
+                            if existing_es not in ('Valid', 'Invalid'):
+                                # Only update if existing is unverified/unknown
+                                if data['email_status'] != 'Not Verified' or existing_es is None:
+                                    conn.execute(
+                                        "UPDATE contacts SET email_status=?, updated_at=? WHERE id=?",
+                                        (data['email_status'], datetime.now().isoformat(), existing_id)
+                                    )
                         stats['merged'] += 1
                 else:
                     if data:
