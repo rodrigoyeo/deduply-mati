@@ -59,7 +59,8 @@ def get_contacts(
     industry: Optional[str] = None, email_status: Optional[str] = None,
     keywords: Optional[str] = None, show_duplicates: bool = False,
     sort_by: str = "id", sort_order: str = "desc",
-    workspace: Optional[str] = None
+    workspace: Optional[str] = None,
+    missing_fields: Optional[str] = None
 ):
     conn = get_db()
     where = ["1=1"] if show_duplicates else ["c.is_duplicate=0"]
@@ -123,6 +124,23 @@ def get_contacts(
             where.append("(c.reachinbox_workspace='MX' OR (c.reachinbox_workspace IS NULL AND c.country_strategy='Mexico'))")
         elif workspace.upper() == "US":
             where.append("(c.reachinbox_workspace='US' OR (c.reachinbox_workspace IS NULL AND (c.country_strategy='United States' OR c.country_strategy IS NULL)))")
+
+    # missing_fields: comma-separated list of field names that must be NULL/empty
+    # Supported: website, domain, email_status, title, company, phone, linkedin, industry
+    MISSING_FIELD_MAP = {
+        'website': "(c.website IS NULL OR c.website='')",
+        'domain': "(c.domain IS NULL OR c.domain='')",
+        'email_status': "(c.email_status IS NULL OR c.email_status='')",
+        'title': "(c.title IS NULL OR c.title='')",
+        'company': "(c.company IS NULL OR c.company='')",
+        'phone': "(c.first_phone IS NULL OR c.first_phone='') AND (c.corporate_phone IS NULL OR c.corporate_phone='')",
+        'linkedin': "(c.person_linkedin_url IS NULL OR c.person_linkedin_url='')",
+        'industry': "(c.industry IS NULL OR c.industry='')",
+    }
+    if missing_fields:
+        mf_list = [f.strip() for f in missing_fields.split(',') if f.strip() in MISSING_FIELD_MAP]
+        for field in mf_list:
+            where.append(MISSING_FIELD_MAP[field])
 
     if campaigns:
         camp_list = [c.strip() for c in campaigns.split(',') if c.strip()]

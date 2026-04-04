@@ -2071,6 +2071,9 @@ const EnrichmentPage = () => {
           <Mail size={18} /> Email Verification
           {verifyStatus?.unverified_count > 0 && <span className="tab-badge">{verifyStatus.unverified_count.toLocaleString()}</span>}
         </button>
+        <button className={`tab-btn ${activeTab === 'missing' ? 'active' : ''}`} onClick={() => setActiveTab('missing')}>
+          <AlertCircle size={18} /> Missing Data
+        </button>
       </div>
 
       {/* Action Bar */}
@@ -2339,7 +2342,148 @@ const EnrichmentPage = () => {
             </div>
           )}
         </div>
+      ) : activeTab === 'missing' ? (
+        <MissingDataTab />
       ) : null}
+    </div>
+  );
+};
+
+// ============================================================
+// MISSING DATA TAB — contacts with incomplete key fields
+// ============================================================
+const MISSING_FIELD_OPTIONS = [
+  { key: 'website',      label: 'Website',       icon: '🌐' },
+  { key: 'domain',       label: 'Domain',        icon: '🔗' },
+  { key: 'email_status', label: 'Email Status',  icon: '✉️' },
+  { key: 'title',        label: 'Job Title',     icon: '💼' },
+  { key: 'phone',        label: 'Phone',         icon: '📞' },
+  { key: 'linkedin',     label: 'LinkedIn',      icon: '👤' },
+  { key: 'industry',     label: 'Industry',      icon: '🏭' },
+];
+
+const MissingDataTab = () => {
+  const { addToast } = useToast();
+  const [selectedFields, setSelectedFields] = useState(['website', 'domain']);
+  const [contacts, setContacts] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
+
+  const toggleField = (key) => {
+    setSelectedFields(prev =>
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+    );
+    setPage(1);
+  };
+
+  const fetchMissing = async (pg = 1) => {
+    if (selectedFields.length === 0) { setContacts([]); setTotal(0); return; }
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        missing_fields: selectedFields.join(','),
+        page: pg,
+        page_size: PAGE_SIZE,
+        sort_by: 'id',
+        sort_order: 'desc',
+      });
+      const data = await api.get(`/contacts?${params}`);
+      setContacts(data.data || []);
+      setTotal(data.total || 0);
+    } catch (e) { addToast(e.message, 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchMissing(page); }, [selectedFields, page]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  return (
+    <div className="missing-data-tab">
+      {/* Field selector */}
+      <div className="missing-data-header">
+        <div>
+          <h3 className="missing-data-title">Contacts with Missing Fields</h3>
+          <p className="missing-data-subtitle">Select which fields to filter on — shows contacts missing ALL selected fields.</p>
+        </div>
+        {total > 0 && (
+          <div className="missing-data-count">
+            <span className="missing-count-num">{total.toLocaleString()}</span>
+            <span className="missing-count-label">contacts</span>
+          </div>
+        )}
+      </div>
+
+      <div className="missing-field-pills">
+        {MISSING_FIELD_OPTIONS.map(f => (
+          <button
+            key={f.key}
+            className={`missing-field-pill ${selectedFields.includes(f.key) ? 'active' : ''}`}
+            onClick={() => toggleField(f.key)}
+          >
+            <span>{f.icon}</span> {f.label}
+            {selectedFields.includes(f.key) && <span className="pill-check">✓</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Results table */}
+      {loading ? (
+        <div className="missing-loading"><Loader2 className="spin" size={20} /> Loading...</div>
+      ) : contacts.length === 0 ? (
+        <div className="missing-empty">
+          {selectedFields.length === 0
+            ? <p>Select at least one field above to find incomplete contacts.</p>
+            : <p>🎉 No contacts missing these fields. Your data is clean!</p>
+          }
+        </div>
+      ) : (
+        <div className="missing-table-wrap">
+          <table className="data-table missing-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Company</th>
+                <th>Website</th>
+                <th>Domain</th>
+                <th>Email Status</th>
+                <th>Title</th>
+                <th>Strategy</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {contacts.map(c => (
+                <tr key={c.id}>
+                  <td><strong>{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</strong></td>
+                  <td className="cell-mono">{c.email || '—'}</td>
+                  <td>{c.company || '—'}</td>
+                  <td className={!c.website ? 'cell-missing' : ''}>{c.website || <span className="missing-marker">—</span>}</td>
+                  <td className={!c.domain ? 'cell-missing' : ''}>{c.domain || <span className="missing-marker">—</span>}</td>
+                  <td>{c.email_status
+                    ? <span className={`status-badge status-${c.email_status.toLowerCase()}`}>{c.email_status}</span>
+                    : <span className="missing-marker">—</span>}
+                  </td>
+                  <td>{c.title || <span className="missing-marker">—</span>}</td>
+                  <td><span className={`strategy-badge strategy-${(c.country_strategy || '').toLowerCase().replace(/ /g,'-')}`}>{c.country_strategy || '—'}</span></td>
+                  <td className="cell-source" title={c.source_file}>{c.source_file ? c.source_file.split(' - ')[0].replace('.csv','') : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {totalPages > 1 && (
+            <div className="missing-pagination">
+              <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="btn btn-secondary btn-sm">← Prev</button>
+              <span className="missing-page-info">Page {page} of {totalPages} · {total.toLocaleString()} contacts</span>
+              <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} className="btn btn-secondary btn-sm">Next →</button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
