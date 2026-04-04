@@ -1681,9 +1681,38 @@ const ImportWizard = ({ onSuccess, filterOptions }) => {
 
     {step === 1 && (<div><div className="upload-area" onClick={() => document.getElementById('csv-input').click()}><Upload size={40} /><span>{loading ? 'Reading file...' : 'Click to select CSV file'}</span></div><input id="csv-input" type="file" accept=".csv" onChange={handleFileSelect} style={{ display: 'none' }} /></div>)}
 
-    {step === 2 && preview && (<div><p style={{ marginBottom: 16 }}>Map your CSV columns to contact fields. Found <strong>{preview.total_rows.toLocaleString()}</strong> rows.</p>
-      <div className="mapping-table"><div className="mapping-row"><span>CSV Column</span><span className="mapping-arrow"></span><span>Maps To</span></div>{preview.columns.map(col => (<div key={col} className="mapping-row"><span>{col}</span><span className="mapping-arrow"><ArrowRight size={16} /></span><select value={mapping[col] || ''} onChange={e => setMapping({ ...mapping, [col]: e.target.value })}>{targetColumns.map(t => <option key={t} value={t}>{t || '— Skip —'}</option>)}</select></div>))}</div>
-      <div className="modal-actions"><button className="btn btn-secondary" onClick={() => setStep(1)}>Back</button><button className="btn btn-primary" onClick={() => setStep(3)}>Next</button></div></div>)}
+    {step === 2 && preview && (() => {
+      const mappedValues = Object.values(mapping).filter(Boolean);
+      const REQUIRED_FIELDS = ['email', 'first_name', 'company'];
+      const RECOMMENDED_FIELDS = ['domain', 'website', 'company_linkedin_url'];
+      const missingRequired = REQUIRED_FIELDS.filter(f => !mappedValues.includes(f));
+      const missingRecommended = RECOMMENDED_FIELDS.filter(f => !mappedValues.includes(f));
+      return (
+        <div>
+          <p style={{ marginBottom: 16 }}>Map your CSV columns to contact fields. Found <strong>{preview.total_rows.toLocaleString()}</strong> rows.</p>
+          {missingRequired.length > 0 && (
+            <div className="import-field-warning import-field-error">
+              <AlertCircle size={15} />
+              <strong>Required fields not mapped:</strong> {missingRequired.join(', ')} — contacts without these fields will be skipped or incomplete.
+            </div>
+          )}
+          {missingRecommended.length > 0 && (
+            <div className="import-field-warning import-field-hint">
+              <AlertCircle size={15} />
+              <strong>Recommended fields not mapped:</strong> {missingRecommended.join(', ')} — map these to avoid missing data issues.
+            </div>
+          )}
+          <div className="mapping-table">
+            <div className="mapping-row"><span>CSV Column</span><span className="mapping-arrow"></span><span>Maps To</span></div>
+            {preview.columns.map(col => (<div key={col} className="mapping-row"><span>{col}</span><span className="mapping-arrow"><ArrowRight size={16} /></span><select value={mapping[col] || ''} onChange={e => setMapping({ ...mapping, [col]: e.target.value })}>{targetColumns.map(t => <option key={t} value={t}>{t || '— Skip —'}</option>)}</select></div>))}
+          </div>
+          <div className="modal-actions">
+            <button className="btn btn-secondary" onClick={() => setStep(1)}>Back</button>
+            <button className="btn btn-primary" onClick={() => setStep(3)}>Next</button>
+          </div>
+        </div>
+      );
+    })()}
 
     {step === 3 && (<div><div className="import-options">
       <div className="form-group"><label>Assign to Outreach List</label><select value={outreachList} onChange={e => setOutreachList(e.target.value)}><option value="">Select existing list...</option>{filterOptions?.outreach_lists?.map(l => <option key={l} value={l}>{l}</option>)}</select></div>
@@ -2355,6 +2384,7 @@ const EnrichmentPage = () => {
 const MISSING_FIELD_OPTIONS = [
   { key: 'website',      label: 'Website',       icon: '🌐' },
   { key: 'domain',       label: 'Domain',        icon: '🔗' },
+  { key: 'company',      label: 'Company',       icon: '🏢' },
   { key: 'email_status', label: 'Email Status',  icon: '✉️' },
   { key: 'title',        label: 'Job Title',     icon: '💼' },
   { key: 'phone',        label: 'Phone',         icon: '📞' },
@@ -2369,6 +2399,8 @@ const MissingDataTab = () => {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  const [enrichLoading, setEnrichLoading] = useState(false);
+  const [enrichJob, setEnrichJob] = useState(null);
   const PAGE_SIZE = 50;
 
   const toggleField = (key) => {
@@ -2398,23 +2430,68 @@ const MissingDataTab = () => {
 
   useEffect(() => { fetchMissing(page); }, [selectedFields, page]);
 
+  // Enrich missing website/domain via BlitzAPI company search
+  const handleEnrichMissing = async () => {
+    const enrichableFields = selectedFields.filter(f => ['website', 'domain'].includes(f));
+    if (enrichableFields.length === 0) {
+      addToast('Select Website and/or Domain fields to enrich via BlitzAPI', 'error');
+      return;
+    }
+    setEnrichLoading(true);
+    try {
+      const result = await api.post('/leadgen/fix-missing', {
+        fields: enrichableFields,
+        limit: Math.min(total, 500),
+      });
+      if (result.job_id) {
+        setEnrichJob(result);
+        addToast(`Started enrichment for ${result.count} contacts — check Credits & Jobs for progress`, 'success');
+      } else {
+        addToast(result.message || 'No contacts to enrich', 'info');
+      }
+    } catch (e) { addToast(e.message, 'error'); }
+    setEnrichLoading(false);
+  };
+
+  const canEnrich = selectedFields.some(f => ['website', 'domain'].includes(f)) && total > 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="missing-data-tab">
-      {/* Field selector */}
+      {/* Header */}
       <div className="missing-data-header">
         <div>
           <h3 className="missing-data-title">Contacts with Missing Fields</h3>
           <p className="missing-data-subtitle">Select which fields to filter on — shows contacts missing ALL selected fields.</p>
         </div>
-        {total > 0 && (
-          <div className="missing-data-count">
-            <span className="missing-count-num">{total.toLocaleString()}</span>
-            <span className="missing-count-label">contacts</span>
-          </div>
-        )}
+        <div className="missing-header-right">
+          {total > 0 && (
+            <div className="missing-data-count">
+              <span className="missing-count-num">{total.toLocaleString()}</span>
+              <span className="missing-count-label">contacts</span>
+            </div>
+          )}
+          {canEnrich && (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={handleEnrichMissing}
+              disabled={enrichLoading}
+              title="Use BlitzAPI to look up missing Website/Domain via company name search"
+            >
+              {enrichLoading ? <Loader2 className="spin" size={14} /> : <Zap size={14} />}
+              {enrichLoading ? 'Starting...' : `Enrich Missing (${Math.min(total, 500)})`}
+            </button>
+          )}
+        </div>
       </div>
+
+      {enrichJob && (
+        <div className="missing-enrich-notice">
+          <Zap size={14} /> Enrichment job started — <strong>{enrichJob.count}</strong> contacts queued.
+          Check <strong>Credits &amp; Jobs</strong> tab for real-time progress.
+          <button className="missing-enrich-dismiss" onClick={() => setEnrichJob(null)}>✕</button>
+        </div>
+      )}
 
       <div className="missing-field-pills">
         {MISSING_FIELD_OPTIONS.map(f => (
@@ -2424,6 +2501,7 @@ const MissingDataTab = () => {
             onClick={() => toggleField(f.key)}
           >
             <span>{f.icon}</span> {f.label}
+            {['website','domain'].includes(f.key) && <span className="pill-blitz-badge">BlitzAPI</span>}
             {selectedFields.includes(f.key) && <span className="pill-check">✓</span>}
           </button>
         ))}
@@ -2451,6 +2529,8 @@ const MissingDataTab = () => {
                 <th>Domain</th>
                 <th>Email Status</th>
                 <th>Title</th>
+                <th>LinkedIn</th>
+                <th>Co. LinkedIn</th>
                 <th>Strategy</th>
                 <th>Source</th>
               </tr>
@@ -2460,14 +2540,28 @@ const MissingDataTab = () => {
                 <tr key={c.id}>
                   <td><strong>{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</strong></td>
                   <td className="cell-mono">{c.email || '—'}</td>
-                  <td>{c.company || '—'}</td>
-                  <td className={!c.website ? 'cell-missing' : ''}>{c.website || <span className="missing-marker">—</span>}</td>
+                  <td className={!c.company ? 'cell-missing' : ''}>{c.company || <span className="missing-marker">—</span>}</td>
+                  <td className={!c.website ? 'cell-missing' : ''}>
+                    {c.website
+                      ? <a href={c.website} target="_blank" rel="noopener noreferrer" className="link-text">{c.website.replace(/^https?:\/\//,'')}</a>
+                      : <span className="missing-marker">—</span>}
+                  </td>
                   <td className={!c.domain ? 'cell-missing' : ''}>{c.domain || <span className="missing-marker">—</span>}</td>
                   <td>{c.email_status
-                    ? <span className={`status-badge status-${c.email_status.toLowerCase()}`}>{c.email_status}</span>
+                    ? <span className={`status-badge status-${c.email_status.toLowerCase().replace(/ /g,'-')}`}>{c.email_status}</span>
                     : <span className="missing-marker">—</span>}
                   </td>
                   <td>{c.title || <span className="missing-marker">—</span>}</td>
+                  <td>
+                    {c.person_linkedin_url
+                      ? <a href={c.person_linkedin_url} target="_blank" rel="noopener noreferrer" className="link-text">View ↗</a>
+                      : <span className="missing-marker">—</span>}
+                  </td>
+                  <td>
+                    {c.company_linkedin_url
+                      ? <a href={c.company_linkedin_url} target="_blank" rel="noopener noreferrer" className="link-text">View ↗</a>
+                      : <span className="missing-marker">—</span>}
+                  </td>
                   <td><span className={`strategy-badge strategy-${(c.country_strategy || '').toLowerCase().replace(/ /g,'-')}`}>{c.country_strategy || '—'}</span></td>
                   <td className="cell-source" title={c.source_file}>{c.source_file ? c.source_file.split(' - ')[0].replace('.csv','') : '—'}</td>
                 </tr>

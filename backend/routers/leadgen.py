@@ -2080,3 +2080,141 @@ def _run_enrich_only(enrich_job_id: str, source_job_id: str, api_key: str,
     finally:
         if conn:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# POST /api/leadgen/fix-missing
+# Background job: finds contacts missing website/domain, looks up their
+# company via BlitzAPI /v2/search/companies by name, fills in domain + website
+# ---------------------------------------------------------------------------
+
+def _run_fix_missing(job_id: str, api_key: str, contact_ids: List[int]):
+    """Background thread: enrich contacts missing domain/website via company name search."""
+    import time
+    conn = None
+    try:
+        conn = get_db()
+        conn.execute("UPDATE lead_gen_jobs SET status='running' WHERE id=?", (job_id,))
+        conn.commit()
+
+        stats = {"checked": 0, "fixed": 0, "no_match": 0, "errors": 0}
+
+        for cid in contact_ids:
+            row = conn.execute(
+                "SELECT id, company, company_linkedin_url, website, domain FROM contacts WHERE id=?", (cid,)
+            ).fetchone()
+            if not row:
+                continue
+
+            company_name = (row["company"] or "").strip()
+            company_li = (row["company_linkedin_url"] or "").strip()
+
+            if not company_name and not company_li:
+                stats["errors"] += 1
+                continue
+
+            try:
+                # Use company name search — cheapest BlitzAPI call that returns domain
+                search_body = {"company_name": company_name, "limit": 1} if company_name else {}
+                if company_li:
+                    search_body["company_linkedin_url"] = company_li
+
+                data = _blitzapi_request_sync("POST", "/v2/search/companies", api_key, search_body)
+                results = data.get("results", [])
+
+                if results:
+                    c = results[0]
+                    domain = c.get("domain") or ""
+                    website = c.get("website") or (f"https://{domain}" if domain else "")
+                    if domain or website:
+                        conn.execute(
+                            "UPDATE contacts SET domain=?, website=?, updated_at=? WHERE id=?",
+                            (domain or None, website or None, datetime.now().isoformat(), cid)
+                        )
+                        conn.commit()
+                        stats["fixed"] += 1
+                    else:
+                        stats["no_match"] += 1
+                else:
+                    stats["no_match"] += 1
+
+                stats["checked"] += 1
+                # Be nice to the API — 200ms between calls
+                time.sleep(0.2)
+
+            except Exception as e:
+                print(f"[FIX-MISSING] Error for contact {cid}: {e}")
+                stats["errors"] += 1
+                continue
+
+        conn.execute("""
+            UPDATE lead_gen_jobs SET status='completed', results_count=?, parameters=?, completed_at=?
+            WHERE id=?
+        """, (stats["fixed"], json.dumps(stats), datetime.now().isoformat(), job_id))
+        conn.commit()
+        print(f"[FIX-MISSING] {job_id} done: {stats}")
+
+    except Exception as e:
+        print(f"[FIX-MISSING] Fatal: {e}")
+        if conn:
+            try:
+                conn.execute("UPDATE lead_gen_jobs SET status='failed', error=? WHERE id=?",
+                             (str(e)[:500], job_id))
+                conn.commit()
+            except: pass
+    finally:
+        if conn:
+            conn.close()
+
+
+class FixMissingRequest(BaseModel):
+    fields: List[str] = ["website", "domain"]   # which missing fields to target
+    limit: int = 500                              # max contacts to process
+
+
+@router.post("/api/leadgen/fix-missing")
+async def fix_missing_data(req: FixMissingRequest, user: dict = Depends(get_current_user)):
+    """
+    Find contacts missing domain/website and enrich them via BlitzAPI company search.
+    Returns a job_id to track progress in Credits & Jobs.
+    """
+    conn = get_db()
+    api_key = _get_blitzapi_key(conn)
+    if not api_key:
+        conn.close()
+        raise HTTPException(400, "BlitzAPI key not configured. Add blitzapi_api_key in Settings.")
+
+    # Build WHERE for missing fields
+    FIELD_CONDITIONS = {
+        "website": "(website IS NULL OR website='')",
+        "domain": "(domain IS NULL OR domain='')",
+    }
+    conditions = [FIELD_CONDITIONS[f] for f in req.fields if f in FIELD_CONDITIONS]
+    if not conditions:
+        conn.close()
+        raise HTTPException(400, "No supported fields specified. Use 'website' and/or 'domain'.")
+
+    where = " AND ".join(conditions)
+    rows = conn.execute(
+        f"SELECT id FROM contacts WHERE is_duplicate=0 AND {where} LIMIT ?",
+        (req.limit,)
+    ).fetchall()
+    contact_ids = [r["id"] for r in rows]
+
+    if not contact_ids:
+        conn.close()
+        return {"job_id": None, "message": "No contacts found matching those criteria.", "count": 0}
+
+    job_id = str(uuid.uuid4())
+    now = datetime.now().isoformat()
+    conn.execute("""
+        INSERT INTO lead_gen_jobs (id, status, job_type, parameters, created_at)
+        VALUES (?, 'pending', 'fix_missing', ?, ?)
+    """, (job_id, json.dumps({"fields": req.fields, "total": len(contact_ids)}), now))
+    conn.commit()
+    conn.close()
+
+    import threading
+    threading.Thread(target=_run_fix_missing, args=(job_id, api_key, contact_ids), daemon=True).start()
+
+    return {"job_id": job_id, "count": len(contact_ids), "message": f"Enriching {len(contact_ids)} contacts in background"}
