@@ -120,10 +120,10 @@ def get_contacts(
             params.extend([f"%{kw}%" for kw in kw_list])
 
     if workspace:
-        if workspace.upper() == "MX":
-            where.append("(c.reachinbox_workspace='MX' OR (c.reachinbox_workspace IS NULL AND c.country_strategy='Mexico'))")
-        elif workspace.upper() == "US":
-            where.append("(c.reachinbox_workspace='US' OR (c.reachinbox_workspace IS NULL AND (c.country_strategy='United States' OR c.country_strategy IS NULL)))")
+        ws_upper = workspace.upper()
+        if ws_upper in ("MX", "US"):
+            where.append("c.country_strategy=?")
+            params.append(ws_upper)
 
     # missing_fields: comma-separated list of field names that must be NULL/empty
     # Supported: website, domain, email_status, title, company, phone, linkedin, industry
@@ -1380,7 +1380,7 @@ def get_filters():
     opts = {
         'statuses': ['Lead', 'Contacted', 'Replied', 'Interested', 'Meeting Booked', 'No-Show', 'Qualified', 'Client', 'Not Interested', 'Bounced'],
         'countries': [r[0] for r in conn.execute("SELECT DISTINCT company_country FROM contacts WHERE company_country IS NOT NULL AND company_country != '' ORDER BY company_country")],
-        'country_strategies': ['Mexico', 'United States', 'Germany', 'Spain'],
+        'country_strategies': [r[0] for r in conn.execute("SELECT DISTINCT country_strategy FROM contacts WHERE country_strategy IS NOT NULL AND country_strategy != '' ORDER BY country_strategy")],
         'seniorities': [r[0] for r in conn.execute("SELECT DISTINCT seniority FROM contacts WHERE seniority IS NOT NULL AND seniority != '' ORDER BY seniority")],
         'industries': [r[0] for r in conn.execute("SELECT DISTINCT industry FROM contacts WHERE industry IS NOT NULL AND industry != '' ORDER BY industry LIMIT 50")],
         'campaigns': [r[0] for r in conn.execute("SELECT name FROM campaigns ORDER BY name")],
