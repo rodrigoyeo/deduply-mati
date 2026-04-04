@@ -103,6 +103,17 @@ def init_db():
                 )
                 conn.commit()
                 print(f"Created admin: admin@deduply.io / admin123")
+
+            # Migration 012: verification_jobs audit trail columns
+            try:
+                conn.execute("ALTER TABLE verification_jobs ADD COLUMN IF NOT EXISTS triggered_by TEXT DEFAULT 'unknown'")
+                conn.execute("ALTER TABLE verification_jobs ADD COLUMN IF NOT EXISTS triggered_from TEXT DEFAULT NULL")
+                conn.execute("ALTER TABLE verification_jobs ADD COLUMN IF NOT EXISTS filter_description TEXT DEFAULT NULL")
+                conn.commit()
+                print("[DB] Migration 012: verification_jobs audit columns applied")
+            except Exception as me:
+                print(f"[DB] Migration 012 skipped (may already exist): {me}")
+
         except Exception as e:
             print(f"[DB] PostgreSQL error: {e}")
         conn.close()
