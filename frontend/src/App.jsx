@@ -1004,7 +1004,7 @@ const ContactsPage = () => {
     { id: 'icp_tier', label: 'ICP Tier', editable: false, default: true },
     { id: 'icp_ranking', label: 'ICP Ranking', editable: false, default: false },
     // System fields
-    { id: 'country_strategy', label: 'Strategy', editable: true, default: true, type: 'strategy' },
+    { id: 'country_strategy', label: 'Workspace', editable: true, default: true, type: 'strategy' },
     { id: 'status', label: 'Status', editable: true, type: 'status', default: true },
     { id: 'email_status', label: 'Email Status', editable: true, default: false },
     { id: 'outreach_lists', label: 'Lists', editable: true, default: true },
@@ -1348,7 +1348,7 @@ const ContactsPage = () => {
               options={countryStrategyOptions}
               value={filters.country_strategy || []}
               onChange={v => setFilters({ ...filters, country_strategy: v })}
-              placeholder="All Strategies"
+              placeholder="All Workspaces"
             />
           </div>
           <div className="filter-group-v2">
@@ -1427,7 +1427,7 @@ const ContactsPage = () => {
               ))}
               {(filters.country_strategy || []).map(s => (
                 <span key={`strategy-${s}`} className="filter-chip">
-                  <span className="filter-chip-type">Strategy:</span> {s}
+                  <span className="filter-chip-type">Workspace:</span> {s}
                   <X size={14} onClick={() => setFilters({ ...filters, country_strategy: filters.country_strategy.filter(x => x !== s) })} />
                 </span>
               ))}
@@ -2565,7 +2565,7 @@ const MissingDataTab = () => {
                 <th>Title</th>
                 <th>LinkedIn</th>
                 <th>Co. LinkedIn</th>
-                <th>Strategy</th>
+                <th>Workspace</th>
                 <th>Source</th>
               </tr>
             </thead>
