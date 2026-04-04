@@ -127,9 +127,11 @@ def get_contacts(
 
     # missing_fields: comma-separated list of field names that must be NULL/empty
     # Supported: website, domain, email_status, title, company, phone, linkedin, industry
+    # Also catches known placeholder/garbage values (placeholder, n/a, none, etc.)
+    _JUNK = "'placeholder','n/a','na','none','null','unknown','tbd','pending'"
     MISSING_FIELD_MAP = {
-        'website': "(c.website IS NULL OR c.website='')",
-        'domain': "(c.domain IS NULL OR c.domain='')",
+        'website': f"(c.website IS NULL OR c.website='' OR LOWER(c.website) IN ({_JUNK}))",
+        'domain':  f"(c.domain  IS NULL OR c.domain ='' OR LOWER(c.domain)  IN ({_JUNK}))",
         'email_status': "(c.email_status IS NULL OR c.email_status='')",
         'title': "(c.title IS NULL OR c.title='')",
         'company': "(c.company IS NULL OR c.company='')",

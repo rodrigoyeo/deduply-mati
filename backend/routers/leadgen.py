@@ -2184,10 +2184,11 @@ async def fix_missing_data(req: FixMissingRequest, user: dict = Depends(get_curr
         conn.close()
         raise HTTPException(400, "BlitzAPI key not configured. Add blitzapi_api_key in Settings.")
 
-    # Build WHERE for missing fields
+    # Build WHERE for missing fields — also catches 'placeholder', 'N/A', etc.
+    JUNK_LIST = "'placeholder','n/a','na','none','null','unknown','tbd','pending','—','-'"
     FIELD_CONDITIONS = {
-        "website": "(website IS NULL OR website='')",
-        "domain": "(domain IS NULL OR domain='')",
+        "website": f"(website IS NULL OR website='' OR LOWER(website) IN ({JUNK_LIST}))",
+        "domain":  f"(domain  IS NULL OR domain ='' OR LOWER(domain)  IN ({JUNK_LIST}))",
     }
     conditions = [FIELD_CONDITIONS[f] for f in req.fields if f in FIELD_CONDITIONS]
     if not conditions:
@@ -2241,17 +2242,27 @@ async def fill_domain_from_email(user: dict = Depends(get_current_user)):
     extract the domain from their email address (e.g. user@acme.com → acme.com)
     and set domain=acme.com, website=https://acme.com.
     Skips free email providers (gmail, hotmail, etc).
+    Also clears known placeholder/garbage values (e.g. 'placeholder', 'N/A', 'n/a').
     Returns counts of filled vs skipped.
     """
+    # Values that count as "missing" even though they're not NULL/empty
+    JUNK_VALUES = {'placeholder', 'n/a', 'na', 'none', 'null', '-', '—', 'unknown', 'tbd', 'pending'}
+
     conn = get_db()
     try:
         rows = conn.execute("""
-            SELECT id, email FROM contacts
+            SELECT id, email, website, domain FROM contacts
             WHERE is_duplicate = 0
-              AND (domain IS NULL OR domain = '')
-              AND (website IS NULL OR website = '')
               AND email IS NOT NULL AND email != ''
         """).fetchall()
+
+        # Filter in Python: NULL, empty string, or known junk values
+        def is_empty(val):
+            if val is None or val == '':
+                return True
+            return str(val).strip().lower() in JUNK_VALUES
+
+        rows = [r for r in rows if is_empty(r['website']) and is_empty(r['domain'])]
 
         filled = 0
         skipped_free = 0
