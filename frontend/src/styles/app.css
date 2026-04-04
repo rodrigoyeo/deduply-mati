@@ -9163,3 +9163,405 @@ html { scroll-behavior: smooth; }
    Skill: taste-skill/minimalist-skill (Notion × Clay × Linear)
    Date: 2026-04-04
    ================================================================ */
+
+/* ================================================================
+   REDESIGN FULL v3 — LeadGen / Company Search Section Overhaul
+   Issues fixed:
+   - Filter pane: overcrowded, wrong spacing, bad vertical rhythm
+   - Section headers: too small, too uppercase-heavy
+   - Checkboxes: cramped, single-column waste
+   - Preset chips: too big, misaligned
+   - Filter card: wrong padding, no breathing room
+   - Overall: feels like a dense form, should feel like a clean panel
+   ================================================================ */
+
+/* ---- LeadGen Layout ---- */
+.leadgen-search-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+/* ---- Filter Card: more breathing room ---- */
+.leadgen-filters-card {
+  background: #FFFFFF !important;
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  border-radius: 10px !important;
+  overflow: hidden !important;
+  position: sticky !important;
+  top: 16px !important;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+}
+
+/* ---- Filters header: not uppercase-shouting ---- */
+.leadgen-filters-header {
+  display: flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  padding: 14px 16px !important;
+  background: transparent !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: var(--text-2) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+}
+
+/* ---- Filter sections: proper separation, not wall of form ---- */
+.filter-section {
+  padding: 14px 16px !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+}
+
+.filter-section:last-child {
+  border-bottom: none !important;
+}
+
+/* ---- Filter label: readable, not screaming ---- */
+.filter-label {
+  display: block !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  color: var(--text-3) !important;
+  margin-bottom: 8px !important;
+}
+
+/* ---- Checkboxes: compact, not cramped ---- */
+.filter-checkboxes {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+}
+
+.filter-check-label {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  font-size: 13px !important;
+  color: var(--text-1) !important;
+  cursor: pointer !important;
+  padding: 2px 0 !important;
+  line-height: 1.4 !important;
+}
+
+.filter-check-label:hover {
+  color: var(--text-0) !important;
+}
+
+.filter-check-label input[type="checkbox"] {
+  width: 14px !important;
+  height: 14px !important;
+  margin: 0 !important;
+  accent-color: var(--coral) !important;
+  cursor: pointer !important;
+  flex-shrink: 0 !important;
+}
+
+/* Countries: 2-col is right, just fix spacing */
+.filter-checkboxes-2col {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 6px !important;
+}
+
+/* ---- Preset chips: smaller, tighter, suggestion-style ---- */
+.filter-presets {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 5px !important;
+  margin-top: 8px !important;
+}
+
+.preset-chip {
+  font-size: 11.5px !important;
+  padding: 3px 9px !important;
+  border-radius: 5px !important;
+  border: 1px solid rgba(0, 0, 0, 0.10) !important;
+  background: var(--bg-1) !important;
+  color: var(--text-2) !important;
+  cursor: pointer !important;
+  transition: all 130ms ease !important;
+  white-space: nowrap !important;
+  font-weight: 500 !important;
+}
+
+.preset-chip:hover {
+  border-color: var(--coral) !important;
+  color: var(--coral) !important;
+  background: rgba(255, 108, 93, 0.04) !important;
+}
+
+.preset-chip.active {
+  background: var(--coral) !important;
+  color: #fff !important;
+  border-color: var(--coral) !important;
+}
+
+/* ---- TagInput: cleaner, less dense ---- */
+.tag-input-container {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 4px !important;
+  align-items: center !important;
+  min-height: 34px !important;
+  padding: 5px 8px !important;
+  border: 1px solid rgba(0, 0, 0, 0.10) !important;
+  border-radius: 6px !important;
+  background: #FFFFFF !important;
+  cursor: text !important;
+  transition: border-color 150ms ease !important;
+}
+
+.tag-input-container:focus-within {
+  border-color: rgba(0, 0, 0, 0.25) !important;
+  box-shadow: none !important;
+}
+
+.tag-chip {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 2px 7px 2px 9px !important;
+  border-radius: 4px !important;
+  background: var(--navy) !important;
+  color: #fff !important;
+  font-size: 11.5px !important;
+  white-space: nowrap !important;
+  font-weight: 500 !important;
+}
+
+.tag-input-field {
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  font-size: 13px !important;
+  color: var(--text-1) !important;
+  min-width: 120px !important;
+  flex: 1 !important;
+}
+
+.tag-input-field::placeholder {
+  color: var(--text-3) !important;
+}
+
+/* ---- Filter textarea ---- */
+.filter-textarea {
+  width: 100% !important;
+  font-size: 12.5px !important;
+  padding: 7px 9px !important;
+  border: 1px solid rgba(0, 0, 0, 0.10) !important;
+  border-radius: 6px !important;
+  background: #FFFFFF !important;
+  color: var(--text-1) !important;
+  resize: vertical !important;
+  font-family: "GeistMono", "Fira Code", monospace !important;
+  line-height: 1.5 !important;
+  box-sizing: border-box !important;
+}
+
+.filter-textarea:focus {
+  border-color: rgba(0, 0, 0, 0.25) !important;
+  outline: none !important;
+}
+
+/* ---- Max results row ---- */
+.filter-section-row {
+  display: flex !important;
+  align-items: flex-end !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+}
+
+.filter-select {
+  font-size: 13px !important;
+  padding: 6px 10px !important;
+  border: 1px solid rgba(0, 0, 0, 0.10) !important;
+  border-radius: 6px !important;
+  background: #FFFFFF !important;
+  color: var(--text-1) !important;
+  cursor: pointer !important;
+}
+
+.credit-estimate {
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  font-size: 12px !important;
+  color: var(--text-3) !important;
+  white-space: nowrap !important;
+}
+
+.credit-estimate svg {
+  color: var(--coral) !important;
+}
+
+/* ---- Search CTA button ---- */
+.leadgen-search-btn {
+  width: 100% !important;
+  margin-top: 4px !important;
+  justify-content: center !important;
+  border-radius: 7px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  padding: 10px 16px !important;
+  letter-spacing: -0.01em !important;
+}
+
+/* ---- Results panel ---- */
+.leadgen-results-panel {
+  min-height: 400px !important;
+}
+
+/* ---- Empty state: properly centered ---- */
+.leadgen-empty-state {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 80px 32px 60px !important;
+  text-align: center !important;
+  background: #FFFFFF !important;
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  border-radius: 10px !important;
+  min-height: 360px !important;
+}
+
+.leadgen-empty-state svg {
+  color: var(--text-3) !important;
+  margin-bottom: 20px !important;
+  opacity: 0.5 !important;
+}
+
+.leadgen-empty-state h3 {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: var(--text-1) !important;
+  margin: 0 0 8px !important;
+  font-family: var(--font-body) !important;
+  letter-spacing: -0.02em !important;
+}
+
+.leadgen-empty-state p {
+  font-size: 13.5px !important;
+  color: var(--text-3) !important;
+  margin: 0 0 4px !important;
+  max-width: 320px !important;
+  line-height: 1.5 !important;
+}
+
+.leadgen-empty-state .empty-hint {
+  font-size: 12px !important;
+  color: var(--text-3) !important;
+  margin-top: 4px !important;
+  opacity: 0.7 !important;
+}
+
+/* ---- Job progress / error ---- */
+.leadgen-job-progress {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 12px 14px !important;
+  background: rgba(255, 108, 93, 0.06) !important;
+  border: 1px solid rgba(255, 108, 93, 0.15) !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  color: var(--coral) !important;
+  margin-bottom: 12px !important;
+}
+
+.leadgen-job-error {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 12px 14px !important;
+  background: #FEF2F2 !important;
+  border: 1px solid #FECACA !important;
+  border-radius: 8px !important;
+  font-size: 13px !important;
+  color: #991B1B !important;
+  margin-bottom: 12px !important;
+}
+
+/* ---- Bulk action bar ---- */
+.leadgen-bulk-bar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 11px 16px !important;
+  background: var(--navy) !important;
+  border-radius: 8px !important;
+  margin-bottom: 12px !important;
+  color: #fff !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+
+/* ---- Results table ---- */
+.leadgen-results-table-wrap {
+  background: #FFFFFF !important;
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  border-radius: 10px !important;
+  overflow: hidden !important;
+}
+
+.leadgen-results-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 11px 16px !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.07) !important;
+  background: transparent !important;
+}
+
+.results-count {
+  font-size: 13px !important;
+  color: var(--text-2) !important;
+  font-weight: 500 !important;
+}
+
+.leadgen-table {
+  font-size: 12.5px !important;
+}
+
+.leadgen-table .about-cell {
+  max-width: 200px !important;
+  color: var(--text-3) !important;
+  font-size: 11.5px !important;
+}
+
+.leadgen-table .company-domain {
+  display: block !important;
+  font-size: 11px !important;
+  color: var(--text-3) !important;
+  margin-top: 2px !important;
+}
+
+.leadgen-table .row-num {
+  color: var(--text-3) !important;
+  font-size: 11px !important;
+  text-align: center !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+.leadgen-table .nowrap {
+  white-space: nowrap !important;
+}
+
+.leadgen-table tr:hover {
+  background: var(--bg-3) !important;
+}
+
+.leadgen-table tr.selected {
+  background: rgba(255, 108, 93, 0.05) !important;
+  box-shadow: inset 3px 0 0 var(--coral) !important;
+}
+
+/* ================================================================
+   LeadGen CSS overhaul complete
+   ================================================================ */
