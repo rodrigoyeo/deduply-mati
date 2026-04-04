@@ -983,7 +983,7 @@ const ContactsPage = () => {
     // Person location
     { id: 'city', label: 'City', editable: true, default: false },
     { id: 'state', label: 'State', editable: true, default: false },
-    { id: 'country', label: 'Workspace', editable: true, default: false },
+    { id: 'country', label: 'Country', editable: true, default: false },
     // Company location
     { id: 'company_city', label: 'Company City', editable: true, default: false },
     { id: 'company_state', label: 'Company State', editable: true, default: false },
@@ -1582,7 +1582,7 @@ const ContactsPage = () => {
             : col.type === 'strategy' ? <select autoFocus value={editingCell.value} onChange={e => setEditingCell({...editingCell, value: e.target.value})} onBlur={() => saveEdit(contact.id, col.id, editingCell.value)}><option value="">—</option>{filterOptions?.country_strategies?.map(s => <option key={s} value={s}>{s}</option>)}</select>
             : <input autoFocus type="text" value={editingCell.value} onChange={e => setEditingCell({...editingCell, value: e.target.value})} onBlur={() => saveEdit(contact.id, col.id, editingCell.value)} onKeyDown={e => { if (e.key === 'Enter') saveEdit(contact.id, col.id, editingCell.value); if (e.key === 'Escape') setEditingCell(null); }} className="cell-input" />
           ) : col.type === 'status' ? <span className={`status-badge status-${contact[col.id]?.toLowerCase().replace(/ /g, '-')}`} onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}</span>
-          : col.type === 'strategy' ? <span className={`strategy-badge strategy-${contact[col.id]?.toLowerCase().replace(/ /g, '-') || 'none'}`} onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}</span>
+          : col.type === 'strategy' ? <span className={`strategy-badge strategy-${contact[col.id]?.toLowerCase().replace(/ /g, '-') || 'none'}`} onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] === 'US' ? '🇺🇸 US' : contact[col.id] === 'MX' ? '🇲🇽 MX' : contact[col.id] || '—'}</span>
           : col.id === 'email' ? <a href={`mailto:${contact[col.id]}`} className="email-link">{contact[col.id]}</a>
           : col.id === 'email_status' ? <span className={`email-status-badge ${(contact[col.id] || 'not-verified').toLowerCase().replace(/ /g, '-')}`}>{contact[col.id] || 'Not Verified'}</span>
           : col.id === 'first_name' ? <span className="cell-editable" onClick={() => col.editable && setEditingCell({ id: contact.id, field: col.id, value: contact[col.id] || '' })}>{contact[col.id] || '—'}</span>
@@ -2596,7 +2596,7 @@ const MissingDataTab = () => {
                       ? <a href={c.company_linkedin_url} target="_blank" rel="noopener noreferrer" className="link-text">View ↗</a>
                       : <span className="missing-marker">—</span>}
                   </td>
-                  <td><span className={`strategy-badge strategy-${(c.country_strategy || '').toLowerCase().replace(/ /g,'-')}`}>{c.country_strategy || '—'}</span></td>
+                  <td><span className={`strategy-badge strategy-${(c.country_strategy || '').toLowerCase().replace(/ /g,'-')}`}>{c.country_strategy === 'US' ? '🇺🇸 US' : c.country_strategy === 'MX' ? '🇲🇽 MX' : c.country_strategy || '—'}</span></td>
                   <td className="cell-source" title={c.source_file}>{c.source_file ? c.source_file.split(' - ')[0].replace('.csv','') : '—'}</td>
                 </tr>
               ))}

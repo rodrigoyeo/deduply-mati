@@ -4556,25 +4556,29 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--coral); cursor
   transform: scale(1.02);
 }
 
-.strategy-badge.strategy-mexico {
+.strategy-badge.strategy-mexico,
+.strategy-badge.strategy-mx {
   background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(34, 197, 94, 0.08));
   color: #16a34a;
   border: 1px solid rgba(34, 197, 94, 0.2);
 }
 
-.strategy-badge.strategy-united-states {
+.strategy-badge.strategy-united-states,
+.strategy-badge.strategy-us {
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(59, 130, 246, 0.08));
   color: #2563eb;
   border: 1px solid rgba(59, 130, 246, 0.2);
 }
 
-.strategy-badge.strategy-germany {
+.strategy-badge.strategy-germany,
+.strategy-badge.strategy-de {
   background: linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(234, 179, 8, 0.08));
   color: #b45309;
   border: 1px solid rgba(234, 179, 8, 0.2);
 }
 
-.strategy-badge.strategy-spain {
+.strategy-badge.strategy-spain,
+.strategy-badge.strategy-es {
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.08));
   color: #dc2626;
   border: 1px solid rgba(239, 68, 68, 0.2);
