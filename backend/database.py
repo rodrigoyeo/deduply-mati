@@ -249,6 +249,9 @@ def init_db():
         current_email TEXT,
         error_message TEXT,
         contact_ids TEXT,
+        triggered_by TEXT DEFAULT 'unknown',
+        triggered_from TEXT DEFAULT NULL,
+        filter_description TEXT DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         started_at TIMESTAMP,
         completed_at TIMESTAMP)""")
