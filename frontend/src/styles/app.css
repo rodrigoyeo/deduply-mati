@@ -8298,3 +8298,184 @@ select:focus {
   content: '';
   display: none; /* Hidden for now, enable for flow arrows */
 }
+
+/* ==========================================================
+   REDESIGN POLISH v2 — Applied 2026-04-03
+   Skills: redesign-existing-projects + design-taste-frontend
+   CSS-only, non-destructive additions
+   ========================================================== */
+
+/* ── 1. SIDEBAR ─────────────────────────────────────────── */
+
+/* Sidebar gets a warm bone tint instead of pure white */
+.sidebar {
+  background: #FAFAF8 !important;
+}
+
+/* Nav items: smoother font + transition */
+.nav-item {
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.01em !important;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+  position: relative;
+}
+
+/* Active state: coral left border as accent stripe */
+.nav-item.active {
+  background: rgba(255, 108, 93, 0.08) !important;
+  color: var(--coral) !important;
+  font-weight: 600 !important;
+  border-left: 3px solid var(--coral);
+  padding-left: 11px; /* compensate for border */
+}
+
+/* Hover state: slightly warmer than current */
+.nav-item:hover:not(.active) {
+  background: rgba(0, 28, 67, 0.04) !important;
+  color: var(--text-1) !important;
+  transform: translateX(1px);
+}
+
+
+/* ── 2. BUTTONS ─────────────────────────────────────────── */
+
+/* All buttons: better easing */
+.btn {
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Primary: glow on hover, press feedback */
+.btn-primary:hover:not(:disabled) {
+  background: var(--coral-hover) !important;
+  box-shadow: 0 4px 16px rgba(255, 108, 93, 0.35) !important;
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98) !important;
+  box-shadow: 0 1px 4px rgba(255, 108, 93, 0.2) !important;
+}
+
+/* Secondary: cleaner hover */
+.btn-secondary:hover {
+  background: var(--bg-3) !important;
+  border-color: var(--text-3) !important;
+  color: var(--text-1) !important;
+}
+
+.btn-secondary:active {
+  transform: scale(0.98) translateY(1px) !important;
+}
+
+/* Navy button: lift on hover */
+.btn-navy:hover {
+  box-shadow: 0 4px 14px rgba(0, 28, 67, 0.3) !important;
+  transform: translateY(-1px) !important;
+}
+
+
+/* ── 3. TABLES ──────────────────────────────────────────── */
+
+/* Header: heavier, better tracking */
+.data-table th {
+  font-weight: 600 !important;
+  letter-spacing: 0.02em !important;
+  color: var(--text-1) !important;
+}
+
+/* Row hover: coral tint instead of generic gray */
+.data-table tr:hover {
+  background: rgba(255, 108, 93, 0.04) !important;
+  transition: background 150ms ease !important;
+}
+
+/* Zebra striping: very subtle */
+.data-table tbody tr:nth-child(even) {
+  background: rgba(0, 28, 67, 0.015);
+}
+
+.data-table tbody tr:nth-child(even):hover {
+  background: rgba(255, 108, 93, 0.04) !important;
+}
+
+/* Numeric data: tabular figures */
+.data-table td[data-type="number"],
+.data-table td:has(.number),
+.stat-number,
+.metric-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Performance table same treatment */
+.performance-table th {
+  font-weight: 600 !important;
+  letter-spacing: 0.02em !important;
+}
+
+.performance-table tr:hover td {
+  background: rgba(255, 108, 93, 0.04) !important;
+}
+
+
+/* ── 4. CARDS / PANELS ──────────────────────────────────── */
+
+/* Cards: surface-based elevation, remove generic border feel */
+.card {
+  box-shadow: 0 1px 3px rgba(0, 28, 67, 0.06), 0 4px 12px rgba(0, 28, 67, 0.04) !important;
+  transition: box-shadow 200ms ease, transform 200ms ease !important;
+}
+
+.card:hover {
+  box-shadow: 0 4px 20px rgba(0, 28, 67, 0.10), 0 1px 4px rgba(0, 28, 67, 0.06) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* Stats/metric cards: stronger number presence */
+.stat-card .stat-value,
+.stat-card .number,
+.metric-value {
+  font-variant-numeric: tabular-nums !important;
+  font-feature-settings: "tnum" !important;
+  letter-spacing: -0.02em;
+}
+
+
+/* ── 5. TYPOGRAPHY ──────────────────────────────────────── */
+
+/* Page headers: Newsreader for punch, tighter tracking */
+.page-header h1,
+.page-header h2 {
+  font-family: var(--font-headline) !important;
+  letter-spacing: -0.03em !important;
+  font-weight: 600 !important;
+  color: var(--navy) !important;
+}
+
+/* Section subheadings */
+.section-header h2,
+.section-title {
+  letter-spacing: -0.02em;
+  font-weight: 600 !important;
+}
+
+/* Small labels and badges: positive tracking for readability */
+.tab-badge,
+.nav-badge,
+.status-badge,
+.badge {
+  letter-spacing: 0.04em !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+/* Smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Focus rings: visible but styled */
+*:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: 2px;
+}
