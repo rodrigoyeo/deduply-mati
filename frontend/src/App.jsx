@@ -271,7 +271,7 @@ const Sidebar = ({ page, setPage, user, onLogout }) => {
     localStorage.setItem('deduply_sidebar_collapsed', String(next));
     setCollapsed(next);
   };
-  const nav = [{ id: 'inbox', label: 'Inbox', icon: MessageCircle }, { id: 'pipeline', label: 'Pipeline', icon: Target }, { id: 'leadgen', label: 'Lead Gen', icon: Zap }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'duplicates', label: 'Duplicates', icon: GitMerge }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'reports', label: 'Reports', icon: TrendingUp }, { id: 'settings', label: 'Settings', icon: Settings }];
+  const nav = [{ id: 'inbox', label: 'Inbox', icon: MessageCircle }, { id: 'pipeline', label: 'Pipeline', icon: Target }, { id: 'leadgen', label: 'Lead Gen', icon: Zap }, { id: 'enrichment', label: 'Enrichment', icon: Sparkles }, { id: 'duplicates', label: 'Duplicates', icon: GitMerge }, { id: 'campaigns', label: 'Campaigns', icon: Mail }, { id: 'contacts', label: 'Contacts', icon: Users }, { id: 'jobs', label: 'Jobs', icon: TrendingUp }, { id: 'reports', label: 'Reports', icon: TrendingUp }, { id: 'settings', label: 'Settings', icon: Settings }];
 
   // Show toast when import completes
   useEffect(() => {
@@ -2340,6 +2340,101 @@ const EnrichmentPage = () => {
           )}
         </div>
       ) : null}
+    </div>
+  );
+};
+
+// ============================================================
+// JOBS PAGE — Full verification job audit trail
+// ============================================================
+const JobsPage = () => {
+  const [jobs, setJobs] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  const loadJobs = async () => {
+    setLoading(true);
+    try {
+      const r = await api.get('/verify/jobs?limit=100');
+      setJobs(r.jobs || []);
+      setTotal(r.total || 0);
+    } catch(e) { console.error(e); }
+    setLoading(false);
+  };
+
+  useEffect(() => { loadJobs(); }, []);
+
+  const statusColor = (s) => ({
+    running: '#f59e0b', completed: '#10b981', cancelled: '#6b7280',
+    failed: '#ef4444', pending: '#3b82f6',
+  }[s] || '#6b7280');
+
+  const fmtDt = (dt) => dt ? new Date(dt).toLocaleString() : '—';
+  const fmtDuration = (start, end) => {
+    if (!start) return '—';
+    const s = (new Date(end || new Date()) - new Date(start)) / 1000;
+    if (s < 60) return `${Math.round(s)}s`;
+    return `${Math.round(s / 60)}m ${Math.round(s % 60)}s`;
+  };
+
+  return (
+    <div style={{ padding: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>Verification Jobs</h2>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-2)' }}>
+            {total} total jobs — full audit trail of who triggered each job and from where
+          </p>
+        </div>
+        <button onClick={loadJobs} style={{ padding: '8px 16px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
+          Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <p style={{ color: 'var(--text-2)' }}>Loading jobs...</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg-2, #f8f8f8)' }}>
+                {['ID', 'Status', 'Triggered By', 'From', 'Filter / Description', 'Total', '✓ Valid', '✗ Invalid', '? Unknown', 'Started', 'Duration', 'Error'].map(h => (
+                  <th key={h} style={{ padding: '10px 12px', textAlign: h === 'Total' || h === '✓ Valid' || h === '✗ Invalid' || h === '? Unknown' ? 'right' : 'left', borderBottom: '2px solid var(--border)', fontWeight: 600, whiteSpace: 'nowrap', color: 'var(--text-1)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map(j => (
+                <tr key={j.id} style={{ borderBottom: '1px solid var(--border, #eee)' }}>
+                  <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: 'var(--text-2)', fontSize: 12 }}>#{j.id}</td>
+                  <td style={{ padding: '8px 12px' }}>
+                    <span style={{ background: statusColor(j.status) + '22', color: statusColor(j.status), padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700 }}>
+                      {j.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: '8px 12px', fontWeight: j.triggered_by && j.triggered_by !== 'unknown' ? 600 : 400 }}>
+                    {j.triggered_by || 'unknown'}
+                  </td>
+                  <td style={{ padding: '8px 12px', color: 'var(--text-2)', fontSize: 12 }}>{j.triggered_from || '—'}</td>
+                  <td style={{ padding: '8px 12px', color: 'var(--text-2)', fontSize: 12, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.filter_description}>{j.filter_description || '—'}</td>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{j.total_contacts?.toLocaleString()}</td>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', color: '#10b981', fontWeight: 600 }}>{j.valid_count}</td>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', color: '#ef4444' }}>{j.invalid_count}</td>
+                  <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--text-2)' }}>{j.unknown_count}</td>
+                  <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{fmtDt(j.started_at)}</td>
+                  <td style={{ padding: '8px 12px', fontSize: 12, whiteSpace: 'nowrap' }}>{fmtDuration(j.started_at, j.completed_at)}</td>
+                  <td style={{ padding: '8px 12px', fontSize: 11, color: '#ef4444', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.error_message}>{j.error_message || ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {jobs.length === 0 && (
+            <p style={{ textAlign: 'center', color: 'var(--text-2)', marginTop: 60, fontSize: 14 }}>
+              No verification jobs found.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -5647,6 +5742,7 @@ function App() {
     {page === 'templates' && <TemplatesPage />}
     {page === 'reports' && <ReportsPage />}
     {page === 'settings' && <SettingsPage />}
+    {page === 'jobs' && <JobsPage />}
     {/* Legacy routes still accessible */}
     {page === 'dashboard' && <DashboardPage />}
     {page === 'duplicates' && <DuplicatesPage />}

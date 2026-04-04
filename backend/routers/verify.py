@@ -72,12 +72,30 @@ async def verify_email_realtime(email: str, api_key: str) -> dict:
 
 
 def update_contact_verification(conn, contact_id: int, result: dict):
-    """Update a contact with verification results."""
+    """Update a contact with verification results. Never downgrades Valid or Invalid contacts."""
     now = datetime.now().isoformat()
     is_disposable = bool(result.get("is_disposable", False))
     is_free_service = bool(result.get("is_free_service", False))
     is_role_account = bool(result.get("is_role_account", False))
 
+    # Check current status — never overwrite a final Valid or Invalid result
+    current = conn.execute(
+        "SELECT email_status, email_verified_at FROM contacts WHERE id=?", (contact_id,)
+    ).fetchone()
+
+    if current and current[0] in ("Valid", "Invalid"):
+        # Already has a final verified status — only backfill missing metadata fields
+        conn.execute("""
+            UPDATE contacts SET
+                email_is_disposable = CASE WHEN email_is_disposable IS NULL THEN ? ELSE email_is_disposable END,
+                email_is_free_service = CASE WHEN email_is_free_service IS NULL THEN ? ELSE email_is_free_service END,
+                email_is_role_account = CASE WHEN email_is_role_account IS NULL THEN ? ELSE email_is_role_account END,
+                updated_at = ?
+            WHERE id = ?
+        """, (is_disposable, is_free_service, is_role_account, now, contact_id))
+        return
+
+    # New or Unknown status — write all fields
     conn.execute("""
         UPDATE contacts SET
             email_status = ?,
@@ -447,7 +465,12 @@ async def verify_contacts(contact_ids: List[int] = Query(...)):
 
 
 @router.post("/api/verify/bulk")
-def start_bulk_verification(limit: int = Query(None)):
+def start_bulk_verification(
+    limit: int = Query(None),
+    triggered_by: str = Query("manual_ui"),
+    triggered_from: str = Query("ui"),
+    filter_description: str = Query(None),
+):
     """Start a background job to verify all unverified contacts."""
     conn = get_db()
 
@@ -473,10 +496,13 @@ def start_bulk_verification(limit: int = Query(None)):
         conn.close()
         return {"job_id": None, "message": "No contacts need verification", "total_contacts": 0}
 
+    desc = filter_description or f"All unverified contacts{f' (limit {limit})' if limit else ''}"
     conn.execute(
-        """INSERT INTO verification_jobs (status, total_contacts, contact_ids, created_at)
-        VALUES ('pending', ?, ?, ?)""",
-        (len(unverified_ids), ','.join(map(str, unverified_ids)), datetime.now().isoformat())
+        """INSERT INTO verification_jobs
+        (status, total_contacts, contact_ids, triggered_by, triggered_from, filter_description, created_at)
+        VALUES ('pending', ?, ?, ?, ?, ?, ?)""",
+        (len(unverified_ids), ','.join(map(str, unverified_ids)),
+         triggered_by, triggered_from, desc, datetime.now().isoformat())
     )
     job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
@@ -489,7 +515,12 @@ def start_bulk_verification(limit: int = Query(None)):
 
 
 @router.post("/api/verify/job/start")
-async def start_verification_job(contact_ids: List[int] = Query(...)):
+async def start_verification_job(
+    contact_ids: List[int] = Query(...),
+    triggered_by: str = Query("manual_ui"),
+    triggered_from: str = Query("ui"),
+    filter_description: str = Query(None),
+):
     """Start a background verification job for multiple contacts."""
     conn = get_db()
 
@@ -514,10 +545,13 @@ async def start_verification_job(contact_ids: List[int] = Query(...)):
         conn.close()
         return {"job_id": None, "message": "No contacts need verification"}
 
+    desc = filter_description or f"{len(unverified_ids)} selected contacts"
     conn.execute(
-        """INSERT INTO verification_jobs (status, total_contacts, contact_ids, created_at)
-        VALUES ('pending', ?, ?, ?)""",
-        (len(unverified_ids), ','.join(map(str, unverified_ids)), datetime.now().isoformat())
+        """INSERT INTO verification_jobs
+        (status, total_contacts, contact_ids, triggered_by, triggered_from, filter_description, created_at)
+        VALUES ('pending', ?, ?, ?, ?, ?, ?)""",
+        (len(unverified_ids), ','.join(map(str, unverified_ids)),
+         triggered_by, triggered_from, desc, datetime.now().isoformat())
     )
     job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.commit()
@@ -577,7 +611,8 @@ def get_active_verification_jobs():
     """Get all active (pending/running) verification jobs."""
     conn = get_db()
     jobs = conn.execute("""SELECT id, status, total_contacts, verified_count, valid_count,
-        invalid_count, unknown_count, skipped_count, current_email, created_at
+        invalid_count, unknown_count, skipped_count, current_email, created_at,
+        triggered_by, triggered_from, filter_description
         FROM verification_jobs WHERE status IN ('pending', 'running')
         ORDER BY created_at DESC""").fetchall()
     conn.close()
@@ -593,5 +628,44 @@ def get_active_verification_jobs():
         "skipped_count": j[7],
         "current_email": j[8],
         "created_at": j[9],
+        "triggered_by": j[10],
+        "triggered_from": j[11],
+        "filter_description": j[12],
         "progress": round((j[3] + j[7]) / j[2] * 100, 1) if j[2] > 0 else 0
     } for j in jobs]
+
+
+@router.get("/api/verify/jobs")
+def list_all_verification_jobs(limit: int = Query(50, le=200), offset: int = Query(0)):
+    """List all verification jobs with full audit trail (triggered_by, from, filter)."""
+    conn = get_db()
+    jobs = conn.execute("""SELECT id, status, total_contacts, verified_count, valid_count,
+        invalid_count, unknown_count, skipped_count, triggered_by, triggered_from,
+        filter_description, created_at, started_at, completed_at, error_message
+        FROM verification_jobs ORDER BY id DESC LIMIT ? OFFSET ?""", (limit, offset)).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM verification_jobs").fetchone()[0]
+    conn.close()
+
+    return {
+        "jobs": [{
+            "id": j[0],
+            "status": j[1],
+            "total_contacts": j[2],
+            "verified_count": j[3],
+            "valid_count": j[4],
+            "invalid_count": j[5],
+            "unknown_count": j[6],
+            "skipped_count": j[7],
+            "triggered_by": j[8] or "unknown",
+            "triggered_from": j[9],
+            "filter_description": j[10],
+            "created_at": j[11],
+            "started_at": j[12],
+            "completed_at": j[13],
+            "error_message": j[14],
+            "progress": round((j[3] + j[7]) / j[2] * 100, 1) if j[2] > 0 else 0
+        } for j in jobs],
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
