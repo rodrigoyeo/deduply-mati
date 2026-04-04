@@ -2218,3 +2218,74 @@ async def fix_missing_data(req: FixMissingRequest, user: dict = Depends(get_curr
     threading.Thread(target=_run_fix_missing, args=(job_id, api_key, contact_ids), daemon=True).start()
 
     return {"job_id": job_id, "count": len(contact_ids), "message": f"Enriching {len(contact_ids)} contacts in background"}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/leadgen/fill-domain-from-email
+# Zero-cost enrichment: extract domain from email address for contacts
+# that are missing both website and domain. Skips free/generic providers.
+# ---------------------------------------------------------------------------
+
+FREE_EMAIL_DOMAINS = {
+    'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.com.mx', 'yahoo.es',
+    'hotmail.com', 'hotmail.es', 'hotmail.com.mx', 'outlook.com', 'outlook.es',
+    'live.com', 'live.com.mx', 'msn.com', 'icloud.com', 'me.com', 'mac.com',
+    'aol.com', 'protonmail.com', 'proton.me', 'zoho.com',
+    'yandex.com', 'yandex.ru', 'mail.com', 'inbox.com',
+}
+
+@router.post("/api/leadgen/fill-domain-from-email")
+async def fill_domain_from_email(user: dict = Depends(get_current_user)):
+    """
+    Zero-cost enrichment: for all contacts missing both domain and website,
+    extract the domain from their email address (e.g. user@acme.com → acme.com)
+    and set domain=acme.com, website=https://acme.com.
+    Skips free email providers (gmail, hotmail, etc).
+    Returns counts of filled vs skipped.
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT id, email FROM contacts
+            WHERE is_duplicate = 0
+              AND (domain IS NULL OR domain = '')
+              AND (website IS NULL OR website = '')
+              AND email IS NOT NULL AND email != ''
+        """).fetchall()
+
+        filled = 0
+        skipped_free = 0
+        skipped_no_at = 0
+        now = datetime.now().isoformat()
+
+        for row in rows:
+            email = (row['email'] or '').strip().lower()
+            if '@' not in email:
+                skipped_no_at += 1
+                continue
+
+            domain = email.split('@', 1)[1].strip()
+            if not domain:
+                skipped_no_at += 1
+                continue
+
+            if domain in FREE_EMAIL_DOMAINS:
+                skipped_free += 1
+                continue
+
+            website = f"https://{domain}"
+            conn.execute(
+                "UPDATE contacts SET domain=?, website=?, updated_at=? WHERE id=?",
+                (domain, website, now, row['id'])
+            )
+            filled += 1
+
+        conn.commit()
+        return {
+            "filled": filled,
+            "skipped_free_email": skipped_free,
+            "skipped_no_at": skipped_no_at,
+            "message": f"Filled domain/website for {filled} contacts from email. Skipped {skipped_free} free-provider emails."
+        }
+    finally:
+        conn.close()

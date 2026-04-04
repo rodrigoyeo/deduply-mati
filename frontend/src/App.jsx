@@ -2401,6 +2401,8 @@ const MissingDataTab = () => {
   const [page, setPage] = useState(1);
   const [enrichLoading, setEnrichLoading] = useState(false);
   const [enrichJob, setEnrichJob] = useState(null);
+  const [emailFillLoading, setEmailFillLoading] = useState(false);
+  const [emailFillResult, setEmailFillResult] = useState(null);
   const PAGE_SIZE = 50;
 
   const toggleField = (key) => {
@@ -2453,7 +2455,22 @@ const MissingDataTab = () => {
     setEnrichLoading(false);
   };
 
+  // Fill domain/website from email — free, no API credits
+  const handleFillFromEmail = async () => {
+    setEmailFillLoading(true);
+    setEmailFillResult(null);
+    try {
+      const result = await api.post('/leadgen/fill-domain-from-email', {});
+      setEmailFillResult(result);
+      addToast(`Filled ${result.filled} contacts from email domain`, 'success');
+      // Refresh the table
+      fetchMissing(page);
+    } catch (e) { addToast(e.message, 'error'); }
+    setEmailFillLoading(false);
+  };
+
   const canEnrich = selectedFields.some(f => ['website', 'domain'].includes(f)) && total > 0;
+  const showEmailFill = selectedFields.some(f => ['website', 'domain'].includes(f));
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -2471,6 +2488,17 @@ const MissingDataTab = () => {
               <span className="missing-count-label">contacts</span>
             </div>
           )}
+          {showEmailFill && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={handleFillFromEmail}
+              disabled={emailFillLoading}
+              title="Free: extract domain from email address (e.g. user@acme.com → acme.com). No API credits used."
+            >
+              {emailFillLoading ? <Loader2 className="spin" size={14} /> : <span>@</span>}
+              {emailFillLoading ? 'Filling...' : 'Fill from Email'}
+            </button>
+          )}
           {canEnrich && (
             <button
               className="btn btn-primary btn-sm"
@@ -2479,12 +2507,18 @@ const MissingDataTab = () => {
               title="Use BlitzAPI to look up missing Website/Domain via company name search"
             >
               {enrichLoading ? <Loader2 className="spin" size={14} /> : <Zap size={14} />}
-              {enrichLoading ? 'Starting...' : `Enrich Missing (${Math.min(total, 500)})`}
+              {enrichLoading ? 'Starting...' : `Enrich via BlitzAPI (${Math.min(total, 500)})`}
             </button>
           )}
         </div>
       </div>
 
+      {emailFillResult && (
+        <div className="missing-enrich-notice" style={{background:'rgba(52,195,125,0.07)', borderColor:'rgba(52,195,125,0.25)'}}>
+          ✅ Filled <strong>{emailFillResult.filled}</strong> contacts from email domain · Skipped <strong>{emailFillResult.skipped_free_email}</strong> free-provider emails (gmail, hotmail, etc.)
+          <button className="missing-enrich-dismiss" onClick={() => setEmailFillResult(null)}>✕</button>
+        </div>
+      )}
       {enrichJob && (
         <div className="missing-enrich-notice">
           <Zap size={14} /> Enrichment job started — <strong>{enrichJob.count}</strong> contacts queued.
