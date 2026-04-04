@@ -983,7 +983,7 @@ const ContactsPage = () => {
     // Person location
     { id: 'city', label: 'City', editable: true, default: false },
     { id: 'state', label: 'State', editable: true, default: false },
-    { id: 'country', label: 'Country', editable: true, default: false },
+    { id: 'company_country', label: 'Country', editable: true, default: false },
     // Company location
     { id: 'company_city', label: 'Company City', editable: true, default: false },
     { id: 'company_state', label: 'Company State', editable: true, default: false },
@@ -1822,7 +1822,7 @@ const ExportForm = ({ filters, search, onClose }) => {
     { id: 'first_phone', label: 'Phone' }, { id: 'corporate_phone', label: 'Corporate Phone' },
     { id: 'person_linkedin_url', label: 'LinkedIn' }, { id: 'company_linkedin_url', label: 'Company LinkedIn' },
     { id: 'website', label: 'Website' }, { id: 'domain', label: 'Domain' },
-    { id: 'city', label: 'City' }, { id: 'state', label: 'State' }, { id: 'country', label: 'Workspace' },
+    { id: 'city', label: 'City' }, { id: 'state', label: 'State' }, { id: 'company_country', label: 'Country' },
     { id: 'company_city', label: 'Company City' }, { id: 'company_state', label: 'Company State' }, { id: 'company_country', label: 'Company Country' },
     { id: 'company_street_address', label: 'Company Address' }, { id: 'company_postal_code', label: 'Postal Code' },
     { id: 'employees', label: 'Employees' }, { id: 'employee_bucket', label: 'Employee Bucket' }, { id: 'industry', label: 'Industry' },
